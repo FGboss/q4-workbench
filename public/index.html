@@ -1,0 +1,1812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q4 新人培养 · 协作工作台 v5 · 在线版</title>
+<style>
+  :root{
+    --blue:#17558F; --blue-d:#0B3A63; --blue-l:#EDF4FA; --blue-m:#3B7CB0;
+    --amber:#A9691B; --amber-l:#FBF1E1; --amber-d:#7A4C12;
+    --green:#3C6B1A; --green-l:#EBF2E2; --green-d:#274A0F;
+    --red:#B03A2E; --red-l:#FDEDEA; --red-d:#8C2B1F;
+    --grey:#5C6772; --grey-l:#EFF2F5;
+    --ink:#16202C; --ink2:#495665; --ink3:#7C8896;
+    --line:#E3E8EE; --bg:#F5F7FA; --card:#fff;
+    --r:14px; --sh:0 1px 2px rgba(16,24,40,.04),0 8px 22px rgba(16,24,40,.05);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Microsoft YaHei","微软雅黑",-apple-system,"Segoe UI",Roboto,sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.7;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 18px 80px}
+  button{font-family:inherit;cursor:pointer}
+  input,textarea,select{font-family:inherit}
+
+  header{background:linear-gradient(140deg,#0B3A63,#17558F 60%,#2C6FA8);color:#fff;padding:18px 0 0;
+    box-shadow:0 10px 30px rgba(11,58,99,.18)}
+  .hrow{display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:flex-start}
+  .ttl{font-size:23px;font-weight:700}
+  .sub{font-size:12.5px;opacity:.85;margin-top:5px}
+  .oneline{font-size:12px;margin-top:9px;background:rgba(255,255,255,.12);
+    border:1px solid rgba(255,255,255,.22);border-radius:10px;padding:7px 12px;display:inline-block}
+  .hbar{display:flex;flex-direction:column;gap:8px;align-items:flex-end;min-width:250px}
+  .syncline{display:flex;align-items:center;gap:8px;font-size:12px;background:rgba(255,255,255,.12);
+    border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:6px 12px}
+  .dot{width:8px;height:8px;border-radius:50%;background:#9BE59B;flex:none}
+  .dot.warn{background:#F5C36B}.dot.err{background:#F08B7E}
+  .syncline button{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);color:#fff;
+    border-radius:999px;padding:3px 12px;font-size:11.5px}
+  .syncline button:hover{background:rgba(255,255,255,.3)}
+  .idbox{display:flex;align-items:center;gap:8px;font-size:12.5px;background:#fff;color:var(--blue-d);
+    border-radius:999px;padding:6px 14px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.12)}
+  .idbox .lk{font-weight:400;font-size:11px;color:var(--ink3)}
+  nav.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-top:14px}
+  nav.tabs button{border:1px solid rgba(255,255,255,.3);border-bottom:none;background:rgba(255,255,255,.08);
+    color:#fff;padding:9px 17px;border-radius:10px 10px 0 0;font-size:13.5px;transition:.15s}
+  nav.tabs button:hover{background:rgba(255,255,255,.2)}
+  nav.tabs button.on{background:var(--bg);color:var(--blue-d);border-color:var(--bg);font-weight:700}
+
+  section{margin-top:20px;animation:in .25s ease both}
+  @keyframes in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  h2{font-size:16px;font-weight:700;display:flex;align-items:center;gap:9px;margin-bottom:11px;flex-wrap:wrap}
+  h2::before{content:"";width:4px;height:16px;border-radius:2px;background:var(--blue);flex:none}
+  h2 .h{font-size:12px;font-weight:400;color:var(--ink3);margin-left:3px}
+  h3{font-size:14.5px;font-weight:700}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh)}
+  .pad{padding:15px 17px}
+  .muted{color:var(--ink3);font-size:12.4px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .hide{display:none!important}
+
+  .btn{font-family:inherit;font-size:12.5px;border:1px solid var(--blue);background:var(--blue);color:#fff;
+    border-radius:8px;padding:7px 14px;transition:.15s}
+  .btn:hover{background:var(--blue-d);border-color:var(--blue-d)}
+  .btn.gh{background:#fff;color:var(--blue-d);border-color:#C7DBEC}
+  .btn.gh:hover{background:var(--blue-l)}
+  .btn.sm{padding:4px 10px;font-size:11.8px;border-radius:7px}
+  .btn.danger{background:#fff;color:var(--red);border-color:#E7C7C2}
+  .btn.danger:hover{background:var(--red-l)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .tag{font-size:10.8px;padding:1px 9px;border-radius:999px;display:inline-block;background:var(--grey-l);color:var(--grey)}
+  .tag.pri{background:var(--blue);color:#fff}.tag.base{background:var(--amber-l);color:var(--amber-d)}
+  .tag.ok{background:var(--green-l);color:var(--green-d)}.tag.wt{background:var(--amber-l);color:var(--amber-d)}
+  .tag.no{background:var(--red-l);color:var(--red-d)}.tag.gy{background:var(--grey-l);color:var(--grey)}
+
+  .rail{display:grid;grid-template-columns:repeat(3,1fr);overflow:hidden;border:1px solid var(--line)}
+  .rail .st{padding:15px 17px}
+  .rail .st+.st{border-left:1px solid var(--line)}
+  .rail .st .n{font-size:12px;color:var(--blue);font-weight:700}
+  .rail .st .t{font-size:15px;font-weight:700;margin:3px 0 5px}
+  .rail .st .d{font-size:12.5px;color:var(--ink2)}
+
+  .form{display:grid;gap:8px}
+  .form label{font-size:12px;color:var(--ink3)}
+  .form input,.form textarea,.form select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+    font-size:12.6px;background:#fff;color:var(--ink);width:100%}
+  .form input:focus,.form textarea:focus{outline:none;border-color:var(--blue-m)}
+  .form textarea{resize:vertical;min-height:60px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+  .item{background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:9px}
+  .item .hd{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+  .item .tt{font-size:13.6px;font-weight:700}
+  .item .meta{font-size:11.6px;color:var(--ink3);margin-top:3px}
+  .item .body{font-size:12.6px;color:var(--ink2);margin-top:6px}
+  .item .body b{color:var(--ink)}
+  .empty{font-size:12.4px;color:var(--ink3);border:1px dashed #CFD8E2;border-radius:10px;padding:14px;text-align:center;background:#fff}
+
+  /* 随手记 + 对话串 */
+  .qbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--blue-l);
+    border:1px solid #D3E3F1;border-radius:12px;padding:11px 12px}
+  .qbar input,.qbar select{border:1px solid #C7DBEC;border-radius:9px;padding:8px 10px;font-size:12.6px;background:#fff}
+  .qbar input.q{flex:1;min-width:180px}
+  .seg{display:inline-flex;border:1px solid #C7DBEC;border-radius:999px;overflow:hidden;background:#fff}
+  .seg button{border:none;background:#fff;color:var(--blue-d);padding:6px 13px;font-size:12px}
+  .seg button.on{background:var(--blue);color:#fff}
+  .bubble{border-radius:11px;padding:8px 11px;font-size:12.6px;margin-top:7px;max-width:92%}
+  .bubble.me{background:var(--blue-l);border:1px solid #D3E3F1;color:var(--blue-d)}
+  .bubble.co{background:#F7F9FB;border:1px solid var(--line);color:var(--ink2)}
+  .bubble .who{font-size:11px;font-weight:700;margin-bottom:2px;color:var(--ink3)}
+
+  .stat{border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px 14px}
+  .stat .v{font-size:22px;font-weight:700;color:var(--blue-d)}
+  .stat .k{font-size:12px;color:var(--ink3);margin-top:2px}
+  .bar{height:7px;border-radius:4px;background:var(--grey-l);overflow:hidden;margin-top:7px}
+  .bar i{display:block;height:100%;background:var(--blue-m);border-radius:4px}
+
+  .chip{font-size:10.9px;border-radius:999px;padding:2px 10px;border:1px solid transparent;white-space:nowrap}
+  .chip.k0{background:var(--grey-l);color:var(--grey);border-color:var(--line);cursor:pointer}
+  .chip.k1{background:var(--amber-l);color:var(--amber-d);border-color:#EAD9BC;cursor:pointer}
+  .chip.k2{background:var(--green-l);color:var(--green-d);border-color:#D0DFBF;cursor:pointer}
+  .chip.b{border-color:var(--line);background:#fff;color:var(--ink2)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+  .faedim{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:10px;background:#fff}
+  .faedim.pri{border-color:#CFE0F0;background:var(--blue-l)}
+  .faehd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .faegrp{font-size:11.6px;font-weight:700;color:var(--ink2);margin:9px 0 3px}
+  .faeitem{display:flex;gap:10px;align-items:flex-start;font-size:12.5px;color:var(--ink2);padding:6px 0;border-top:1px dashed var(--line)}
+  .faeitem .tx{flex:1;min-width:0}
+
+  .gate{max-width:680px;margin:44px auto;text-align:center}
+  .gate .g{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);padding:28px 24px}
+  .gate h1{font-size:21px;margin-bottom:6px}
+  .gate p{font-size:13px;color:var(--ink2);margin-bottom:16px}
+  .gate .btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .gcard{border:1px solid #D3E3F1;background:var(--blue-l);border-radius:12px;padding:12px 14px;text-align:left;font-size:12.8px}
+
+  /* 责任指标看板 · 必回清单 */
+  .duty{border:1px solid var(--line);border-radius:12px;background:#fff;padding:13px 15px}
+  .duty .dnum{font-size:22px;font-weight:700;line-height:1.2;color:var(--blue-d)}
+  .duty .dlab{font-size:11.6px;color:var(--ink3)}
+  .duty.ok{border-color:#BEDDC0;background:var(--green-l)}.duty.ok .dnum{color:var(--green-d)}
+  .duty.warn{border-color:#EAD9BC;background:var(--amber-l)}.duty.warn .dnum{color:var(--amber-d)}
+  .duty.err{border-color:#EFC9C3;background:var(--red-l)}.duty.err .dnum{color:var(--red-d)}
+  .dutyrow .drw{flex:1;min-width:0}
+  .dutyrow{display:flex;gap:9px;align-items:center;justify-content:space-between;
+    border:1px solid var(--line);border-left-width:5px;border-radius:10px;padding:9px 12px;margin-top:8px;background:#fff}
+  .dutyrow.lv1{border-left-color:#5E97C7}
+  .dutyrow.lv2{border-left-color:#E0A94A;background:var(--amber-l)}
+  .dutyrow.lv3{border-left-color:#C0392B;background:var(--red-l)}
+  .dutyrow.lv0{border-left-color:#BEDDC0}
+  /* 成长护照 */
+  .passport{background:linear-gradient(135deg,#0B3A63,#1E5E93 55%,#2C6FA8);color:#fff;border-radius:16px;padding:18px 20px;box-shadow:var(--sh)}
+  .passport .pk{font-size:11.6px;opacity:.82}
+  .passport .pv{font-size:24px;font-weight:700;line-height:1.2}
+  .badge{display:inline-flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;min-width:78px}
+  .badge .bb{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:22px;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.35)}
+  .badge.on .bb{background:#FFD879;border-color:#FFE9B5;color:#7A4C12;box-shadow:0 4px 14px rgba(255,216,121,.5)}
+  .badge.off{opacity:.5}
+
+  .overlay{position:fixed;inset:0;background:rgba(11,32,54,.5);display:flex;align-items:center;justify-content:center;
+    padding:20px;z-index:50}
+  .modal{background:#fff;border-radius:16px;max-width:640px;width:100%;max-height:86vh;overflow:auto;
+    box-shadow:0 30px 70px rgba(0,0,0,.3)}
+  .modal .mh{display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-bottom:1px solid var(--line)}
+  .linkrow{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px}
+  .linkrow code{flex:1;font-size:11.4px;color:var(--ink2);word-break:break-all;background:#F7F9FB;border-radius:7px;padding:6px 8px}
+
+  .radarw{display:flex;justify-content:center}
+  footer{margin-top:32px;padding-top:15px;border-top:1px solid var(--line);font-size:11.8px;color:var(--ink3)}
+
+  /* 学习打卡 · 学—测—用 */
+  .hmw{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,11px);gap:3px;overflow-x:auto;padding:3px 0}
+  .hm{width:11px;height:11px;border-radius:2px;background:#EDF1F5;display:block}
+  .hm1{background:#BFD9EE}.hm2{background:#5E97C7}.hm3{background:#17558F}
+  .hmf{opacity:.22}
+  .tier{display:flex;gap:9px;align-items:center;margin-top:10px}
+  .tier .tn{font-size:11.6px;color:var(--ink3);min-width:42px;font-weight:700}
+  .tier .tb{flex:1;height:8px;border-radius:5px;background:var(--grey-l);overflow:hidden}
+  .tier .tb i{display:block;height:100%;border-radius:5px}
+  .kpi{display:flex;gap:20px;flex-wrap:wrap;margin-top:6px}
+  .kpi .kv{font-size:20px;font-weight:700;color:var(--blue-d);line-height:1.2}
+  .kpi .kk{font-size:11.4px;color:var(--ink3)}
+  .hmlegend{display:flex;gap:4px;align-items:center;justify-content:flex-end;font-size:10.6px;color:var(--ink3);margin-top:6px}
+  .chip.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .nodegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:8px}
+  @media(max-width:820px){.nodegrid{grid-template-columns:1fr 1fr}}
+  .nodechip{text-align:left;background:#fff;border:1px solid var(--line);border-radius:11px;padding:10px 12px;
+    display:flex;flex-direction:column;gap:5px;transition:.15s}
+  .nodechip:hover{border-color:var(--blue-m);box-shadow:var(--sh)}
+  .nodechip .nt{font-size:12.6px;font-weight:700;color:var(--ink);line-height:1.45}
+  .nodechip .ns{font-size:11.2px;color:var(--ink3)}
+  .nodechip.ok{border-color:#BEDDC0;background:var(--green-l)}
+  .nodechip.warn{border-color:#EFD9AE;background:var(--amber-l)}
+  .ptlist{margin:6px 0 0 18px;font-size:12.6px;color:var(--ink2)}
+  .ptlist li{margin-bottom:3px}
+  .qz{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
+  .qz .q{font-size:13px;font-weight:700;margin-bottom:6px}
+  .opt{display:flex;gap:8px;align-items:flex-start;font-size:12.6px;padding:7px 10px;border:1px solid var(--line);
+    border-radius:9px;margin-bottom:6px;cursor:pointer;transition:.12s}
+  .opt:hover{border-color:var(--blue-m)}
+  .opt.sel{border-color:var(--blue);background:var(--blue-l)}
+  .opt.ok{border-color:#BEDDC0;background:var(--green-l)}
+  .opt.no{border-color:#EFC9C3;background:var(--red-l)}
+
+  @media(max-width:900px){
+    .grid2,.grid3,.grid4,.rail{grid-template-columns:1fr!important}
+    .rail .st+.st{border-left:none;border-top:1px solid var(--line)}
+    .hbar{align-items:flex-start;min-width:0}
+    .wrap{padding:0 13px 70px}
+    .bubble{max-width:100%}
+  }
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate hide">
+  <div class="g">
+    <h1>Q4 新人培养 · 协作工作台</h1>
+    <p>主管、导师、新人<b>打开同一个网址</b>即用，数据在服务器上、实时同步。<br>
+      登录很简单：<b>选一下「你是谁」，点「进入工作台」就行</b> —— 不用账号、不用密码、不用记任何口令。</p>
+
+    <!-- 主入口：选名字即进入（无账号、无密码） -->
+    <div id="gPickPane" style="text-align:left;max-width:360px;margin:0 auto">
+      <div class="form">
+        <label>选择你是谁</label>
+        <select id="gPick"></select>
+      </div>
+      <div id="gPcRow" class="form hide" style="margin-top:10px">
+        <label>团队口令（全组同一个，贴在群里那份）</label>
+        <input id="gPc" type="password" placeholder="输入团队口令" autocomplete="off">
+      </div>
+      <div class="btns" style="margin-top:12px;justify-content:flex-start;flex-wrap:wrap">
+        <button class="btn" id="gPickGo">进入工作台</button>
+        <button class="btn gh sm hide" id="gWx">企业微信扫码登录</button>
+      </div>
+      <div class="muted" style="margin-top:9px">名单里没有你？找<b>超级管理员</b>把你加进来即可。进去后点右上角可切换身份。</div>
+    </div>
+
+    <!-- 超级管理员：账号 + 密码（唯一需要密码的角色，折叠收起） -->
+    <div id="gAdminWrap" style="max-width:360px;margin:14px auto 0;text-align:left">
+      <button class="btn gh sm" id="gAdminToggle">超级管理员登录（账号 + 密码）</button>
+      <div id="gLoginPane" class="hide" style="margin-top:10px">
+        <div class="form">
+          <label>账号</label>
+          <input id="gUser" placeholder="登录名（如 admin）" autocomplete="username">
+          <label>密码</label>
+          <input id="gPass" type="password" placeholder="输入你的密码" autocomplete="current-password">
+        </div>
+        <div class="btns" style="margin-top:12px;justify-content:flex-start;flex-wrap:wrap">
+          <button class="btn" id="gGo">登录</button>
+          <button class="btn gh sm" id="gHint">首次部署？看初始账号</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="gHintBox" class="hide muted" style="margin-top:12px;text-align:left;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:10px 12px"></div>
+
+    <div id="gInvitePane" class="hide" style="text-align:left;max-width:360px;margin:0 auto"></div>
+
+    <div id="gMsg" class="muted" style="margin-top:12px"></div>
+
+    <div id="gNoSrv" class="hide" style="margin-top:12px;text-align:left;background:var(--amber-l);border:1px solid #E8D3AE;border-radius:10px;padding:10px 12px;font-size:12.4px;color:var(--amber-d)">
+      <b>未连接服务器</b>：当前页面是离线预览（或服务未启动），<b>账号密码登录用不了</b>。这不是账号或密码的问题。<br>
+      · 只想先看这套流程 → 在下方选择演示身份，点「<b>进入本地模式</b>」直接进；<br>
+      · 要正式使用 → 先启动服务（<code>cd 在线工作台 &amp;&amp; npm install &amp;&amp; node server.js</code>），再用 账号 + 密码 登录。
+    </div>
+
+    <div id="gLocalBox" class="hide" style="margin-top:14px;text-align:left">
+      <div class="form">
+        <label>本地演示模式（不连服务器、数据只存本机，用于自己预览/演示）—— 选一个演示身份：</label>
+        <select id="gLocalWho"><option value="lead">主管</option><option value="mentor">导师</option><option value="zhan">詹祥雨</option><option value="tong">童伟桀</option></select>
+      </div>
+      <div class="btns" style="margin-top:12px"><button class="btn gh" id="gLocalGo">进入本地模式</button></div>
+    </div>
+
+    <div class="muted" style="margin-top:12px;text-align:left">
+      · 成员名单、角色，由<b>超级管理员</b>在右上角「账号管理」里维护：把人加进来，他就能在上面「选择你是谁」里直接进入。<br>
+      · 可选：管理员设一个<b>团队口令</b>（全组同一个，贴在群里），入口就多一层保护；不设就是完全免口令。<br>
+      · 打不开网页 / 没连上服务器时，可先用「本地演示模式」把流程跑通。
+    </div>
+    <div class="btns" style="margin-top:14px">
+      <button class="btn gh sm" id="gLocal">本地演示模式（无需服务器）</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="hide">
+<header>
+  <div class="wrap">
+    <div class="hrow">
+      <div>
+        <div class="ttl">Q4 新人培养 · 协作工作台</div>
+        <div class="sub">嗨动视觉 · 深圳服务点 · 2026 Q4（10–12 月）· 第二阶段</div>
+        <div class="oneline">规划 → 协助 → 帮扶 → 把控 → 复盘　·　标准当尺、脑图当节奏、日常工作当载体</div>
+      </div>
+      <div class="hbar">
+        <div class="syncline">
+          <span class="dot" id="syncDot"></span>
+          <span id="syncTxt">未同步</span>
+          <button id="syncNow" title="立即拉取云端数据">同步</button>
+        </div>
+        <div class="idbox">
+          <span id="idWho">—</span>
+          <span class="lk" id="idLock">身份已锁定</span>
+          <button class="btn gh sm hide" id="linksBtn">使用说明</button>
+        </div>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="plan" class="on">① 规划</button>
+      <button data-tab="assist">② 协助</button>
+      <button data-tab="coach">③ 帮扶</button>
+      <button data-tab="monitor">④ 把控</button>
+      <button data-tab="review">⑤ 复盘</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div id="tab-plan">
+    <section id="passSec">
+      <h2>我的成长护照 <span class="h">你的段位、下一站、连续天数与徽章 —— 今天再进一格就够</span></h2>
+      <div id="passport"></div>
+    </section>
+    <section>
+      <h2>目标与阶段 <span class="h">主管/导师可编辑；三阶段沿用脑图节奏</span></h2>
+      <div class="card pad">
+        <div id="planGoal"></div>
+        <div class="rail" id="planRail" style="margin-top:13px;border-radius:12px;overflow:hidden"></div>
+      </div>
+    </section>
+    <section>
+      <h2>个人培养计划 <span class="h">重点补强 + 表达练法 + 新人诉求</span></h2>
+      <div class="grid2" id="planPeople"></div>
+    </section>
+    <section>
+      <h2>真实载体与客户维护行动计划 <span class="h">客户/项目随销售档位产生 → 新人登记；每个载体挂「下一步动作」</span></h2>
+      <div class="card pad">
+        <div class="row" id="carrierTop" style="margin-bottom:11px"></div>
+        <div class="grid2" id="carrierBlk"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-assist" class="hide">
+    <section>
+      <h2>问题 / 诉求　随手记 <span class="h">一句话就能发；导师在同一处回复（不另开会）</span></h2>
+      <div class="card pad">
+        <div id="quickBox"></div>
+        <div class="row" style="justify-content:space-between;margin:14px 0 10px">
+          <div class="chips" id="issueFilter"></div>
+          <div class="muted" id="issueCount"></div>
+        </div>
+        <div id="issueList"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-coach" class="hide">
+    <section>
+      <h2>产品地图打卡 · 学—测—用 <span class="h">按 IMA 知识库出题：学 1 个节点 → 3 题随堂小测（系统自动判卷）→ 写 ≤50 字笔记 + 1 个场景联想；自由节奏，按期完成整级（青铜 24 / 白银 18 / 黄金 12）</span></h2>
+      <div id="ciDemo"></div>
+      <div class="card pad" style="margin-top:12px"><div class="grid2" id="ciBlk"></div></div>
+      <div class="card pad" style="margin-top:12px"><div id="ciForm"></div></div>
+    </section>
+    <section>
+      <h2>每周演讲演练 + 评分 <span class="h">脑图要求：每周挑 1 个产品方案演练 → 新人写 3 行复盘 → 导师/主管评分</span></h2>
+      <div class="card pad"><div class="grid2" id="drillBlk"></div>
+        <div id="drillHist" style="margin-top:12px"></div></div>
+    </section>
+    <section>
+      <h2>带教工具包 <span class="h">售前话术库 / 应答 SOP / 复盘清单 / 差距诊断问卷（导师/主管维护）</span></h2>
+      <div class="card pad"><div id="kitList"></div><div id="kitForm" style="margin-top:10px"></div></div>
+    </section>
+    <section>
+      <h2>协同知识沉淀 <span class="h">一个问题一卡片 · 带教金句萃取墙 · 高频卡点月度 TOP5</span></h2>
+      <div class="card pad">
+        <div class="chips" id="knoTabs" style="margin-bottom:12px"></div>
+        <div id="knoBody"></div>
+      </div>
+    </section>
+    <section>
+      <h2>触发式加练 <span class="h">出现触发条件 → 导师加练 + 主管介入（登记留痕）</span></h2>
+      <div class="card pad">
+        <div id="trigRules" class="muted" style="margin-bottom:10px"></div>
+        <div id="trigList"></div>
+        <div class="row" style="margin-top:10px"><button class="btn gh hide" id="trigNew">＋ 登记一次触发</button></div>
+        <div id="trigForm"></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-monitor" class="hide">
+    <section>
+      <h2>成长看板 <span class="h">自动聚合前四块数据</span></h2>
+      <div class="grid4" id="mStats"></div>
+    </section>
+    <section id="dutySec">
+      <h2>导师 / 主管责任制看板 <span class="h">「必回」：<b>2 小时内回</b>为正常（蓝）· 超 2 小时标黄 · 超 8 小时标红并自动升级主管</span></h2>
+      <div class="grid3" id="dutyAgg" style="margin-bottom:12px"></div>
+      <div class="grid2" id="dutyBlk"></div>
+    </section>
+    <section>
+      <h2>每人进度 <span class="h">真实载体 / 问题 / 演练 / 产品地图</span></h2>
+      <div class="grid2" id="mPeople"></div>
+    </section>
+    <section>
+      <h2>能力雷达 <span class="h">8 维度 · 初级保底达成度（由 FAE 打勾自动生成）</span></h2>
+      <div class="grid2" id="mRadar"></div>
+    </section>
+    <section id="mMilesSec">
+      <h2>里程碑与预警 <span class="h">到点对标 + 触发式调整</span></h2>
+      <div class="grid2" id="mMiles"></div>
+    </section>
+  </div>
+
+  <div id="tab-review" class="hide">
+    <section>
+      <h2>月度复盘 <span class="h">新人自评 → 导师复评 → 主管终评；每月约 1 小时</span></h2>
+      <div class="card pad">
+        <div class="chips" id="rvTabs" style="margin-bottom:12px"></div>
+        <div class="grid2" id="rvList"></div>
+      </div>
+    </section>
+    <section>
+      <h2>FAE 对照表 · 逐条打勾 <span class="h">初级→中1 的唯一尺子；点标签在 ○未涉及 / △需指导 / ✔可独立 间切换</span></h2>
+      <div class="card pad">
+        <div class="row" id="faeBar" style="margin-bottom:10px"></div>
+        <div id="faeList"></div>
+      </div>
+    </section>
+    <section>
+      <h2>12 月终评汇总 <span class="h">由 FAE 打勾自动汇总</span></h2>
+      <div class="card pad" id="finalTbl"></div>
+    </section>
+  </div>
+
+  <footer>
+    <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
+    <div style="margin-top:5px"><b>版本：</b>v6.0 · 2026.10.18　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 责任制看板 + 成长护照</div>
+  </footer>
+</div>
+</div>
+
+<div id="ovl" class="overlay hide"><div class="modal" id="ovlBox"></div></div>
+
+<script src="bank.js"></script>
+<script>
+/* ===================================================================
+   Q4 新人培养 · 协作工作台 v5.0（在线版）
+   架构：Express 服务托管 SPA + REST 同步 API + SSE 实时推送
+       服务器是唯一数据源（Single Source of Truth），本地 localStorage 仅作缓存
+   身份：进入时「选身份 + 口令」，令牌存本机；进入后身份锁定、不可切换
+   同步：改动本地合并 → 700ms 防抖提交服务器；SSE 收到变更 → 拉取并合并 → 自动刷新
+   合并：按 id + updatedAt，软删除（tombstone），多端不互相覆盖
+   =================================================================== */
+const LS_TOKEN="q5.token", LS_WHO="q5.who", LS_LOCAL="q5.doc";
+
+/* 身份：账号由服务器管理（超级管理员建号 + 分配角色）；角色决定权限 */
+const ROLE_NAME={admin:"超级管理员",lead:"主管",mentor:"导师",newbie:"新人"};
+let ACCOUNTS=[];                 // /api/config 或 /api/users 返回的账号清单
+let WHO_NAME={};                 // id → 姓名
+let NEWCOMERS=[];                // 新人 id 列表（动态）
+function applyAccounts(list){
+ ACCOUNTS=Array.isArray(list)?list.slice():[];
+ const nm={},nw=[];
+ ACCOUNTS.forEach(u=>{nm[u.id]=u.name||u.username||u.id;if(u.role==="newbie")nw.push(u.id);});
+ // 兜底（离线/本地模式下仍要能渲染）
+ nm.lead=nm.lead||"主管";nm.mentor=nm.mentor||"导师";nm.zhan=nm.zhan||"詹祥雨";nm.tong=nm.tong||"童伟桀";
+ WHO_NAME=nm;NEWCOMERS=nw.length?nw:["zhan","tong"];
+}
+applyAccounts([{id:"lead",name:"主管",role:"lead"},{id:"mentor",name:"导师",role:"mentor"},{id:"zhan",name:"詹祥雨",role:"newbie"},{id:"tong",name:"童伟桀",role:"newbie"}]);
+/* 产品地图 · 题库来自 bank.js（未加载时给空结构兜底） */
+const BANK=(window.BANK&&Array.isArray(window.BANK.levels))?window.BANK.levels:[];
+const BANK_DEMO=!!(window.BANK&&window.BANK.meta&&window.BANK.meta.demo);
+const LEVELS=BANK.map(L=>({k:L.k,n:L.n,goal:L.goal,c:L.c,period:L.period,desc:L.desc||""}));
+const NODES=[];BANK.forEach(L=>(L.nodes||[]).forEach(nd=>NODES.push(Object.assign({},nd,{level:L.k,levelName:L.n,period:L.period}))));
+const NODE_BY_ID={};NODES.forEach(n=>NODE_BY_ID[n.id]=n);
+const TOTAL_NODES=NODES.length;
+
+const CATS=["硬件/显示","软件/配置","网络/连线","客户沟通","方案/选型","其他"];
+const RMONTH=["10 月","11 月","12 月"];
+
+const nowT=()=>Date.now();
+const uid=()=>Math.random().toString(36).slice(2,9)+nowT().toString(36).slice(-4);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const nl=s=>esc(s).replace(/\n/g,"<br>");
+const fmt=t=>{if(!t)return"";const d=new Date(t);const p=n=>String(n).padStart(2,"0");return `${d.getMonth()+1}月${d.getDate()}日 ${p(d.getHours())}:${p(d.getMinutes())}`;};
+const hash=s=>{let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return (h>>>0).toString(36);};
+const tok=()=>uid()+uid();
+function copyText(t){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(t);
+ return new Promise((res,rej)=>{try{const ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";
+  document.body.appendChild(ta);ta.focus();ta.select();const ok=document.execCommand("copy");ta.remove();ok?res():rej();}catch(e){rej(e);}});}
+function weekMonday(d){const dt=new Date(d);const day=(dt.getDay()+6)%7;dt.setHours(0,0,0,0);dt.setDate(dt.getDate()-day);return dt;}
+const weekKey=d=>weekMonday(d).toISOString().slice(0,10);
+const weekLabel=d=>{const m=weekMonday(d);return `${m.getMonth()+1}月${m.getDate()}日那周`;};
+const monOf=t=>{const d=new Date(t||nowT());return d.getMonth()-9;}; // 10月→1? 用 d.getMonth() 10月=9 → 9-9=0; 11月=10→1; 12月=11→2
+
+/* ---------- FAE 尺子（静态 · 取自岗位标准原文） ---------- */
+const FAE_DEF=[
+ {k:"1 · 问题解决", tag:"优先", cls:"pri", g:[
+  {n:"初级（保底）",kind:"初",it:["按流程、标准、规范解决基础、通用售后服务问题","熟悉常用售后应用工具，高效处理常见问题；在别人指导下能解决疑难问题","在指导下对现场问题分析与归类，输出现场报告（记录、汇报）","对同类型问题或异常现象，按质量与现场处理要求及流程，及时上报反馈","理解「问题闭环」：明确根因+方案，完成换货/维修/更新，客户问题彻底关闭"]},
+  {n:"中1（突破）",kind:"中",it:["熟悉售后应用工具，高效处理问题，能独立解决疑难问题","具备现场问题的分析与归纳能力，沉淀或提炼良好的问题解决方法、工具、手段","快速识别现场问题类别并按频率/背景初步判断，时效内及时上升、拉通应用组，主导客户现场问题闭环"]}]},
+ {k:"2 · 客户支持", tag:"优先", cls:"pri", g:[
+  {n:"初级（保底）",kind:"初",it:["对客户常规问题和产品咨询，准确解答","掌握业务领域相关产品与技术知识，理解客户使用场景，为方案推荐合适产品","为客户进行常规产品与技术培训（有现成课件、讲得清、客户能明白）","获得公司认证培训讲师（按业务实际）"]},
+  {n:"中1（突破）",kind:"中",it:["对客户提出的业务领域全系列产品技术问题与咨询，准确解答","准确解读需求、理解使用场景，制定合适的产品解决方案","针对客户实际量身定做个性化培训方案，参与并协调资源对客户培训","能对初中级课程设计与课件复盘，提优化建议并更新迭代","获得公司认证培训讲师，年度课时不低于同级别平均值"]}]},
+ {k:"3 · 市场信息与新产品推广", tag:"暂不重点", g:[
+  {n:"初级（保底）",kind:"初",it:["收集行业产品、竞品、项目等信息，输出给销售团队","配合销售团队开展重点产品推广（讲解、培训、方案配置等）"]},
+  {n:"中1（突破）",kind:"中",it:["紧密接触客户，深挖核心需求与痛点，在别人指导下分析整理、输出调研报告","收集行业/竞品/项目信息输出销售团队，提升方案竞争力","配合销售开展重点产品推广，从技术角度给建议并识别可行性、汇总上升"]}]},
+ {k:"4 · 项目管理与实施", tag:"打底", cls:"base", g:[
+  {n:"初级（保底）",kind:"初",it:["资质：掌握项目管理知识，公司的项目管理考试通过","实践：理解任务目标与计划，按期交付、及时识别风险并主动反馈、必要时多方求助","技术项目：参与项目实施","培训项目：能独立组织中小型培训（30 人以内）"]},
+  {n:"中1（突破）",kind:"中",it:["资质：完成公司项目管理课程学习与认证","交付与评价：独立制定可行计划并任务拆解、合理分工；提前识别风险并推动闭环；对成员成果客观评价反馈","沉淀赋能：沉淀项目资产与经验、提升团队效率；对领域成员能力辅导提升","技术项目：独立主导小型项目，或是现场核心主力","培训项目：能独立承接客户中大型（100 人以内）产品与技术培训"]}]},
+ {k:"5 · 能力建设", tag:"暂不重点", g:[
+  {n:"初级：不参与建设，执行好即可（本阶段自动达标）",kind:"初",it:[]},
+  {n:"中1（突破）",kind:"中",it:["指导培养新人、初级工程师处理问题，提升专业能力","能制定单个产品或方案的课程，具备完整讲解课程的能力"]}]},
+ {k:"6 · 组织积淀", tag:"暂不重点", g:[
+  {n:"初级：不参与建设，执行好即可（本阶段自动达标）",kind:"初",it:[]},
+  {n:"中1（突破）",kind:"中",it:["在个别技术点或某个产品系列，总结、沉淀、提炼成功经验，在内部分享、传承","根据业务需要做优化，使工具和方法更贴合业务与实践"]}]},
+ {k:"7 · 流程规范建设", tag:"暂不重点", g:[
+  {n:"初级：不参与建设，执行好即可（本阶段自动达标）",kind:"初",it:[]},
+  {n:"中1（突破）",kind:"中",it:["熟悉现行业务流程规范，并能很好地执行","根据业务需要，对流程规范建设提出有效建议"]}]},
+ {k:"8 · 专业知识及应用掌握", tag:"优先", cls:"pri", g:[
+  {n:"初级：基础、通用产品及技术知识、基础原理 ｜ 中1：多产品线常见知识、全面原理",kind:"中",it:["产品线常见知识已掌握（注明涉及产品线）","岗位业务领域专业原理知识（注明程度）"]}]}
+];
+const FSTAT=["○","△","✔"];
+
+/* ---------- 空文档 & 种子 ---------- */
+function emptyDoc(){return {v:5,t:0,
+ meta:{t:0}, people:{t:0}, plan:{t:0},
+ carriers:{t:0,list:[]}, issues:{t:0,list:[]}, drills:{t:0,list:[]},
+ checkins:{t:0,list:[]}, kit:{t:0,list:[]}, cards:{t:0,list:[]}, quotes:{t:0,list:[]},
+ triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}};}
+function seedDoc(){const t=nowT();return {v:5,t,
+ meta:{t,goal:"向「初级 → 中级(中1)」靠拢：保底初级各项达标，争取中1核心项「可独立」。",
+   accept:"12 月中旬前，两人各自独立跟完 1 个真实客户/项目，并在真实场合清楚讲解 1 次；初级各项达标、中1 核心项可独立。",
+   stages:[{n:"10 月",t:"承担客户",d:"逐步承担销售分配的业务客户 —— 先「接得住、跟得完」。"},
+    {n:"11 月",t:"复盘补强",d:"依据 10 月实际对接情况，导师/主管主导复盘，补齐暴露的短板。"},
+    {n:"12 月",t:"打牢基础",d:"产品基础（诺瓦+嗨动）+ 客户维护（客户档案、技术支持培养/效率），从零散到全面。"}]},
+ people:{t,
+   zhan:{nm:"詹祥雨",rl:"技术支持工程师 · 偏内部项目支撑",short:["跨产品线综合调试","闭环意识（该求助时及时求助）","表达结构（讲清重点）"],express:"在周会讲真实案例 / 项目复盘。"},
+   tong:{nm:"童伟桀",rl:"FAE / 业务拓展 · 偏客户业务",short:["产品原理深度（原理不熟→讲解照本宣科）","独立闭环","客户讲解表达"],express:"在真实客户场景做产品讲解。"}},
+ plan:{t,wants:{zhan:"",tong:""},confirm:{zhan:false,tong:false}},
+ carriers:{t,list:[]}, issues:{t,list:[]}, drills:{t,list:[]},
+ checkins:{t,list:[]},
+ kit:{t,list:[
+   {id:uid(),name:"售前模拟话术库",note:"常见场景应答话术，随真实客户补充",link:"",updatedAt:t},
+   {id:uid(),name:"典型客户问题应答 SOP",note:"高频问题标准处理步骤",link:"",updatedAt:t},
+   {id:uid(),name:"项目复盘引导清单",note:"复盘固定问的问题清单",link:"",updatedAt:t},
+   {id:uid(),name:"能力差距诊断问卷",note:"对照 FAE 找短板",link:"",updatedAt:t}]},
+ cards:{t,list:[]}, quotes:{t,list:[]},
+ triggers:{t,list:[]}, fae:{t,map:{}}, reviews:{t,map:{}}};}
+/* 本地演示模式下额外塞 2 条「示例问题」，让责任看板/必回清单一眼能看到效果（服务器数据不受影响） */
+function demoDoc(){const d=seedDoc(),tt=nowT(),H=3600000;
+ d.issues={t:tt,list:[
+  {id:uid(),who:"tong",type:"issue",by:"tong",proj:"【示例】商场 P2.5 项目",cat:"硬件/显示",
+   text:"现场模组局部黑屏，重启接收卡后偶发复现。",status:1,chk:"已查排线与电源",blk:"怀疑接收卡供电纹波",need:"硬件同事",
+   createdAt:tt-3*H,updatedAt:tt-1*H,
+   replies:[{id:uid(),by:"mentor",text:"先量接收卡电源纹波、再看排线接触，点检表在工具包里。",at:tt-1*H}]},
+  {id:uid(),who:"zhan",type:"issue",by:"zhan",proj:"【示例】学校礼堂屏",cat:"软件/配置",
+   text:"亮度自动调节策略冲突，白天画面过曝。",status:0,
+   createdAt:tt-10*H,updatedAt:tt-10*H,replies:[]}
+ ]};
+ return d;}
+
+/* ---------- 状态 ---------- */
+let DOC=emptyDoc();
+let WHO="", MY_ROLE="", TOKEN="", ONLINE=false, MY_PWLESS=false;
+let TAB="plan", RV_M=0, ISSUE_FILTER="all", KNO="cards", QTYPE="issue", QOPEN=false;
+let dirty=false, busy=false, pushTimer=null, pullTimer=null, sse=null;
+let SERVER_OK=null;              // 是否连上服务器（null=未知 / true / false）
+
+const isAdmin=()=>MY_ROLE==="admin";
+const isLead=()=>MY_ROLE==="lead";
+const isMentor=()=>MY_ROLE==="mentor";
+const isStaff=()=>isLead()||isMentor()||isAdmin();
+const isNew=()=>MY_ROLE==="newbie";
+const seeAll=()=>isStaff();
+const mineP=id=>WHO===id;
+
+/* ---------- 合并（与服务器同构：按 id + updatedAt，软删除保留） ---------- */
+function mergeList(L,R){const m={};
+ [L&&L.list||[],R&&R.list||[]].forEach(a=>a.forEach(x=>{const e=m[x.id];if(!e||(x.updatedAt||0)>(e.updatedAt||0))m[x.id]=x;}));
+ return {t:Math.max(L&&L.t||0,R&&R.t||0),list:Object.values(m)};}
+function mergeMap(L,R){const map={};
+ [(L&&L.map)||{},(R&&R.map)||{}].forEach(s=>{for(const k in s){const e=map[k],c=s[k];if(!e||(c.t||0)>(e.t||0))map[k]=c;}});
+ return {t:Math.max(L&&L.t||0,R&&R.t||0),map};}
+function mergePlain(L,R){return (L&&L.t||0)>=(R&&R.t||0)?(L||{}):(R||{});}
+function mergeDoc(A,B){const a=A||emptyDoc(),b=B||emptyDoc();const o={v:5,t:Math.max(a.t||0,b.t||0)};
+ ["meta","people","plan"].forEach(k=>o[k]=mergePlain(a[k],b[k]));
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers"].forEach(k=>o[k]=mergeList(a[k],b[k]));
+ o.fae=mergeMap(a.fae,b.fae);o.reviews=mergeMap(a.reviews,b.reviews);return o;}
+function norm(r){const e=emptyDoc();if(!r||typeof r!=="object"||Array.isArray(r))return e;
+ const o={v:5,t:r.t||0};
+ ["meta","people","plan"].forEach(k=>o[k]=(r[k]&&typeof r[k]==="object"&&!Array.isArray(r[k]))?r[k]:e[k]);
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
+ o.fae=(r.fae&&r.fae.map&&typeof r.fae.map==="object"&&!Array.isArray(r.fae.map))?r.fae:{t:(r.fae&&r.fae.t)||0,map:{}};
+ o.reviews=(r.reviews&&r.reviews.map&&typeof r.reviews.map==="object"&&!Array.isArray(r.reviews.map))?r.reviews:{t:(r.reviews&&r.reviews.t)||0,map:{}};
+ return o;}
+
+/* ---------- 同步通道：服务端 REST + SSE 实时推送 ---------- */
+function apiHeaders(){const h={"content-type":"application/json"};if(TOKEN)h["x-token"]=TOKEN;return h;}
+async function apiGet(p){const r=await fetch(p,{headers:apiHeaders()});let d={};try{d=await r.json();}catch(e){}
+ return {status:r.status,data:d};}
+async function apiPost(p,body){const r=await fetch(p,{method:"POST",headers:apiHeaders(),body:JSON.stringify(body||{})});let d={};try{d=await r.json();}catch(e){}
+ return {status:r.status,data:d};}
+
+function setSync(state,msg){const d=document.getElementById("syncDot"),t=document.getElementById("syncTxt");
+ if(!d)return;d.className="dot"+(state==="warn"?" warn":state==="err"?" err":"");
+ t.textContent=msg||(state==="ok"?"已同步 · "+fmt(nowT()):state==="err"?"离线（本地已存）":state);}
+function lsSave(){try{localStorage.setItem(LS_LOCAL,JSON.stringify(DOC));}catch(e){}}
+function touch(){DOC.t=nowT();dirty=true;lsSave();schedulePush();}
+function schedulePush(){clearTimeout(pushTimer);pushTimer=setTimeout(push,700);}
+
+async function push(){
+ if(!ONLINE||!TOKEN||!dirty||busy)return;
+ busy=true;dirty=false;
+ try{
+  const r=await apiPost("/api/save",{doc:DOC});
+  if(r.data&&r.data.ok){
+   const merged=mergeDoc(DOC,norm(r.data.doc));
+   if(JSON.stringify(merged)!==JSON.stringify(DOC)){DOC=merged;lsSave();render();}
+   setSync("ok");
+  }else{dirty=true;setSync("err",(r.data&&r.data.msg)||"保存失败");}
+ }catch(e){dirty=true;setSync("err","离线（本地已保存，联网后自动补传）");}
+ busy=false;
+}
+async function pull(){
+ if(!ONLINE||!TOKEN)return;
+ if(dirty){await push();return;}
+ setSync("warn","同步中…");
+ try{const r=await apiGet("/api/state");
+  if(r.data&&r.data.ok){applyRemote(r.data.doc);setSync("ok");}else setSync("err");}
+ catch(e){setSync("err");}
+}
+function applyRemote(remote,mode){
+ const r=norm(remote);
+ const merged=mode==="replace"?r:mergeDoc(DOC,r);
+ const changed=JSON.stringify(merged)!==JSON.stringify(DOC);
+ if(changed){DOC=merged;lsSave();render();}
+}
+/* SSE：任一端写入 → 服务器广播 → 其它端拉取并合并（不覆盖未提交的本地改动） */
+function connectSSE(){
+ if(sse){try{sse.close();}catch(e){}sse=null;}
+ try{
+  sse=new EventSource("/api/events?token="+encodeURIComponent(TOKEN));
+  sse.onopen=()=>setSync("ok");
+  sse.onmessage=ev=>{let d={};try{d=JSON.parse(ev.data);}catch(e){}if(d.hello)return;onRemoteSignal();};
+  sse.onerror=()=>setSync("warn","实时连接中断，自动重连…");
+ }catch(e){}
+}
+function onRemoteSignal(){clearTimeout(pullTimer);pullTimer=setTimeout(async()=>{
+ if(!ONLINE||!TOKEN||busy)return;
+ try{const r=await apiGet("/api/state");if(r.data&&r.data.ok){applyRemote(r.data.doc);setSync("ok");}}
+ catch(e){setSync("err");}
+},250);}
+
+/* ---------- 身份 ---------- */
+function setGMsg(m){const e=document.getElementById("gMsg");if(e)e.innerHTML=m||"";}
+/* 未连上服务器时，直接在登录门说清楚，并把本地演示入口摆出来 */
+function reflectGateServer(){
+ const box=document.getElementById("gNoSrv");if(!box)return;
+ if(SERVER_OK===false){box.classList.remove("hide");
+  const lb=document.getElementById("gLocalBox");if(lb)lb.classList.remove("hide");}
+ else box.classList.add("hide");
+}
+function showGate(msg){document.getElementById("gate").classList.remove("hide");document.getElementById("app").classList.add("hide");setGMsg(msg);}
+function showApp(){document.getElementById("gate").classList.add("hide");document.getElementById("app").classList.remove("hide");
+ const rn=ROLE_NAME[MY_ROLE]||"";
+ document.getElementById("idWho").textContent=(WHO_NAME[WHO]||"—")+(rn?" · "+rn:"");
+ document.getElementById("idLock").textContent=ONLINE?"在线 · 身份已锁定":"本地演示模式";
+ const lb=document.getElementById("linksBtn");lb.textContent=(ONLINE&&isAdmin())?"账号管理":"使用说明";lb.classList.remove("hide");
+ render();}
+
+/* 登录：账号 + 密码 */
+async function doLogin(username,password){
+ const btns=document.querySelectorAll("#gLoginPane .btn");btns.forEach(b=>b.disabled=true);
+ setGMsg("正在验证…");
+ try{
+  const r=await apiPost("/api/login",{username,password});
+  if(!r.data||!r.data.ok){setGMsg((r.data&&r.data.msg)||"登录失败，请重试");btns.forEach(b=>b.disabled=false);return;}
+  await enterSession(r.data.token,r.data.user);
+ }catch(e){
+  SERVER_OK=false;reflectGateServer();
+  setGMsg("服务器未连接，账号密码登录用不了（不是账号/密码的问题）。请用下方「本地演示模式」先预览，或先启动 server.js。");
+  btns.forEach(b=>b.disabled=false);
+ }
+}
+/* 极简登录：把「成员名册」渲染成按角色分组的下拉；离线时用演示名单兜底 */
+const DEMO_ROSTER=[{id:"lead",name:"主管",role:"lead"},{id:"mentor",name:"导师",role:"mentor"},
+ {id:"zhan",name:"詹祥雨",role:"newbie"},{id:"tong",name:"童伟桀",role:"newbie"}];
+function renderRoster(members,needPasscode){
+ const sel=document.getElementById("gPick");if(!sel)return;
+ const list=(members&&members.length)?members:DEMO_ROSTER;
+ const order=["lead","mentor","newbie"],groups={lead:[],mentor:[],newbie:[]};
+ list.forEach(m=>{if(groups[m.role])groups[m.role].push(m);});
+ let html="";
+ order.forEach(r=>{if(!groups[r].length)return;
+  html+=`<optgroup label="${esc(ROLE_NAME[r]||r)}">`+
+   groups[r].map(m=>`<option value="${esc(m.id)}">${esc(m.name)}（${esc(ROLE_NAME[m.role]||m.role)}）</option>`).join("")+
+   `</optgroup>`;});
+ sel.innerHTML=html||`<option value="">（暂无成员）</option>`;
+ const pc=document.getElementById("gPcRow");if(pc)pc.classList.toggle("hide",!needPasscode);
+}
+async function quickLogin(){
+ const sel=document.getElementById("gPick");const id=sel?sel.value:"";
+ if(!id){setGMsg("还没有可选成员，请让超级管理员先把人加进来；或先用「本地演示模式」。");return;}
+ // 离线预览：直接以本地模式进入（选名字 → 进入，体验一致）
+ if(SERVER_OK===false){localMode(id);return;}
+ const pc=(document.getElementById("gPc")||{}).value||"";
+ const btn=document.getElementById("gPickGo");if(btn)btn.disabled=true;
+ setGMsg("正在进入…");
+ try{
+  const r=await apiPost("/api/quick_login",{id,passcode:pc});
+  if(!r.data||!r.data.ok){setGMsg((r.data&&r.data.msg)||"进入失败，请重试");if(btn)btn.disabled=false;return;}
+  await enterSession(r.data.token,r.data.user);
+ }catch(e){SERVER_OK=false;reflectGateServer();
+  setGMsg("服务器未连接，无法进入。可先用「本地演示模式」，或先启动 server.js。");
+  if(btn)btn.disabled=false;}
+}
+/* 建立会话：写令牌 → 拉数据 → 拉账号清单 → 连 SSE */
+async function enterSession(tok,user){
+ TOKEN=tok;WHO=user.id;MY_ROLE=user.role;MY_PWLESS=!!user.pwless;ONLINE=true;
+ try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
+ const st=await apiGet("/api/state");
+ if(st.data&&st.data.ok&&st.data.doc){DOC=norm(st.data.doc);lsSave();}
+ else{DOC=seedDoc();lsSave();await push();}
+ try{const c=await apiGet("/api/config");if(c.data&&c.data.users)applyAccounts(c.data.users);}catch(e){}
+ connectSSE();showApp();setSync("ok");
+}
+/* 邀请激活：新人点开链接 → 只设一个自己的密码 */
+let INVITE="";
+async function showInvite(t){
+ INVITE=t;
+ const pp=document.getElementById("gPickPane");if(pp)pp.classList.add("hide");
+ const aw=document.getElementById("gAdminWrap");if(aw)aw.classList.add("hide");
+ document.getElementById("gLoginPane").classList.add("hide");
+ document.getElementById("gHintBox").classList.add("hide");
+ const f=document.getElementById("gInvitePane");f.classList.remove("hide");
+ f.innerHTML="读取中…";
+ let r={};
+ try{r=await apiGet("/api/invite_info?invite="+encodeURIComponent(t));}catch(e){f.innerHTML="连不上服务器，请让管理员重新发一次邀请链接。";return;}
+ if(!r.data||!r.data.ok){
+  f.innerHTML=`<div class="gcard" style="background:var(--red-l);border-color:#EFC9C3;color:var(--red-d)">${esc((r.data&&r.data.msg)||"邀请链接无效或已使用")}<br>请联系超级管理员重新生成。</div>`;
+  return;
+ }
+ f.innerHTML=`<div class="gcard">你好，<b>${esc(r.data.name)}</b>（${esc(r.data.roleName)}）。<br>这是你首次进入：<b>点一下「一键进入」即可，不用记任何口令</b>。</div>
+  <div class="btns" style="margin-top:12px;justify-content:flex-start"><button class="btn" id="ivGo">一键进入工作台</button></div>
+  <div class="muted" style="margin-top:10px">想以后在<b>别的电脑/手机</b>上也能登录？可以顺手设个密码（可选）：</div>
+  <div class="form" style="margin-top:8px">
+   <input id="ivP" type="password" placeholder="设置密码（可选 · 留空即免口令）" autocomplete="new-password">
+   <input id="ivP2" type="password" placeholder="再输一次（设密码时填写）" autocomplete="new-password">
+  </div>
+  <div class="btns" style="margin-top:10px;justify-content:flex-start"><button class="btn gh" id="ivGoPw">设置密码并进入</button></div>
+  <div class="muted" style="margin-top:9px">免口令进入后，本机会自动记住登录；若换了设备，让超级管理员再发一条邀请链接即可。</div>`;
+ document.getElementById("ivGo").onclick=()=>doActivate(true);
+ document.getElementById("ivGoPw").onclick=()=>doActivate(false);
+}
+async function doActivate(pwless){
+ if(pwless)return doActivateWith("");
+ const p=(document.getElementById("ivP")||{}).value||"",p2=(document.getElementById("ivP2")||{}).value||"";
+ if(p.length<4){setGMsg("密码至少 4 位（或点「一键进入」免口令进入）");return;}
+ if(p!==p2){setGMsg("两次输入不一致，请重新输入");return;}
+ return doActivateWith(p);
+}
+async function doActivateWith(p){
+ try{const r=await apiPost("/api/activate",{invite:INVITE,password:p});
+  if(r.data&&r.data.ok){await enterSession(r.data.token,r.data.user);}
+  else setGMsg((r.data&&r.data.msg)||"激活失败，请让管理员重新发邀请链接");}
+ catch(e){setGMsg("连不上服务器："+esc(e.message||String(e)));}
+}
+/* 企业微信扫码登录（服务器配置后启用） */
+function doWecom(){location.href="/api/wecom_login";}
+function localMode(who){
+ ONLINE=false;TOKEN="";WHO=who||"lead";
+ MY_ROLE=who==="lead"?"lead":who==="mentor"?"mentor":who==="admin"?"admin":"newbie";
+ try{localStorage.removeItem(LS_TOKEN);}catch(e){}
+ try{localStorage.setItem(LS_WHO,who);}catch(e){}
+ try{const s=localStorage.getItem(LS_LOCAL);if(s)DOC=norm(JSON.parse(s));else{DOC=demoDoc();}}
+ catch(e){DOC=demoDoc();}
+ // 本地演示：无论缓存如何，都保证「责任看板/必回队列」有示例数据可看
+ if(!((DOC.issues&&DOC.issues.list||[]).length)){const d=demoDoc();DOC.issues=d.issues;DOC.t=nowT();}
+ lsSave();
+ showApp();setSync("warn","本地演示模式 · 数据只存本机");
+}
+function logout(){
+ if(!confirm("退出并回到登录页？（服务器数据不受影响）"))return;
+ if(sse){try{sse.close();}catch(e){}sse=null;}
+ ONLINE=false;TOKEN="";MY_ROLE="";dirty=false;
+ try{localStorage.removeItem(LS_TOKEN);}catch(e){}
+ location.reload();
+}
+
+/* ---------- 右上角面板：管理员→账号管理；其他人→使用说明 ---------- */
+const shareUrl=()=>{const p=location.pathname.replace(/\/index\.html$/,"");return location.origin+(p.endsWith("/")?p:p+"/");};
+async function openPanel(){ if(ONLINE&&isAdmin())return openAccounts(); return openInfo(); }
+
+async function openInfo(){
+ let html=`<div class="mh"><b>使用说明</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
+ html+=`<div style="font-size:12.6px;margin-bottom:6px"><b>全组共用这一个网址</b>，各自在「选择你是谁」里选到自己即可进入，数据在服务器上实时同步：</div>
+  <div class="linkrow"><code>${esc(shareUrl())}</code><button class="btn sm gh" data-copy="${esc(shareUrl())}">复制网址</button></div>`;
+ html+=`<div class="muted" style="margin-top:12px">· 进入方式：打开网址 →「选择你是谁」→「进入工作台」即可（免口令，不用记账号密码）；管理员可选设一个团队口令。<br>
+  · 新人只看得到自己的记录；导师/主管可见全部，但看不到新人标为「仅导师可见」的诉求。<br>
+  · 成员名单、角色，由<b>超级管理员</b>在右上角「账号管理」里维护。</div>`;
+ if(WHO)html+=`<div class="row" style="margin-top:14px;flex-wrap:wrap">`
+  +(ONLINE&&MY_PWLESS?`<button class="btn gh sm" id="setPwBtn">设置一个密码（方便换设备登录）</button>`:"")
+  +`<button class="btn gh sm" id="exitBtn">${ONLINE?"退出登录":"退出并切换身份"}</button></div>`;
+ html+=`</div>`;
+ paintModal(html);
+ const eb=document.getElementById("exitBtn");if(eb)eb.onclick=logout;
+ const sp=document.getElementById("setPwBtn");if(sp)sp.onclick=async()=>{
+  const a=prompt("设置新密码（至少 4 位）：");if(a===null)return;
+  if(String(a).length<4){alert("至少 4 位");return;}
+  const b=prompt("再输一次：");if(b===null)return;
+  if(a!==b){alert("两次输入不一致");return;}
+  const rr=await apiPost("/api/passwd",{newPassword:a});
+  if(rr.data&&rr.data.ok){MY_PWLESS=false;if(rr.data.token){TOKEN=rr.data.token;try{localStorage.setItem(LS_TOKEN,TOKEN);}catch(e){}}alert("已设置密码：以后可在任意设备用「账号 + 密码」登录。");openInfo();}
+  else alert((rr.data&&rr.data.msg)||"设置失败");
+ };
+}
+
+/* 超级管理员：账号管理（建号 / 分配角色 / 启停 / 重置 / 邀请链接 / 绑定企业微信 / 删除） */
+async function openAccounts(){
+ let r={};
+ try{r=await apiGet("/api/users");}catch(e){}
+ if(!r.data||!r.data.ok){alert((r.data&&r.data.msg)||"读取账号失败，请确认你是超级管理员并已连上服务器。");return;}
+ const users=r.data.users||[];
+ const roleOpts=sel=>["admin","lead","mentor","newbie"].map(k=>`<option value="${k}" ${sel===k?"selected":""}>${ROLE_NAME[k]}</option>`).join("");
+ let html=`<div class="mh"><b>账号管理</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
+ html+=`<div class="muted" style="margin-bottom:10px">在这里把人加进来、分配角色即可：加完后，他打开网址在「<b>选择你是谁</b>」里选到自己，就能直接进（不用账号、不用密码）。</div>
+  <div class="card pad" style="margin-bottom:14px">
+   <div class="grid2">
+    <input id="nuUser" placeholder="登录名（3–20 位小写字母/数字/_）">
+    <input id="nuName" placeholder="姓名（如 张三）">
+   </div>
+   <div class="row" style="margin-top:8px;flex-wrap:wrap">
+    <select id="nuRole">${roleOpts("newbie")}</select>
+    <input id="nuPass" placeholder="密码（选填；留空也行，本人免口令也能进）" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px">
+    <button class="btn" id="nuAdd">＋ 添加成员</button>
+   </div>
+  </div>
+  <div class="card pad" style="margin-bottom:14px">
+   <div style="font-size:13px;font-weight:700;margin-bottom:4px">团队口令（可选）</div>
+   <div class="muted" style="margin-bottom:8px">默认不需要口令：选名字就能进。想加一层保护，就设一个<b>全组共用</b>的口令（贴在群里即可，谁都不用单独记）。留空=取消口令。</div>
+   <div class="row" style="flex-wrap:wrap">
+    <input id="tpVal" value="${esc(r.data.teamPasscode||"")}" placeholder="例如 nova2026（留空=无需口令）" style="flex:1;min-width:200px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px">
+    <button class="btn" id="tpSave">保存口令</button>
+    <button class="btn gh" id="tpClear">取消口令</button>
+   </div>
+  </div>`;
+ html+=users.map(u=>{
+  const inv=u.inviteUrl?`<div class="linkrow" style="margin-top:7px"><code>${esc(u.inviteUrl)}</code><button class="btn sm gh" data-copy="${esc(u.inviteUrl)}">复制邀请链接</button></div>
+    <div class="muted" style="margin-top:2px">发给本人 → 打开后点「一键进入」即可，无需任何口令。</div>`:"";
+  return `<div class="card pad" style="margin-bottom:10px">
+   <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <div><b>${esc(u.name)}</b> <span class="muted">@${esc(u.username)}</span>
+      <span class="tag ${u.active?"ok":"no"}" style="margin-left:6px">${u.active?"启用":"已停用"}</span>
+      <span class="tag gy" style="margin-left:4px">${u.role==="admin"?"账号密码登录":"免口令可进入"}</span></div>
+    <div class="row" style="gap:6px">
+     <select data-urole="${u.id}">${roleOpts(u.role)}</select>
+     <button class="btn sm gh" data-utoggle="${u.id}">${u.active?"停用":"启用"}</button>
+     <button class="btn sm gh" data-uinvite="${u.id}">生成邀请链接</button>
+     <button class="btn sm danger" data-udel="${u.id}">删除</button>
+    </div>
+   </div>
+   <div class="row" style="margin-top:8px;flex-wrap:wrap">
+    <input data-uwecom="${u.id}" value="${esc(u.wecom||"")}" placeholder="企业微信 userid（选填，用于扫码登录绑定）" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+    <button class="btn sm gh" data-usave="${u.id}">保存</button>
+   </div>
+   ${inv}
+  </div>`;}).join("");
+ html+=`<div class="muted" style="margin-top:12px">· 角色说明：超级管理员可管理账号；主管可做终评、看责任看板；导师可回复、复评、评分；新人只有自己的记录。<br>
+  · 企业微信扫码登录：在服务器配置 4 个环境变量后自动启用，并在上面为每个人填好 userid 即可绑定。</div>`;
+ if(ONLINE&&WHO)html+=`<div class="row" style="margin-top:12px"><button class="btn gh sm" id="exitBtn">退出登录</button></div>`;
+ html+=`</div>`;
+ paintModal(html);
+ const eb=document.getElementById("exitBtn");if(eb)eb.onclick=logout;
+ const tps=document.getElementById("tpSave");if(tps)tps.onclick=async()=>{
+  const rr=await apiPost("/api/team_passcode",{passcode:(document.getElementById("tpVal").value||"").trim()});
+  if(rr.data&&rr.data.ok){alert((rr.data.needPasscode)?"已保存团队口令（把它贴在群里，全组共用）":"已取消口令：现在选名字即可进入");openAccounts();}
+  else alert((rr.data&&rr.data.msg)||"保存失败");
+ };
+ const tpc=document.getElementById("tpClear");if(tpc)tpc.onclick=async()=>{
+  const rr=await apiPost("/api/team_passcode",{passcode:""});
+  if(rr.data&&rr.data.ok){alert("已取消团队口令：现在选名字即可进入");openAccounts();}
+  else alert((rr.data&&rr.data.msg)||"操作失败");
+ };
+
+ const add=document.getElementById("nuAdd");if(add)add.onclick=async()=>{
+  const username=document.getElementById("nuUser").value.trim().toLowerCase();
+  const name=document.getElementById("nuName").value.trim();
+  const role=document.getElementById("nuRole").value;
+  const password=document.getElementById("nuPass").value;
+  if(!username||!name){alert("请填写登录名与姓名");return;}
+  const rr=await apiPost("/api/users",{username,name,role,password});
+  if(rr.data&&rr.data.ok){
+   alert("已添加："+name+"（"+ROLE_NAME[role]+"）。\n他打开网址，在「选择你是谁」里选到自己就能直接进入。");
+   openAccounts();
+  } else alert((rr.data&&rr.data.msg)||"添加失败");
+ };
+ document.querySelectorAll("[data-urole]").forEach(s=>s.onchange=async()=>{
+  const rr=await apiPost("/api/user_update",{id:s.dataset.urole,role:s.value});
+  if(rr.data&&rr.data.ok){alert("角色已更新");}else{alert((rr.data&&rr.data.msg)||"修改失败");}
+  openAccounts();
+ });
+ document.querySelectorAll("[data-utoggle]").forEach(b=>b.onclick=async()=>{
+  const u=users.find(x=>x.id===b.dataset.utoggle);if(!u)return;
+  const rr=await apiPost("/api/user_update",{id:u.id,active:!u.active});
+  if(rr.data&&rr.data.ok)openAccounts();else alert((rr.data&&rr.data.msg)||"操作失败");
+ });
+ document.querySelectorAll("[data-usave]").forEach(b=>b.onclick=async()=>{
+  const inp=document.querySelector(`[data-uwecom="${b.dataset.usave}"]`);
+  const rr=await apiPost("/api/user_update",{id:b.dataset.usave,wecom:(inp.value||"").trim()});
+  if(rr.data&&rr.data.ok)alert("已保存企业微信绑定");else alert((rr.data&&rr.data.msg)||"保存失败");
+ });
+ document.querySelectorAll("[data-uinvite]").forEach(b=>b.onclick=async()=>{
+  if(!confirm("生成新的邀请链接？本人需重新设一次密码（原密码立即失效）。"))return;
+  const rr=await apiPost("/api/user_invite",{id:b.dataset.uinvite});
+  if(rr.data&&rr.data.ok){alert("邀请链接：\n"+((rr.data.user&&rr.data.user.inviteUrl)||""));openAccounts();}
+  else alert((rr.data&&rr.data.msg)||"生成失败");
+ });
+ document.querySelectorAll("[data-udel]").forEach(b=>b.onclick=async()=>{
+  if(!confirm("确认删除该账号？"))return;
+  const rr=await apiPost("/api/user_delete",{id:b.dataset.udel});
+  if(rr.data&&rr.data.ok)openAccounts();else alert((rr.data&&rr.data.msg)||"删除失败");
+ });
+}
+/* 弹出层通用渲染 + 复制按钮绑定 */
+function paintModal(html){
+ const box=document.getElementById("ovlBox");box.innerHTML=html;
+ document.getElementById("ovl").classList.remove("hide");
+ const c=document.getElementById("ovlClose");if(c)c.onclick=closeOvl;
+ document.querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>{const o=b.textContent;
+  copyText(b.dataset.copy).then(()=>{b.textContent="已复制";setTimeout(()=>b.textContent=o,1200);})
+   .catch(()=>{b.textContent="请手动复制";setTimeout(()=>b.textContent=o,1600);});});
+}
+function closeOvl(){document.getElementById("ovl").classList.add("hide");}
+
+/* ---------- 小工具 ---------- */
+const ppl=()=>seeAll()?NEWCOMERS.slice():[WHO];
+function chipCycle(cls,v,labels){const txt=labels?labels[v]:"";return `<button class="chip ${cls}">${txt}</button>`;}
+function statCard(v,k){return `<div class="stat"><div class="v">${v}</div><div class="k">${k}</div></div>`;}
+
+/* ===================================================================
+   渲染
+   =================================================================== */
+function render(){if(!WHO)return;for(const f of [renderPassport,renderPlan,renderAssist,renderCoach,renderMonitor,renderDuty,renderReview])try{f();}catch(e){console.error(e);}}
+function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
+ ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
+ window.scrollTo({top:0,behavior:"smooth"});}
+
+/* ---------- 成长护照（新人首页）----------
+   目的：让新人打开就想「今天再进一格」，而不是当成负担。
+   只讲三件事：我在哪一段 · 下一站是什么（就一个）· 我攒了什么（连续天数 / 徽章 / 被点评反馈） */
+function nextNodeOf(who){const done=ciDone(who);return NODES.find(n=>!done.has(n.id))||null;}
+function renderPassport(){
+ const sec=document.getElementById("passSec");
+ if(!sec)return;
+ if(!isNew()){sec.classList.add("hide");return;}
+ sec.classList.remove("hide");
+ const who=WHO,st=ciStats(who),LVS=LEVELS,total=TOTAL_NODES;
+ const nn=nextNodeOf(who);
+ const cur=(()=>{for(let i=0;i<LVS.length;i++){const L=LVS[i];if((st.lv[L.k]||0)<L.goal)return L;}return null;})();
+ const lvDone=cur?(st.lv[cur.k]||0):total;
+ const lvName=cur?cur.n+"（"+cur.period+"）":"全地图通关";
+ const lvPct=cur?Math.min(100,Math.round(lvDone/cur.goal*100)):100;
+ const myDrills=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===who);
+ const best=myDrills.some(x=>x.score==="优秀");
+ const closedC=(DOC.carriers.list||[]).filter(x=>!x.del&&x.who===who&&x.st===2).length;
+ const perfect=ciList(who).some(x=>x.total&&x.correct===x.total);
+ const badges=[
+  {ic:"🚀",n:"启航",on:st.streak>=7,note:"连续 7 天打卡"},
+  {ic:"🥉",n:"青铜领航",on:(st.lv.bronze||0)>=24,note:"完成青铜整级 24 节点"},
+  {ic:"🥈",n:"白银领航",on:(st.lv.silver||0)>=18,note:"完成白银整级 18 节点"},
+  {ic:"🥇",n:"黄金领航",on:(st.lv.gold||0)>=12,note:"完成黄金整级 12 节点"},
+  {ic:"💯",n:"准星",on:perfect,note:"任一次小测 3 题全对"},
+  {ic:"🎤",n:"开讲",on:best,note:"演练评分「优秀」"},
+  {ic:"🔒",n:"闭环",on:closedC>=1,note:"跟完 1 个真实客户/项目"}];
+ const onCnt=badges.filter(b=>b.on).length;
+ const fb=[];
+ (DOC.issues.list||[]).filter(x=>!x.del&&x.who===who).forEach(x=>{(x.replies||[]).forEach(r=>{if(r.by!==who)fb.push({t:r.at||0,who:r.by,tx:r.text});});});
+ myDrills.forEach(x=>{if(x.score)fb.push({t:x.updatedAt||0,who:"mentor",tx:"本周演练《"+(x.topic||"")+"》评分："+x.score+(x.fb?"｜"+x.fb:"")});});
+ fb.sort((a,b)=>b.t-a.t);
+ document.getElementById("passport").innerHTML=
+  `<div class="passport">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px">
+     <div>
+      <div class="pk">当前段位</div>
+      <div class="pv">${esc(lvName)} ｜ ${lvDone}/${cur?cur.goal:total}</div>
+      <div style="font-size:12px;opacity:.92;margin-top:5px">连续打卡 <b>${st.streak}</b> 天 · 已完成 <b>${st.done.size}</b>/${total} 个节点 · 本月 <b>${st.mon}</b> 个 · 小测正确率 <b>${st.acc==null?"—":st.acc+"%"}</b></div>
+     </div>
+     <div style="min-width:210px">
+      <div class="pk">本段位进度</div>
+      <div class="bar" style="background:rgba(255,255,255,.22);margin-top:5px"><i style="width:${lvPct}%;background:${cur?cur.c:"#FFD879"}"></i></div>
+      <div style="font-size:11.6px;opacity:.88;margin-top:6px">${cur?"再完成 "+Math.max(0,cur.goal-lvDone)+" 个节点就到下一段":"三档全部完成 🎉"}</div>
+     </div>
+    </div>
+    <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.2);padding-top:12px">
+     <div class="pk" style="font-weight:700">徽章墙 · 已解锁 ${onCnt}/${badges.length}</div>
+     <div class="row" style="gap:12px;margin-top:9px;flex-wrap:wrap">${badges.map(b=>`<span class="badge ${b.on?"on":"off"}" title="${esc(b.note)}"><span class="bb">${b.ic}</span>${esc(b.n)}</span>`).join("")}</div>
+    </div>
+   </div>
+   <div class="grid2" style="margin-top:12px">
+    <div class="card pad">
+     <div class="muted" style="font-weight:700;color:var(--ink2)">下一站（就一个，做到就够）</div>
+     ${nn?`<div style="font-size:15px;font-weight:700;margin-top:7px">${esc(nn.t)}</div>
+       <div class="muted" style="margin-top:3px">${esc(nn.levelName)} · ${esc(nn.period)} · 学完做 3 题小测</div>
+       <div class="row" style="margin-top:10px"><button class="btn" data-passgo="${nn.id}">现在去学 → 测 → 用</button></div>
+       <div class="muted" style="margin-top:9px">不用贪多：今天完成这 1 个节点，就是「进一格」。</div>`
+      :`<div style="margin-top:7px">全部节点已完成 ✅ 进入复习与真实交付阶段。</div>`}
+    </div>
+    <div class="card pad">
+     <div class="muted" style="font-weight:700;color:var(--ink2)">导师 / 主管给我的反馈（最近 ${Math.min(fb.length,3) || 0} 条）</div>
+     ${fb.length?fb.slice(0,3).map(f=>`<div class="bubble co" style="max-width:100%"><div class="who">${esc(WHO_NAME[f.who]||f.who||"导师/主管")} · ${fmt(f.t)}</div>${nl(f.tx)}</div>`).join("")
+      :`<div class="muted" style="margin-top:8px">还没有反馈。去「② 协助」发一条项目问题，导师回复后这里就会出现 —— 每次被点评，都是一次「被看见」。</div>`}
+    </div>
+   </div>`;
+ document.querySelectorAll("[data-passgo]").forEach(b=>b.onclick=()=>openCiNode(b.dataset.passgo));
+}
+
+/* ---------- ① 规划 ---------- */
+function renderPlan(){
+ const m=DOC.meta||{};
+ document.getElementById("planGoal").innerHTML=
+  `<div style="font-size:13.6px"><b>总目标：</b>${isStaff()
+    ?`<input id="mGoal" value="${esc(m.goal||"")}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px;margin-top:5px">`:esc(m.goal||"")}</div>
+   <div style="font-size:13px;margin-top:10px"><b>一句话验收：</b>${isStaff()
+    ?`<input id="mAccept" value="${esc(m.accept||"")}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px;margin-top:5px">`:esc(m.accept||"")}</div>`;
+ if(isStaff()){const a=document.getElementById("mGoal");a.onchange=()=>{DOC.meta.goal=a.value;DOC.meta.t=nowT();touch();};
+  const b=document.getElementById("mAccept");b.onchange=()=>{DOC.meta.accept=b.value;DOC.meta.t=nowT();touch();};}
+ document.getElementById("planRail").innerHTML=((DOC.meta&&DOC.meta.stages)||[]).map(s=>
+  `<div class="st"><div class="n">${esc(s.n)}</div><div class="t">${esc(s.t)}</div><div class="d">${esc(s.d)}</div></div>`).join("");
+
+ const P=DOC.people||{},PL=DOC.plan||{};
+ document.getElementById("planPeople").innerHTML=ppl().map(id=>{
+  const p=P[id]||{},confirmed=PL.confirm&&PL.confirm[id],wants=(PL.wants&&PL.wants[id])||"";
+  return `<div class="card pad">
+   <div class="row" style="justify-content:space-between"><h3>${esc(p.nm||WHO_NAME[id])}</h3>
+     <span class="tag ${confirmed?"ok":"wt"}">${confirmed?"计划已确认":"待新人确认"}</span></div>
+   <div class="muted" style="margin-top:3px">${esc(p.rl||"")}</div>
+   <div class="muted" style="margin-top:9px;font-weight:700;color:var(--ink2)">重点补强</div>
+   <div class="chips" style="margin-top:5px">${(p.short||[]).map(s=>`<span class="chip b">${esc(s)}</span>`).join("")}</div>
+   <div class="muted" style="margin-top:9px;font-weight:700;color:var(--ink2)">表达练法</div>
+   <div style="font-size:12.6px;color:var(--ink2)">${esc(p.express||"")}</div>
+   <div class="muted" style="margin-top:11px;font-weight:700;color:var(--ink2)">新人诉求（我想练 / 需要什么支持 · 新人填）</div>
+   <textarea data-wants="${id}" style="width:100%;min-height:54px;margin-top:5px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.5px" ${mineP(id)?"":"readonly"} placeholder="${mineP(id)?"例：想多跟客户现场、讲解前先给我备参":"（新人可填写）"}">${esc(wants)}</textarea>
+   ${mineP(id)?`<div class="row" style="margin-top:8px"><button class="btn sm ${confirmed?"gh":""}" data-confirm="${id}">${confirmed?"撤销确认":"确认这份计划"}</button></div>`:""}
+  </div>`;}).join("");
+ document.querySelectorAll("[data-wants]").forEach(t=>t.onchange=()=>{const id=t.dataset.wants;
+  DOC.plan.wants=DOC.plan.wants||{};DOC.plan.wants[id]=t.value;DOC.plan.t=nowT();touch();});
+ document.querySelectorAll("[data-confirm]").forEach(b=>b.onclick=()=>{const id=b.dataset.confirm;
+  DOC.plan.confirm=DOC.plan.confirm||{};DOC.plan.confirm[id]=!DOC.plan.confirm[id];DOC.plan.t=nowT();touch();render();});
+
+ renderCarriers();
+}
+function renderCarriers(){
+ const C=DOC.carriers||{list:[]};const list=(C.list||[]).filter(x=>!x.del);const ids=ppl();
+ const g=id=>list.filter(x=>x.who===id);
+ document.getElementById("carrierTop").innerHTML=ids.map(id=>{const a=g(id);
+  return `<span class="chip b"><b>${WHO_NAME[id]}</b> 登记 ${a.length} · 闭环 ${a.filter(x=>x.st===2).length}</span>`;}).join("")
+  +`<span class="chip b">机会驱动 · 载体由各自销售档位决定，导师/主管不决策</span>`;
+ document.getElementById("carrierBlk").innerHTML=ids.map(id=>{
+  const a=g(id),mine=mineP(id);
+  const rows=a.length?a.map(x=>{const acts=(x.actions||[]).filter(v=>!v.del);
+   return `<div class="item">
+    <div class="hd"><span class="tt">${esc(x.name)}</span>
+      ${mine?`<button class="btn sm danger" data-cdel="${x.id}">×</button>`:""}</div>
+    ${x.src?`<div class="meta">来源/档位：${esc(x.src)}</div>`:""}
+    <div class="chips" style="margin-top:6px">
+      <button class="chip k${x.st||0}" data-cst="${x.id}">${["待承接","跟进中","已闭环"][x.st||0]}</button>
+      ${x.note?`<span class="muted">${esc(x.note)}</span>`:""}</div>
+    <div class="muted" style="margin-top:9px;font-weight:700;color:var(--ink2)">客户维护行动计划（${acts.filter(v=>v.st!==2).length} 项未完成）</div>
+    ${acts.map(v=>`<div class="row" style="justify-content:space-between;margin-top:6px;font-size:12.5px">
+      <span><button class="chip k${v.st===2?2:v.st===1?1:0}" data-ast="${x.id}.${v.id}">${["待办","进行中","已完成"][v.st||0]}</button>
+      ${esc(v.text)}${v.due?` <span class="muted">· ${esc(v.due)}</span>`:""}</span>
+      ${mine?`<button class="btn sm danger" data-adel="${x.id}.${v.id}">×</button>`:""}</div>`).join("")}
+    ${mine?`<div class="row" style="margin-top:7px"><input data-anew="${x.id}" placeholder="下一步动作（如：下周三前出调试方案）" style="flex:1;min-width:150px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+      <button class="btn sm" data-aadd="${x.id}">＋ 加行动</button></div>`:""}
+   </div>`;}).join("")
+   :`<div class="empty">还没有登记 —— 分到客户/项目后记下来</div>`;
+  return `<div class="card pad">
+    <h3>${WHO_NAME[id]} <span class="muted" style="font-weight:400">· 随业务分配</span></h3>
+    <div style="margin-top:9px">${rows}</div>
+    ${mine?`<div class="form" style="margin-top:9px">
+      <input id="cn_${id}" placeholder="客户 / 项目名称（必填）">
+      <input id="cs_${id}" placeholder="来源 / 销售档位（选填）">
+      <input id="cm_${id}" placeholder="备注（选填：负责环节 / 关键人）">
+      <button class="btn" data-cadd="${id}">＋ 登记载体</button></div>`:`<div class="muted" style="margin-top:8px">（由 ${WHO_NAME[id]} 本人登记）</div>`}
+   </div>`;}).join("");
+ document.querySelectorAll("[data-cadd]").forEach(b=>b.onclick=()=>{const id=b.dataset.cadd;
+  const n=document.getElementById("cn_"+id).value.trim();if(!n){document.getElementById("cn_"+id).focus();return;}
+  DOC.carriers.list=DOC.carriers.list||[];
+  DOC.carriers.list.push({id:uid(),who:id,name:n,src:document.getElementById("cs_"+id).value.trim(),
+   note:document.getElementById("cm_"+id).value.trim(),st:0,actions:[],updatedAt:nowT()});
+  DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-cst]").forEach(b=>b.onclick=()=>{const it=DOC.carriers.list.find(x=>x.id===b.dataset.cst);if(!it)return;
+  it.st=((it.st||0)+1)%3;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=()=>{const it=DOC.carriers.list.find(x=>x.id===b.dataset.cdel);if(!it)return;
+  it.del=true;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-aadd]").forEach(b=>b.onclick=()=>{const cid=b.dataset.aadd;
+  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;
+  const inp=document.querySelector(`[data-anew="${cid}"]`);const t=inp.value.trim();if(!t)return;
+  it.actions=it.actions||[];it.actions.push({id:uid(),text:t,due:"",st:0,updatedAt:nowT()});
+  it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-ast]").forEach(b=>b.onclick=()=>{const [cid,aid]=b.dataset.ast.split(".");
+  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;const v=(it.actions||[]).find(x=>x.id===aid);if(!v)return;
+  v.st=((v.st||0)+1)%3;v.updatedAt=nowT();it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-adel]").forEach(b=>b.onclick=()=>{const [cid,aid]=b.dataset.adel.split(".");
+  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;const v=(it.actions||[]).find(x=>x.id===aid);if(!v)return;
+  v.del=true;v.updatedAt=nowT();it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+}
+
+/* ---------- ② 协助 ---------- */
+function myCarriers(){const list=(DOC.carriers.list||[]).filter(x=>!x.del);
+ return isNew()?list.filter(x=>x.who===WHO):list;}
+function renderAssist(){
+ const q=document.getElementById("quickBox");
+ const cs=myCarriers();
+ q.innerHTML=`<div class="qbar">
+   <div class="seg" id="qseg">
+     <button data-qt="issue" class="${QTYPE==="issue"?"on":""}">项目问题</button>
+     <button data-qt="wish" class="${QTYPE==="wish"?"on":""}">想提升 / 吐槽</button>
+   </div>
+   ${isStaff()?`<select id="qWho">${NEWCOMERS.map(id=>`<option value="${id}">${WHO_NAME[id]}</option>`).join("")}</select>`:""}
+   ${QTYPE==="issue"?`<select id="qProj">${cs.length?cs.map(x=>`<option>${esc(x.name)}</option>`).join(""):`<option value="">（先在规划页登记载体）</option>`}</select>
+     <select id="qCat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select>`:""}
+   <input class="q" id="qText" placeholder="${QTYPE==="issue"?"一句话说清：现象 / 卡在哪":"想练什么、吐槽什么、需要什么支持"}">
+   <button class="btn" id="qSend">发布</button>
+   ${QTYPE==="wish"?`<label class="muted" style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="qPriv" style="width:auto">仅导师/主管可见</label>`:""}
+   ${QTYPE==="issue"?`<button class="btn gh sm" id="qOpen">${QOPEN?"收起细节":"展开细节（已排查/卡点/需要谁）"}</button>`:""}
+ </div>
+ ${QTYPE==="issue"&&QOPEN?`<div class="form" style="margin-top:9px;background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 12px">
+   <label>已排查</label><input id="qChk" placeholder="已经试过/查过的方向">
+   <label>卡点与初步判断</label><textarea id="qBlk" placeholder="卡在哪、你的判断"></textarea>
+   <label>需要谁一起看</label><input id="qNeed" placeholder="导师 / 应用组 / 硬件同事…">
+ </div>`:""}`;
+ document.querySelectorAll("#qseg button").forEach(b=>b.onclick=()=>{QTYPE=b.dataset.qt;renderAssist();});
+ const qi=document.getElementById("qOpen");if(qi)qi.onclick=()=>{QOPEN=!QOPEN;renderAssist();};
+ const send=document.getElementById("qSend");if(send)send.onclick=()=>{
+  const text=document.getElementById("qText").value.trim();if(!text){document.getElementById("qText").focus();return;}
+  const who=isStaff()?document.getElementById("qWho").value:WHO;
+  const it={id:uid(),who,type:QTYPE,by:WHO,text,status:0,replies:[],createdAt:nowT(),updatedAt:nowT()};
+  if(QTYPE==="issue"){it.proj=(document.getElementById("qProj").value||"").trim();it.cat=document.getElementById("qCat").value;
+   it.chk=(document.getElementById("qChk")||{}).value||"";it.blk=(document.getElementById("qBlk")||{}).value||"";it.need=(document.getElementById("qNeed")||{}).value||"";}
+  else it.priv=!!(document.getElementById("qPriv")||{}).checked;
+  DOC.issues.list=DOC.issues.list||[];DOC.issues.list.push(it);
+  DOC.issues.t=nowT();QOPEN=false;touch();render();};
+
+ // 过滤器
+ const F=[["all","全部"],["issue","项目问题"],["wish","诉求/吐槽"],["todo","待答复"],["done","已闭环"]];
+ document.getElementById("issueFilter").innerHTML=F.map(([k,lab])=>`<button class="chip ${ISSUE_FILTER===k?"k1":"b"}" data-if="${k}">${lab}</button>`).join("");
+ document.querySelectorAll("[data-if]").forEach(b=>b.onclick=()=>{ISSUE_FILTER=b.dataset.if;renderAssist();});
+
+ let L=(DOC.issues.list||[]).filter(x=>!x.del);
+ if(isNew())L=L.filter(x=>x.who===WHO);
+ if(isNew())L=L.filter(x=>!(x.type==="wish"&&x.priv&&x.who!==WHO)); // 理论上新人只看自己，冗余保险
+ if(ISSUE_FILTER==="issue")L=L.filter(x=>x.type==="issue");
+ if(ISSUE_FILTER==="wish")L=L.filter(x=>x.type==="wish");
+ if(ISSUE_FILTER==="todo")L=L.filter(x=>(x.status||0)<2);
+ if(ISSUE_FILTER==="done")L=L.filter(x=>(x.status||0)===2);
+ L=L.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+ document.getElementById("issueCount").textContent=`共 ${L.length} 条`;
+ document.getElementById("issueList").innerHTML=L.length?L.map(x=>{
+  const owner=mineP(x.who),st=x.status||0,wish=x.type==="wish";
+  const canReply=isStaff()||owner;
+  return `<div class="item">
+   <div class="hd"><div><span class="tt">${wish?"诉求 · ":""}${esc(x.proj||(wish?"":"未填项目"))}</span>
+     ${x.card?'<span class="tag ok" style="margin-left:6px">已沉淀卡片</span>':""}
+     ${wish&&x.priv?'<span class="tag gy" style="margin-left:6px">仅导师可见</span>':""}
+     ${wish?"":`<span class="tag gy" style="margin-left:6px">${esc(x.cat||"")}</span>`}</div>
+     <span class="tag ${st===2?"ok":st===1?"wt":"no"}">${wish?"":["待答复","已答复","已闭环"][st]}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
+   <div class="meta">${WHO_NAME[x.who]} · ${fmt(x.createdAt)}</div>
+   <div class="body">${nl(x.text)}</div>
+   ${x.chk||x.blk||x.need?`<div class="body" style="color:var(--ink3)">${x.chk?`<b>已排查：</b>${nl(x.chk)}<br>`:""}${x.blk?`<b>卡点与判断：</b>${nl(x.blk)}<br>`:""}${x.need?`<b>需要谁：</b>${nl(x.need)}`:""}</div>`:""}
+   ${(x.replies||[]).map(r=>`<div class="bubble ${mineP(r.by)?"me":"co"}"><div class="who">${WHO_NAME[r.by]||"—"} · ${fmt(r.at)}</div>${nl(r.text)}</div>`).join("")}
+   ${canReply?`<div class="row" style="margin-top:8px">
+     <input data-rp="${x.id}" placeholder="回复（导师给思路 / 新人补充）" style="flex:1;min-width:170px;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:12.4px">
+     <button class="btn sm" data-rsend="${x.id}">回复</button></div>`:""}
+   <div class="row" style="margin-top:7px">
+     ${(owner||isStaff())&&st<2?`<button class="btn sm gh" data-iclose="${x.id}">标记已闭环</button>`:""}
+     ${isStaff()&&!wish?`<button class="btn sm gh" data-icard="${x.id}">沉淀为一问题一卡片</button>`:""}
+     ${isStaff()&&(x.replies||[]).length?`<button class="btn sm gh" data-iquot="${x.id}">萃一句金句</button>`:""}
+     ${isStaff()||owner?`<button class="btn sm danger" data-idel="${x.id}">删除</button>`:""}</div>
+  </div>`;}).join(""):`<div class="empty">暂无记录 —— 上面一句话就能发</div>`;
+ document.querySelectorAll("[data-rsend]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.rsend);if(!x)return;
+  const inp=document.querySelector(`[data-rp="${x.id}"]`);const t=inp.value.trim();if(!t)return;
+  x.replies=x.replies||[];x.replies.push({id:uid(),by:WHO,text:t,at:nowT()});
+  if((x.status||0)===0&&isStaff())x.status=1;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+ document.querySelectorAll("[data-iclose]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.iclose);if(!x)return;
+  x.status=2;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+ document.querySelectorAll("[data-idel]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.idel);if(!x)return;
+  x.del=true;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+ document.querySelectorAll("[data-icard]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.icard);if(!x)return;
+  const reply=(x.replies||[]).slice(-1)[0];const t=prompt("卡片标题（问题一句话）：",x.proj||x.text.slice(0,20));
+  if(t===null)return;
+  const fix=prompt("根因 / 解法（可留空，之后在沉淀墙里补）：",reply?reply.text:"");
+  if(fix===null)return;
+  DOC.cards.list=DOC.cards.list||[];DOC.cards.list.push({id:uid(),title:t,phen:x.text,cat:x.cat||"",fix,fromIssue:x.id,by:WHO,createdAt:nowT(),updatedAt:nowT()});
+  x.card=true;x.updatedAt=nowT();DOC.cards.t=nowT();DOC.issues.t=nowT();touch();render();});
+ document.querySelectorAll("[data-iquot]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.iquot);if(!x)return;
+  const t=prompt("把这句提炼成金句（一行）：","");
+  if(!t||!t.trim())return;
+  DOC.quotes.list=DOC.quotes.list||[];DOC.quotes.list.push({id:uid(),text:t.trim(),by:WHO,fromIssue:x.id,createdAt:nowT(),updatedAt:nowT()});
+  DOC.quotes.t=nowT();touch();render();});
+}
+
+/* ---------- ③ 帮扶 ---------- */
+function renderCoach(){
+ // 每周演练
+ const ids=ppl();const wk=weekKey(nowT());
+ const all=(DOC.drills.list||[]).filter(x=>!x.del);
+ document.getElementById("drillBlk").innerHTML=ids.map(id=>{
+  const cur=all.find(x=>x.who===id&&x.week===wk);
+  const isNewM=mineP(id);
+  return `<div class="card pad">
+   <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]}</h3>
+     <span class="tag ${cur?"ok":"wt"}">${cur?"本周已安排":"本周未安排"}</span></div>
+   <div class="muted" style="margin-top:3px">本周（${weekLabel(nowT())}）</div>
+   ${cur?`<div style="margin-top:8px;font-size:12.8px"><b>讲的方案：</b>${esc(cur.topic||"—")}</div>
+     <div class="muted" style="margin-top:6px">3 行复盘（新人写）</div>
+     <textarea data-dnote="${cur.id}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isNewM?"":"readonly"} placeholder="练完写 3 行">${esc(cur.note||"")}</textarea>
+     ${cur.score?`<div class="muted" style="margin-top:8px">评分</div><div style="margin-top:3px"><span class="tag ${cur.score==="优秀"?"ok":cur.score==="待提升"?"no":"wt"}">${esc(cur.score)}</span></div>`:""}
+     ${cur.fb?`<div class="bubble co" style="max-width:100%"><div class="who">导师/主管点评</div>${nl(cur.fb)}</div>`:""}
+     ${isStaff()?`<div class="row" style="margin-top:8px">
+       <select data-dscore="${cur.id}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+         <option value="">评分…</option>${["优秀","达标","待提升"].map(s=>`<option ${cur.score===s?"selected":""}>${s}</option>`).join("")}</select>
+       <input data-dfb="${cur.id}" value="${esc(cur.fb||"")}" placeholder="点评一句" style="flex:1;min-width:140px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+       <button class="btn sm" data-dsave="${cur.id}">提交评分</button></div>`:""}
+     ${isStaff()?`<div class="row" style="margin-top:6px"><button class="btn sm danger" data-ddel="${cur.id}">删除本周</button></div>`:""}`
+   :`<div class="row" style="margin-top:8px"><input data-dtopic="${id}" placeholder="本周要讲的产品方案" style="flex:1;min-width:140px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.4px">
+     <button class="btn sm" data-dnew="${id}">安排本周</button></div>`}
+  </div>`;}).join("");
+ document.querySelectorAll("[data-dnew]").forEach(b=>b.onclick=()=>{const id=b.dataset.dnew;
+  const inp=document.querySelector(`[data-dtopic="${id}"]`);const topic=inp.value.trim();if(!topic)return;
+  DOC.drills.list=DOC.drills.list||[];
+  DOC.drills.list.push({id:uid(),who:id,week:weekKey(nowT()),weekLabel:weekLabel(nowT()),topic,note:"",score:"",fb:"",createdAt:nowT(),updatedAt:nowT()});
+  DOC.drills.t=nowT();touch();render();});
+ document.querySelectorAll("[data-dnote]").forEach(t=>t.onchange=()=>{const x=DOC.drills.list.find(i=>i.id===t.dataset.dnote);if(!x)return;
+  x.note=t.value;x.updatedAt=nowT();DOC.drills.t=nowT();touch();});
+ document.querySelectorAll("[data-dsave]").forEach(b=>b.onclick=()=>{const x=DOC.drills.list.find(i=>i.id===b.dataset.dsave);if(!x)return;
+  x.score=document.querySelector(`[data-dscore="${x.id}"]`).value;x.fb=document.querySelector(`[data-dfb="${x.id}"]`).value.trim();
+  x.updatedAt=nowT();DOC.drills.t=nowT();touch();render();});
+ document.querySelectorAll("[data-ddel]").forEach(b=>b.onclick=()=>{const x=DOC.drills.list.find(i=>i.id===b.dataset.ddel);if(!x)return;
+  x.del=true;x.updatedAt=nowT();DOC.drills.t=nowT();touch();render();});
+ const hist=all.filter(x=>x.week!==wk||!ids.some(i=>i===x.who)).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,12);
+ document.getElementById("drillHist").innerHTML=hist.length?`<div class="muted" style="font-weight:700">历史演练</div>`+hist.map(x=>
+  `<div class="row" style="justify-content:space-between;margin-top:6px;font-size:12.5px;border-top:1px dashed var(--line);padding-top:6px">
+   <span>${esc(x.weekLabel||"")} · ${WHO_NAME[x.who]} · ${esc(x.topic||"")}</span>
+   <span class="tag ${x.score==="优秀"?"ok":x.score==="待提升"?"no":"wt"}">${esc(x.score||"未评分")}</span></div>`).join(""):"";
+
+ // 学习打卡（学—测—用）
+ renderCheckins(ids);
+
+ // 工具包
+ const K=(DOC.kit.list||[]).filter(x=>!x.del);
+ document.getElementById("kitList").innerHTML=K.map(x=>`<div class="item">
+   <div class="hd"><span class="tt">${esc(x.name)}</span>${isStaff()?`<button class="btn sm danger" data-kdel="${x.id}">×</button>`:""}</div>
+   <div class="meta">${esc(x.note||"")}</div>
+   ${x.link?`<div class="body"><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.link)}</a></div>`:`<div class="muted">（可放链接：飞书文档 / 网盘 / 知识库）</div>`}
+ </div>`).join("");
+ document.getElementById("kitForm").innerHTML=isStaff()?`<div class="form">
+   <div class="grid2"><input id="kName" placeholder="工具名（如：诺瓦调试 Checklist）"><input id="kLink" placeholder="链接（选填）"></div>
+   <input id="kNote" placeholder="说明（选填）"><button class="btn" id="kAdd">＋ 添加工具</button></div>`:"";
+ if(isStaff())document.getElementById("kAdd").onclick=()=>{const n=document.getElementById("kName").value.trim();if(!n)return;
+  DOC.kit.list=DOC.kit.list||[];DOC.kit.list.push({id:uid(),name:n,link:document.getElementById("kLink").value.trim(),
+   note:document.getElementById("kNote").value.trim(),updatedAt:nowT()});
+  DOC.kit.t=nowT();touch();render();};
+ document.querySelectorAll("[data-kdel]").forEach(b=>b.onclick=()=>{const x=DOC.kit.list.find(i=>i.id===b.dataset.kdel);if(!x)return;
+  x.del=true;x.updatedAt=nowT();DOC.kit.t=nowT();touch();render();});
+
+ // 协同知识沉淀
+ const KT=[["cards","一个问题一卡片"],["quotes","带教金句萃取墙"],["top5","高频卡点月度 TOP5"]];
+ document.getElementById("knoTabs").innerHTML=KT.map(([k,l])=>`<button class="chip ${KNO===k?"k1":"b"}" data-kno="${k}">${l}</button>`).join("");
+ document.querySelectorAll("[data-kno]").forEach(b=>b.onclick=()=>{KNO=b.dataset.kno;renderCoach();});
+ let body="";
+ if(KNO==="cards"){const C=(DOC.cards.list||[]).filter(x=>!x.del).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  body=C.length?C.map(x=>`<div class="item"><div class="hd"><span class="tt">${esc(x.title)}</span>
+    ${isStaff()?`<button class="btn sm danger" data-carddel="${x.id}">×</button>`:""}</div>
+    <div class="meta">${esc(x.cat||"")} · ${fmt(x.createdAt)}</div>
+    <div class="body"><b>现象：</b>${nl(x.phen||"")}<br><b>根因/解法：</b>${nl(x.fix||"—")}</div></div>`).join("")
+   :`<div class="empty">还没有卡片 —— 在「②协助」的问题卡上点「沉淀为一问题一卡片」</div>`;}
+ else if(KNO==="quotes"){const Q=(DOC.quotes.list||[]).filter(x=>!x.del).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  body=Q.length?`<div class="grid2">`+Q.map(x=>`<div class="item" style="background:var(--amber-l);border-color:#EAD9BC">
+    <div class="body" style="font-size:13.2px;color:var(--amber-d)">「${nl(x.text)}」</div>
+    <div class="meta">— ${WHO_NAME[x.by]||""} · ${fmt(x.createdAt)}</div>
+    ${isStaff()?`<div class="row" style="margin-top:6px"><button class="btn sm danger" data-quotedel="${x.id}">×</button></div>`:""}</div>`).join("")+`</div>`
+   :`<div class="empty">还没有金句 —— 在问题卡的导师回复旁点「萃一句金句」</div>`;}
+ else {const mo=RV_M;const list=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
+  const inMon=x=>{const d=new Date(x.createdAt||0);return d.getMonth()-9===mo-0||(mo===0&&d.getMonth()===9);};
+  const cnt={};list.forEach(x=>{if(!inMon(x))return;const c=x.cat||"其他";cnt[c]=(cnt[c]||0)+1;});
+  const arr=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  body=`<div class="chips" style="margin-bottom:10px">${RMONTH.map((mm,i)=>`<button class="chip ${RV_M===i?"k1":"b"}" data-topm="${i}">${mm}</button>`).join("")}</div>`
+   +(arr.length?arr.map(([c,n],i)=>`<div class="item"><div class="hd"><span class="tt">TOP${i+1}　${esc(c)}</span><span class="tag wt">${n} 条</span></div></div>`).join("")
+   :`<div class="empty">本月还没有问题记录</div>`);}
+ document.getElementById("knoBody").innerHTML=body;
+ document.querySelectorAll("[data-topm]").forEach(b=>b.onclick=()=>{RV_M=+b.dataset.topm;renderCoach();});
+ document.querySelectorAll("[data-carddel]").forEach(b=>b.onclick=()=>{const x=DOC.cards.list.find(i=>i.id===b.dataset.carddel);if(!x)return;x.del=true;x.updatedAt=nowT();DOC.cards.t=nowT();touch();render();});
+ document.querySelectorAll("[data-quotedel]").forEach(b=>b.onclick=()=>{const x=DOC.quotes.list.find(i=>i.id===b.dataset.quotedel);if(!x)return;x.del=true;x.updatedAt=nowT();DOC.quotes.t=nowT();touch();render();});
+
+ // 触发式加练
+ document.getElementById("trigRules").innerHTML="触发条件（任一出现 → 导师加练 + 主管介入）：客户交付异常 ｜ 连续 2 个月复盘没有实质改进 ｜ 实操/测验连续不达标。";
+ const T=(DOC.triggers.list||[]).filter(x=>!x.del).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+ document.getElementById("trigList").innerHTML=T.length?T.map(x=>`<div class="item">
+   <div class="hd"><span class="tt">${esc(x.reason)}</span><span class="meta">${fmt(x.createdAt)}</span></div>
+   <div class="body"><b>处理：</b>${esc(x.action||"—")}</div>
+   ${isStaff()?`<div class="row" style="margin-top:6px"><button class="btn sm danger" data-tdel="${x.id}">删除</button></div>`:""}</div>`).join("")
+  :`<div class="empty">暂无触发记录</div>`;
+ document.getElementById("trigNew").classList.toggle("hide",!isStaff());
+ const tn=document.getElementById("trigNew");if(tn)tn.onclick=()=>{const f=document.getElementById("trigForm");
+  f.innerHTML=`<div class="form" style="margin-top:10px"><input id="tReason" placeholder="触发原因（如：客户交付异常）">
+   <input id="tAction" placeholder="处理动作（导师加练 / 主管介入…）">
+   <div class="row"><button class="btn" id="tSave">保存</button><button class="btn gh" id="tCancel">取消</button></div></div>`;
+  document.getElementById("tCancel").onclick=()=>{f.innerHTML="";};
+  document.getElementById("tSave").onclick=()=>{const r=document.getElementById("tReason").value.trim();if(!r)return;
+   DOC.triggers.list=DOC.triggers.list||[];
+   DOC.triggers.list.push({id:uid(),reason:r,action:document.getElementById("tAction").value.trim(),by:WHO,createdAt:nowT(),updatedAt:nowT()});
+   DOC.triggers.t=nowT();f.innerHTML="";touch();render();};};
+ document.querySelectorAll("[data-tdel]").forEach(b=>b.onclick=()=>{const x=DOC.triggers.list.find(i=>i.id===b.dataset.tdel);if(!x)return;
+  x.del=true;x.updatedAt=nowT();DOC.triggers.t=nowT();touch();render();});
+}
+
+/* ---------- ③ 帮扶 · 学习打卡（学—测—用）体 ：热力图 + 连续天数 + 三级进度 ---------- */
+function ciList(who){return (DOC.checkins.list||[]).filter(x=>!x.del&&x.who===who);}
+function dayKeyOf(t){const d=new Date(t);const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());}
+function ciDayCount(who){const m={};ciList(who).forEach(x=>{const k=dayKeyOf(x.createdAt);m[k]=(m[k]||0)+1;});return m;}
+function ciStreak(who){const m=ciDayCount(who);let n=0;const cur=new Date();
+ if(!m[dayKeyOf(cur)])cur.setDate(cur.getDate()-1);
+ while(m[dayKeyOf(cur)]){n++;cur.setDate(cur.getDate()-1);}return n;}
+function ciDone(who){const s=new Set();ciList(who).forEach(x=>{if(x.nodeId)s.add(x.nodeId);});return s;}
+function ciRec(who,nid){return ciList(who).filter(x=>x.nodeId===nid).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))[0];}
+function ciStats(who){
+ const done=ciDone(who),lv={};LEVELS.forEach(L=>lv[L.k]=0);
+ NODES.forEach(n=>{if(done.has(n.id))lv[n.level]=(lv[n.level]||0)+1;});
+ const recs=ciList(who),gd=recs.filter(x=>x.total);
+ const acc=gd.length?Math.round(gd.reduce((a,x)=>a+(x.correct||0),0)/gd.reduce((a,x)=>a+x.total,0)*100):null;
+ const cur=new Date();
+ const mon=[...done].filter(nid=>{const r=ciRec(who,nid);if(!r)return false;const d=new Date(r.createdAt);
+   return d.getMonth()===cur.getMonth()&&d.getFullYear()===cur.getFullYear();}).length;
+ return {done,lv,acc,mon,streak:ciStreak(who),recs};
+}
+let CI_LV=null,CI_NODE=null,CI_ANS=[];
+const levelNodes=k=>NODES.filter(n=>n.level===k);
+function ciHeat(who){const m=ciDayCount(who);const today=new Date();
+ const dow=(today.getDay()+6)%7;const weeks=10;const start=new Date(today);
+ start.setHours(0,0,0,0);start.setDate(start.getDate()-dow-(weeks-1)*7);
+ let out="";
+ for(let c=0;c<weeks;c++)for(let r=0;r<7;r++){
+  const d=new Date(start);d.setDate(start.getDate()+c*7+r);const k=dayKeyOf(d);const n=m[k]||0;
+  const lv=n>=3?3:n>=2?2:n>=1?1:0;out+=`<span class="hm hm${lv}${d>today?" hmf":""}" title="${k}：${n} 个节点"></span>`;}
+ return out;}
+function renderCheckins(ids){
+ const mine=isNew();
+ const dm=document.getElementById("ciDemo");
+ if(dm)dm.innerHTML=BANK_DEMO?`<div class="card pad" style="border-color:#EFD9AE;background:var(--amber-l)">
+   <div style="font-size:12.6px;color:var(--amber-d);line-height:1.65"><b>当前是「示例题库」骨架版</b>：出题 → 系统自动判卷 → 打卡 → 看板 的整套引擎已按
+   <b>青铜 24 / 白银 18 / 黄金 12</b> 搭好，节点题目为示例内容。接入 IMA 知识库凭证后，只需替换 <code>bank.js</code> 里的节点与题目，页面无需改动。</div></div>`
+  :`<div class="card pad" style="border-color:#BEDDC0;background:var(--green-l)">
+   <div style="font-size:12.6px;color:var(--green-d)">题库已接入（${esc((window.BANK.meta||{}).source||"IMA 知识库")}）· 共 ${TOTAL_NODES} 个节点。</div></div>`;
+
+ document.getElementById("ciBlk").innerHTML=ids.map(id=>{
+  const st=ciStats(id);
+  return `<div class="card pad">
+   <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]} · 产品地图</h3>
+     <span class="tag ${st.streak>0?"ok":"gy"}">连续 ${st.streak} 天</span></div>
+   <div class="kpi">
+     <div><div class="kv">${st.done.size}<span style="font-size:12.5px;color:var(--ink3)">/${TOTAL_NODES}</span></div><div class="kk">已完成节点</div></div>
+     <div><div class="kv">${st.mon}</div><div class="kk">本月完成</div></div>
+     <div><div class="kv">${st.acc==null?"—":st.acc+"%"}</div><div class="kk">小测正确率</div></div></div>
+   ${LEVELS.map(L=>{const n=st.lv[L.k]||0;const pc=Math.min(100,Math.round(n/L.goal*100));
+     return `<div class="tier"><span class="tn">${L.n}</span><span class="tb"><i style="width:${pc}%;background:${L.c}"></i></span><span class="muted" style="font-size:11.4px;min-width:46px;text-align:right">${n}/${L.goal}</span></div>`;}).join("")}
+   <div class="hmw" style="margin-top:12px">${ciHeat(id)}</div>
+   <div class="hmlegend">少<span class="hm hm0"></span><span class="hm hm1"></span><span class="hm hm2"></span><span class="hm hm3"></span>多　·　近 10 周</div>
+  </div>`;}).join("");
+
+ if(!CI_LV||!LEVELS.some(L=>L.k===CI_LV))CI_LV=(LEVELS[0]||{}).k;
+ const LV=LEVELS.find(x=>x.k===CI_LV)||{k:CI_LV,n:"",period:"",desc:"",goal:0};
+ const nodes=levelNodes(CI_LV);
+ let html=`<div class="chips" style="margin-top:2px">${LEVELS.map(lv=>{
+   const n=mine?(ciStats(WHO).lv[lv.k]||0):ids.reduce((a,id)=>a+((ciStats(id).lv[lv.k])||0),0);
+   return `<button class="chip ${CI_LV===lv.k?"on":"b"}" data-cilv="${lv.k}">${lv.n} · ${lv.period} · ${n}/${lv.goal}</button>`;}).join("")}</div>
+  <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：学要点 → 做 3 题小测（自动判卷）→ 写笔记打卡</b>":"　<b>点节点可查看要点与小测、以及两人的完成情况</b>"}</div>
+  <div class="nodegrid">${nodes.map(nd=>{
+   if(mine){
+     const r=ciRec(WHO,nd.id);
+     return `<button class="nodechip ${r?"ok":""}" data-cinode="${nd.id}">
+       <span class="nt">${esc(nd.t)}</span>
+       <span class="ns">${r?"✔ 已完成 · "+fmt(r.createdAt):"待学习 · "+nd.qz.length+" 题小测"}</span></button>`;}
+   const by=ids.filter(id=>ciRec(id,nd.id)).map(id=>WHO_NAME[id].slice(0,1)).join(" ");
+   return `<button class="nodechip ${by?"ok":""}" data-cinode="${nd.id}">
+     <span class="nt">${esc(nd.t)}</span>
+     <span class="ns">${by?"已完成："+by:"两人均未完成"}</span></button>`;}).join("")}
+  </div>`;
+
+ if(isStaff()){
+  const wc={};
+  (DOC.checkins.list||[]).filter(x=>!x.del).forEach(x=>(x.wrong||[]).forEach(w=>{wc[w]=(wc[w]||0)+1;}));
+  const arr=Object.entries(wc).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  html+=`<div class="muted" style="margin-top:16px;font-weight:700;color:var(--ink2)">错题分布（按错人次排序 · 双周抽检重点）</div>`
+   +(arr.length?arr.map(([q,n],i)=>`<div class="item" style="margin-top:8px"><div class="hd">
+      <span class="tt">TOP${i+1}　${esc(q)}</span><span class="tag no">${n} 人次答错</span></div></div>`).join("")
+    :`<div class="empty">暂无错题记录</div>`);
+ }
+
+ const recent=(DOC.checkins.list||[]).filter(x=>!x.del&&ids.indexOf(x.who)>=0)
+   .sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,10);
+ html+=`<div class="muted" style="margin-top:16px;font-weight:700;color:var(--ink2)">最近打卡</div>`
+  +(recent.length?recent.map(x=>`<div class="item" style="margin-top:8px">
+     <div class="hd"><span class="tt">${esc((NODE_BY_ID[x.nodeId]||{}).t||x.module||"—")}</span>
+       <span><span class="tag gy">${(LEVELS.find(lv=>lv.k===x.level)||{}).n||""}</span>
+       <span class="tag ${x.total&&x.correct===x.total?"ok":"wt"}">小测 ${x.correct||0}/${x.total||0}</span>
+       <span class="meta">${WHO_NAME[x.who]||""} · ${fmt(x.createdAt)}</span></span></div>
+     <div class="body"><b>学：</b>${esc(x.note||"—")}　<b>用：</b>${esc(x.use||"—")}</div>
+     ${(x.wrong||[]).length?`<div class="meta" style="color:var(--red-d)">答错：${esc((x.wrong||[]).join("；"))}</div>`:""}
+   </div>`).join(""):`<div class="empty">还没有打卡记录 —— 点上面的节点开始</div>`);
+
+ html+=`<div class="muted" style="margin-top:12px">打卡规则：每个节点 3 题随堂小测（系统自动判卷、立即出对错与解析，答完 3 题即可打卡）→ 写 ≤50 字笔记 + 1 个场景联想；
+   自由节奏、按期完成整级即可；连续天数与整级解锁徽章自动统计，同时实时同步到「④ 把控」看板与导师端。</div>`;
+
+ document.getElementById("ciForm").innerHTML=html;
+ document.querySelectorAll("[data-cilv]").forEach(b=>b.onclick=()=>{CI_LV=b.dataset.cilv;renderCheckins(ids);});
+ document.querySelectorAll("[data-cinode]").forEach(b=>b.onclick=()=>openCiNode(b.dataset.cinode));
+}
+
+function openCiNode(nid){
+ const nd=NODE_BY_ID[nid];if(!nd)return;
+ CI_NODE=nid;CI_ANS=nd.qz.map(()=>-1);
+ paintCiNode();
+ document.getElementById("ovl").classList.remove("hide");
+}
+function paintCiNode(){
+ const nd=NODE_BY_ID[CI_NODE];if(!nd)return;
+ const mine=isNew();
+ const rec=mine?ciRec(WHO,CI_NODE):null;
+ const answered=CI_ANS.every(a=>a>=0);
+ const score=nd.qz.filter((q,i)=>CI_ANS[i]===q.a).length;
+ let H=`<div class="mh"><b>${esc(nd.t)}</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div class="pad">
+   <div class="row" style="gap:8px;flex-wrap:wrap"><span class="tag gy">${esc(nd.levelName)} · ${esc(nd.period)}</span>
+     ${nd.demo?`<span class="tag wt">示例题（待 IMA 题库替换）</span>`:`<span class="tag ok">已接入题库</span>`}</div>
+   <div class="muted" style="margin-top:11px;font-weight:700;color:var(--ink2)">① 学 · 学习要点</div>
+   <ul class="ptlist">${(nd.pt||[]).map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
+   <div class="muted" style="margin-top:7px">参考出处：${esc(nd.ref||"—")}　·　建议先按出处去 IMA 知识库看完原文，再做下面的小测。</div>
+   <div class="muted" style="margin-top:13px;font-weight:700;color:var(--ink2)">② 测 · 随堂小测（3 题 · 系统自动判卷，选完立即出对错与解析）</div>
+   ${nd.qz.map((q,qi)=>{
+     const a=CI_ANS[qi],revealed=(a>=0)||!mine;
+     return `<div class="qz">
+     <div class="q">${qi+1}. ${esc(q.q)}</div>
+     ${q.o.map((o,oi)=>{
+       let cls="";if(revealed){if(oi===q.a)cls="ok";else if(mine&&oi===a)cls="no";}
+       return `<div class="opt ${cls}" data-ciopt="${qi}.${oi}" style="${mine&&!revealed?'cursor:pointer':'cursor:default'}"><b>${"ABCD".charAt(oi)}</b><span>${esc(o)}</span></div>`;}).join("")}
+     ${revealed?`<div class="muted" style="margin-top:3px;color:${(!mine||a===q.a)?"var(--green-d)":"var(--red-d)"}">
+        ${mine?(a===q.a?"✔ 答对了":"✘ 答错了")+"　：":"正确答案见上。："}解析：${esc(q.w)}</div>`:`<div class="muted" style="margin-top:3px">（选一个选项，系统立即判卷；每题的第一次作答即为本次成绩）</div>`}
+    </div>`;}).join("")}`;
+
+ if(mine){
+  H+=`<div class="muted" style="margin-top:14px;font-weight:700;color:var(--ink2)">③ 用 · 一句话笔记（≤50 字）+ 1 个场景联想</div>
+   <input id="ciNote" maxlength="50" value="${esc(rec?(rec.note||""):"")}" placeholder="这个节点，我一句话记住什么？" style="width:100%;margin-top:7px;border:1px solid var(--line);border-radius:9px;padding:9px;font-size:12.7px">
+   <input id="ciUse" value="${esc(rec?(rec.use||""):"")}" placeholder="我打算把它用在哪个客户 / 项目场景？" style="width:100%;margin-top:7px;border:1px solid var(--line);border-radius:9px;padding:9px;font-size:12.7px">
+   <div class="row" style="margin-top:12px;align-items:center;flex-wrap:wrap">
+     <button class="btn" id="ciSubmit" ${answered?"":'disabled style="opacity:.5;cursor:not-allowed"'}>${rec?"更新打卡":"完成打卡"}</button>
+     <span class="muted">${answered?`本次小测 <b>${score}/${nd.qz.length}</b> · 可以打卡`:`还有 ${CI_ANS.filter(a=>a<0).length} 题未作答`}</span></div>
+   ${rec?`<div class="muted" style="margin-top:9px">上次完成 ${fmt(rec.createdAt)} · 小测 ${rec.correct||0}/${rec.total||0}${(rec.wrong||[]).length?` · 答错 ${(rec.wrong||[]).length} 题`:""}</div>`:""}`;
+ }else{
+  H+=`<div class="muted" style="margin-top:14px;font-weight:700;color:var(--ink2)">③ 用 · 两人的打卡记录</div>`
+   +NEWCOMERS.map(id=>{const r=ciRec(id,CI_NODE);
+     return `<div class="item" style="margin-top:8px"><div class="hd"><span class="tt">${WHO_NAME[id]}</span>
+       <span class="tag ${r?"ok":"gy"}">${r?"已完成 · "+fmt(r.createdAt):"未完成"}</span></div>
+       ${r?`<div class="body"><b>学：</b>${esc(r.note||"—")}　<b>用：</b>${esc(r.use||"—")}</div>
+         <div class="meta">小测 ${r.correct||0}/${r.total||0}${(r.wrong||[]).length?` · 首次答错 ${(r.wrong||[]).length} 题`:""}</div>`:""}</div>`;}).join("");
+ }
+
+ document.getElementById("ovlBox").innerHTML=H+`</div>`;
+ document.getElementById("ovlClose").onclick=closeOvl;
+ if(!mine)return;
+ document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=()=>{
+  const [qi,oi]=el.dataset.ciopt.split(".").map(Number);
+  if(CI_ANS[qi]>=0)return;
+  CI_ANS[qi]=oi;paintCiNode();});
+ const sb=document.getElementById("ciSubmit");
+ if(sb)sb.onclick=()=>{
+  const note=document.getElementById("ciNote").value.trim().slice(0,50);
+  const use=document.getElementById("ciUse").value.trim();
+  if(!note){document.getElementById("ciNote").focus();return;}
+  const wrong=nd.qz.map((q,i)=>CI_ANS[i]!==q.a?q.q:null).filter(Boolean);
+  const patch={who:WHO,nodeId:nd.id,level:nd.level,module:nd.t,line:nd.levelName,
+   note,use,correct:nd.qz.length-wrong.length,total:nd.qz.length,wrong,updatedAt:nowT()};
+  DOC.checkins.list=DOC.checkins.list||[];
+  const ex=ciRec(WHO,nd.id);
+  if(ex){Object.assign(ex,patch);ex.createdAt=ex.createdAt||nowT();}
+  else DOC.checkins.list.push(Object.assign({id:uid(),createdAt:nowT()},patch));
+  DOC.checkins.t=nowT();touch();closeOvl();render();};
+}
+
+/* ---------- ④ 把控 ---------- */
+function faeCount(p){let a1=0,t1=0,a2=0,t2=0;const per=[];
+ FAE_DEF.forEach((D,d)=>{let da=0,dt=0;
+  D.g.forEach((G,g)=>{
+   if(G.kind==="初"){
+    if(G.it.length===0){t1++;a1++;da++;dt++;}
+    else G.it.forEach((t,i)=>{t1++;dt++;const v=(DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0;if(v>=1){a1++;da++;}});
+   } else G.it.forEach((t,i)=>{t2++;const v=(DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0;if(v===2)a2++;});
+  });
+  per.push(dt?Math.round(da/dt*100):100);});
+ return {faeJ:t1?Math.round(a1/t1*100):0,faeZ:t2?Math.round(a2/t2*100):0,faeA1:a1,faeT1:t1,faeA2:a2,faeT2:t2,per};}
+const faeKey=(d,g,i,p)=>d+"."+g+"."+i+"."+p;
+
+function stats(){
+ const C=(DOC.carriers.list||[]).filter(x=>!x.del),I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
+ const D=(DOC.drills.list||[]).filter(x=>!x.del),T=(DOC.triggers.list||[]).filter(x=>!x.del),CK=(DOC.checkins.list||[]).filter(x=>!x.del);
+ const per={};NEWCOMERS.forEach(id=>{
+  const c=C.filter(x=>x.who===id),i=I.filter(x=>x.who===id),d=D.filter(x=>x.who===id),ck=CK.filter(x=>x.who===id);
+  per[id]={carrier:c.length,closed:c.filter(x=>x.st===2).length,
+   issue:i.length,pending:i.filter(x=>(x.status||0)===0).length,issueClosed:i.filter(x=>(x.status||0)===2).length,
+   actions:(c.reduce((a,x)=>a+(x.actions||[]).filter(v=>!v.del&&v.st!==2).length,0)),
+   drill:d.length,scored:d.filter(x=>x.score).length,checkin:ck.length,streak:ciStreak(id),
+   nodes:new Set(ck.map(x=>x.nodeId).filter(Boolean)).size,acc:ciStats(id).acc,...faeCount(id)};});
+ return {C,I,D,T,CK,per};
+}
+function radarSVG(per){
+ const R=104,cx=118,cy=118,n=8,pts=[];
+ per.forEach((v,i)=>{const a=(-90+i*360/n)*Math.PI/180;const r=R*(v/100);
+  pts.push([cx+r*Math.cos(a),cy+r*Math.sin(a)]);});
+ const ring=f=>per.map((_,i)=>{const a=(-90+i*360/n)*Math.PI/180;return `${cx+R*f*Math.cos(a)},${cy+R*f*Math.sin(a)}`;}).join(" ");
+ const grid=[.25,.5,.75,1].map(f=>`<polygon points="${ring(f)}" fill="none" stroke="#E3E8EE"/>`).join("");
+ const axes=per.map((_,i)=>{const a=(-90+i*360/n)*Math.PI/180;
+  return `<line x1="${cx}" y1="${cy}" x2="${cx+R*Math.cos(a)}" y2="${cy+R*Math.sin(a)}" stroke="#E3E8EE"/>`;}).join("");
+ const labs=per.map((v,i)=>{const a=(-90+i*360/n)*Math.PI/180;const x=cx+(R+22)*Math.cos(a),y=cy+(R+22)*Math.sin(a);
+  return `<text x="${x}" y="${y}" font-size="10.5" fill="#7C8896" text-anchor="middle">${(FAE_DEF[i].k.split("·")[0]).trim()}</text>`;}).join("");
+ return `<svg viewBox="0 0 236 236" width="236" height="236">${grid}${axes}
+  <polygon points="${pts.map(p=>p.join(",")).join(" ")}" fill="rgba(59,124,176,.28)" stroke="#17558F" stroke-width="2"/>
+  ${labs}</svg>`;
+}
+function renderMonitor(){
+ const S=stats();const ids=ppl();
+ const card=(DOC.cards.list||[]).filter(x=>!x.del).length,q=(DOC.quotes.list||[]).filter(x=>!x.del).length;
+ const allCar=S.C.length,closed=S.C.filter(x=>x.st===2).length,pend=S.I.filter(x=>(x.status||0)===0).length;
+ document.getElementById("mStats").innerHTML=[
+  statCard(allCar,"载体登记"),statCard(closed,"已闭环载体"),statCard(S.I.length,"问题记录"),
+  statCard(pend,"待导师答复"),statCard(card,"知识卡片"),statCard(q,"带教金句"),
+  statCard(new Set(S.CK.map(x=>x.nodeId).filter(Boolean)).size,"已完成节点"),statCard(S.D.filter(x=>x.score).length,"已评分演练")
+ ].map(x=>x).join("");
+ document.getElementById("mPeople").innerHTML=ids.map(id=>{const p=S.per[id];
+  return `<div class="card pad"><h3>${WHO_NAME[id]}</h3>
+   <div class="muted" style="margin-top:6px">真实载体：登记 ${p.carrier} · 已闭环 ${p.closed}</div>
+   <div class="bar"><i style="width:${p.carrier?Math.round(p.closed/p.carrier*100):0}%"></i></div>
+   <div class="muted" style="margin-top:9px">客户维护行动：${p.actions} 项未完成</div>
+   <div class="muted" style="margin-top:9px">问题记录：共 ${p.issue} · 待答复 ${p.pending} · 已闭环 ${p.issueClosed}</div>
+   <div class="muted" style="margin-top:6px">每周演练：${p.drill} 次 · 已评分 ${p.scored}</div>
+   <div class="muted" style="margin-top:6px">产品地图：已完成 ${p.nodes}/${TOTAL_NODES} 个节点 · 小测正确率 ${p.acc==null?"—":p.acc+"%"} · 连续 ${p.streak} 天</div>
+   <div class="muted" style="margin-top:9px">FAE 尺子</div>
+   <div class="row" style="justify-content:space-between;font-size:12.6px"><span>初级达标</span><span>${p.faeA1}/${p.faeT1}</span></div>
+   <div class="bar"><i style="width:${p.faeJ}%"></i></div>
+   <div class="row" style="justify-content:space-between;font-size:12.6px;margin-top:8px"><span>中1 可独立</span><span>${p.faeA2}/${p.faeT2}</span></div>
+   <div class="bar"><i style="width:${p.faeZ}%;background:var(--green)"></i></div></div>`;}).join("");
+ document.getElementById("mRadar").innerHTML=ids.map(id=>{const c=faeCount(id);
+  return `<div class="card pad"><h3>${WHO_NAME[id]} · 初级保底达成</h3>
+   <div class="radarw" style="margin-top:6px">${radarSVG(c.per)}</div>
+   <div class="muted" style="margin-top:6px">数值=各维度初级条目达标率（无初级条目的维度按自动达标计 100%）。</div></div>`;}).join("");
+
+ // 里程碑与预警（仅导师/主管）
+ document.getElementById("mMilesSec").classList.toggle("hide",!isStaff());
+ if(isStaff()){
+  const miles=[
+   {k:"10 月末",d:"两人各接住 1 个载体并跟完；问题记录 ≥ 每周 1 条",ok:S.per.zhan.carrier>=1&&S.per.tong.carrier>=1},
+   {k:"11 月末",d:"完成复盘补强；≥1 个载体闭环；每周演练各 ≥ 2 次",ok:S.per.zhan.drill>=2&&S.per.tong.drill>=2},
+   {k:"12 月上中旬",d:"对标准终评；产品基础+客户维护成体系",ok:(S.per.zhan.faeA1>=S.per.zhan.faeT1)&&(S.per.tong.faeA1>=S.per.tong.faeT1)}];
+  const warn=[];
+  if(pend>=3)warn.push("有 "+pend+" 条问题记录待导师答复");
+  if(S.T.length>0)warn.push("已发生 "+S.T.length+" 次触发，需导师加练 + 主管介入");
+  if(closed===0)warn.push("尚无任何载体闭环，注意机会是否够、跟进是否实");
+  if(S.per.zhan.checkin+S.per.tong.checkin===0)warn.push("尚无产品地图打卡记录");
+  document.getElementById("mMiles").innerHTML=
+   `<div class="card pad"><h3>里程碑</h3>${miles.map(m=>`<div class="row" style="justify-content:space-between;margin-top:8px">
+     <span style="font-size:12.8px"><b>${m.k}</b> · ${m.d}</span><span class="tag ${m.ok?"ok":"gy"}">${m.ok?"已达成":"进行中"}</span></div>`).join("")}</div>
+    <div class="card pad"><h3>预警</h3>${warn.length?warn.map(w=>`<div class="tag no" style="margin-top:7px;display:block">${w}</div>`).join(""):`<span class="tag ok" style="margin-top:7px;display:inline-block">当前无预警</span>`}
+     <div class="muted" style="margin-top:10px">触发规则：客户交付异常 / 连续 2 月复盘无实质改进 / 实操测验连续不达标</div></div>`;
+ }
+}
+
+/* ---------- ④ 把控 · 导师 / 主管责任制看板（必回机制） ---------- */
+const TWO_H=2*3600000, EIGHT_H=8*3600000;
+function staffIds(){return ACCOUNTS.filter(u=>u.role==="lead"||u.role==="mentor"||u.role==="admin").map(u=>u.id);}
+function issueFirstStaffReply(x){
+ const ids=staffIds();
+ return (x.replies||[]).filter(r=>ids.indexOf(r.by)>=0).sort((a,b)=>(a.at||0)-(b.at||0))[0]||null;}
+function dutyLv(ms){return ms<=TWO_H?1:ms<=EIGHT_H?2:3;}
+function fmtDur(ms){if(!ms||ms<0)return"0 分钟";const m=ms/60000;if(m<60)return Math.max(1,Math.round(m))+" 分钟";
+ const h=ms/3600000;if(h<24)return (Math.round(h*10)/10)+" 小时";return (Math.round(h/24*10)/10)+" 天";}
+function dutyCard(v,k,tone){return `<div class="duty ${tone||""}"><div class="dnum">${esc(String(v))}</div><div class="dlab">${esc(k)}</div></div>`;}
+
+function renderDuty(){
+ const sec=document.getElementById("dutySec");if(!sec)return;
+ if(!isStaff()){sec.classList.add("hide");return;}
+ sec.classList.remove("hide");
+ const now=nowT();
+ const I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
+ const open=I.filter(x=>(x.status||0)<2);
+ const queue=open.map(x=>{const r=issueFirstStaffReply(x);const w=(r?r.at:now)-(x.createdAt||now);
+   return {x,w,lv:dutyLv(w)};}).sort((a,b)=>b.w-a.w);
+ const over2=queue.filter(q=>q.w>TWO_H).length, over8=queue.filter(q=>q.w>EIGHT_H).length;
+ const resp=I.map(x=>{const r=issueFirstStaffReply(x);return r?((r.at||0)-(x.createdAt||0)):null;}).filter(v=>v!=null);
+ const avg=resp.length?resp.reduce((a,b)=>a+b,0)/resp.length:null;
+ const rate=resp.length?Math.round(resp.filter(v=>v<=TWO_H).length/resp.length*100):null;
+ const closed=I.filter(x=>(x.status||0)===2).length;
+
+ document.getElementById("dutyAgg").innerHTML=[
+  dutyCard(queue.length,"待必回（未答复）",queue.length?"":"ok"),
+  dutyCard(over2,"超 2 小时未回",over2?"warn":"ok"),
+  dutyCard(over8,"超 8 小时 · 升级主管",over8?"err":"ok"),
+  dutyCard(avg==null?"—":fmtDur(avg),"平均首次响应",avg==null?"":(avg<=TWO_H?"ok":avg<=EIGHT_H?"warn":"err")),
+  dutyCard(rate==null?"—":rate+"%","2 小时内响应率",rate==null?"":(rate>=80?"ok":rate>=50?"warn":"err")),
+  dutyCard(I.length+" / "+closed,"问题总数 / 已闭环","")
+ ].join("");
+
+ document.getElementById("dutyBlk").innerHTML=
+  `<div class="card pad"><h3>必回队列（按等待时长排序 · 超 8 小时自动升级主管）</h3>
+    ${queue.length?queue.map(o=>{
+      const lvTxt=["","正常（2 小时内应回）","已超 2 小时，请尽快回","已超 8 小时 · 自动升级至主管"][o.lv];
+      return `<div class="dutyrow lv${o.lv}">
+        <div class="drw">
+         <div style="font-weight:700;font-size:12.9px">${esc(o.x.proj||"未填项目")}
+           <span class="tag gy" style="margin-left:5px">${esc(o.x.cat||"")}</span>
+           ${o.lv===3?'<span class="tag no">升级主管</span>':""}</div>
+         <div class="muted" style="margin-top:3px">${esc(WHO_NAME[o.x.who]||o.x.who)} · 等待 <b>${fmtDur(o.w)}</b> · ${lvTxt}</div>
+         <div class="muted" style="margin-top:4px">${nl(o.x.text)}</div>
+        </div>
+        <div class="row" style="gap:6px">
+         <input data-drun="${o.x.id}" placeholder="导师/主管回复…" style="min-width:150px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.2px">
+         <button class="btn sm" data-drrep="${o.x.id}">回复</button>
+        </div>
+       </div>`;}).join("")
+     :`<div class="empty">暂无待回问题 —— 导师/主管责任已清空 ✅</div>`}
+    <div class="muted" style="margin-top:10px">口径：按「新人发起问题 → 导师/主管第一条回复」计响应时长；谁有空谁先回，最终负责人为<b>主管</b>。</div>
+   </div>`;
+
+ const staff=ACCOUNTS.filter(u=>u.role==="lead"||u.role==="mentor");
+ document.getElementById("dutyBlk").innerHTML+=
+  `<div class="card pad"><h3>导师 / 主管责任指标</h3>
+    ${staff.length?staff.map(u=>{
+      const mine=I.filter(x=>{const r=issueFirstStaffReply(x);return r&&r.by===u.id;});
+      const rs=mine.map(x=>{const r=issueFirstStaffReply(x);return (r.at||0)-(x.createdAt||0);});
+      const a=rs.length?rs.reduce((p,c)=>p+c,0)/rs.length:null;
+      const rt=rs.length?Math.round(rs.filter(v=>v<=TWO_H).length/rs.length*100):null;
+      const tone=a==null?"var(--ink3)":(a<=TWO_H?"var(--green-d)":a<=EIGHT_H?"var(--amber-d)":"var(--red-d)");
+      return `<div style="border-top:1px dashed var(--line);padding-top:9px;margin-top:9px">
+        <div class="row" style="justify-content:space-between"><b>${esc(u.name||u.username)}</b>
+          <span class="tag ${u.role==="lead"?"pri":"gy"}">${ROLE_NAME[u.role]||u.role}</span></div>
+        <div class="kpi"><div><div class="kv">${mine.length}</div><div class="kk">首发响应（条）</div></div>
+          <div><div class="kv" style="color:${tone}">${a==null?"—":fmtDur(a)}</div><div class="kk">平均首次响应</div></div>
+          <div><div class="kv">${rt==null?"—":rt+"%"}</div><div class="kk">2 小时内响应率</div></div></div>
+        ${u.role==="lead"?`<div class="muted" style="margin-top:8px">主管终责：超 8 小时升级 <b>${over8}</b> 条 · 未闭环问题 <b>${open.length}</b> 条</div>`
+         :`<div class="muted" style="margin-top:8px">导师职责：先接住问题、给思路；超 8 小时自动升级主管。</div>`}
+       </div>`;}).join("")
+     :`<div class="empty">还没有导师/主管账号</div>`}
+   </div>`;
+
+ document.querySelectorAll("[data-drrep]").forEach(b=>b.onclick=()=>{
+  const x=(DOC.issues.list||[]).find(i=>i.id===b.dataset.drrep);if(!x)return;
+  const inp=document.querySelector(`[data-drun="${x.id}"]`);const t=(inp&&inp.value||"").trim();if(!t)return;
+  x.replies=x.replies||[];x.replies.push({id:uid(),by:WHO,text:t,at:nowT()});
+  if((x.status||0)===0)x.status=1;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+}
+
+/* ---------- ⑤ 复盘 ---------- */
+function rvCell(m,p){return DOC.reviews.map["m"+m+"."+p]||{};}
+function setCell(m,p,patch){const k="m"+m+"."+p;const c=DOC.reviews.map[k]||{};Object.assign(c,patch);c.t=nowT();
+ DOC.reviews.map[k]=c;DOC.reviews.t=nowT();}
+function renderReview(){
+ const ids=ppl();
+ document.getElementById("rvTabs").innerHTML=RMONTH.map((mm,i)=>`<button class="chip ${RV_M===i?"k1":"b"}" data-rvm="${i}">${mm}</button>`).join("");
+ document.querySelectorAll("[data-rvm]").forEach(b=>b.onclick=()=>{RV_M=+b.dataset.rvm;renderReview();});
+ document.getElementById("rvList").innerHTML=ids.map(id=>{
+  const c=rvCell(RV_M,id),st=c.status||0,isNewM=mineP(id);
+  const stNames=["待新人自评","待导师复评","待主管终评","复盘完成"];
+  return `<div class="card pad">
+   <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]}</h3>
+     <span class="tag ${st===3?"ok":st===0?"gy":"wt"}">${stNames[st]}</span></div>
+   <div class="muted" style="margin-top:8px;font-weight:700;color:var(--ink2)">① 新人自评（本月证据：载体 / 问题记录 / 演练 / 地图）</div>
+   <textarea data-rvev="${id}.${RV_M}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isNewM?"":"readonly"} placeholder="本月证据">${esc(c.ev||"")}</textarea>
+   <div class="muted" style="margin-top:7px;font-weight:700;color:var(--ink2)">② 导师复评（意见 + 下月 1–2 个改进点）</div>
+   <textarea data-rvfb="${id}.${RV_M}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isMentor()||isLead()?"":"readonly"} placeholder="导师：本月表现 + 下月改进点">${esc(c.fb||"")}</textarea>
+   <div class="muted" style="margin-top:7px;font-weight:700;color:var(--ink2)">③ 主管终评</div>
+   <textarea data-rvcc="${id}.${RV_M}" style="width:100%;min-height:44px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isLead()?"":"readonly"} placeholder="主管结论">${esc(c.concl||"")}</textarea>
+   <div class="row" style="margin-top:8px">
+     ${isNewM?`<button class="btn sm ${st===0?"":"gh"}" data-rvgo="0.${id}">提交自评</button>`:""}
+     ${isStaff()?`<button class="btn sm ${st===1?"":"gh"}" data-rvgo="1.${id}">完成复评</button>`:""}
+     ${isLead()?`<button class="btn sm ${st===2?"":"gh"}" data-rvgo="3.${id}">终评完成</button>`:""}</div></div>`;}).join("");
+ document.querySelectorAll("[data-rvev]").forEach(t=>t.onchange=()=>{const [id,m]=t.dataset.rvev.split(".");setCell(+m,id,{ev:t.value});touch();});
+ document.querySelectorAll("[data-rvfb]").forEach(t=>t.onchange=()=>{const [id,m]=t.dataset.rvfb.split(".");setCell(+m,id,{fb:t.value});touch();});
+ document.querySelectorAll("[data-rvcc]").forEach(t=>t.onchange=()=>{const [id,m]=t.dataset.rvcc.split(".");setCell(+m,id,{concl:t.value});touch();});
+ document.querySelectorAll("[data-rvgo]").forEach(b=>b.onclick=()=>{const [s,id]=b.dataset.rvgo.split(".");setCell(RV_M,id,{status:+s});touch();render();});
+ renderFae();renderFinal();
+}
+function renderFae(){
+ const ids=ppl();
+ document.getElementById("faeBar").innerHTML=ids.map(p=>{const c=faeCount(p);
+  return `<span class="chip b"><b>${WHO_NAME[p]}</b> 初级达标 ${c.faeA1}/${c.faeT1} · 中1 可独立 ${c.faeA2}/${c.faeT2}</span>`;}).join("")
+  +(isStaff()?`<button class="btn sm gh" id="faeReset" style="margin-left:auto">重置</button>`:"");
+ if(isStaff()){const r=document.getElementById("faeReset");if(r)r.onclick=()=>{if(confirm("清空两人所有打勾记录？")){DOC.fae.map={};DOC.fae.t=nowT();touch();render();}};}
+ document.getElementById("faeList").innerHTML=FAE_DEF.map((D,d)=>`<div class="faedim ${D.cls||""}">
+   <div class="faehd"><span style="font-size:14.5px;font-weight:700">${D.k}</span>${D.tag?`<span class="tag ${D.cls==="pri"?"pri":D.cls==="base"?"base":""}">${D.tag}</span>`:""}</div>
+   ${D.g.map((G,g)=>G.it.length?`<div class="faegrp">${G.n}</div>`+G.it.map((t,i)=>{
+     const tgs=ids.map(p=>{const k=faeKey(d,g,i,p);const v=(DOC.fae.map[k]||{}).v||0;
+       return `<button class="chip k${v}" data-fk="${k}" ${isStaff()?"":'style="cursor:default"'} title="${WHO_NAME[p]}：${FSTAT[v]}">${p==="zhan"?"詹":"童"} ${FSTAT[v]}</button>`;}).join("");
+     return `<div class="faeitem"><span class="tx">${esc(t)}</span><span class="chips">${tgs}</span></div>`;}).join("")
+    :`<div class="muted" style="font-size:12px;margin-top:4px">${G.n}</div>`).join("")}</div>`).join("");
+ if(isStaff())document.querySelectorAll("#faeList [data-fk]").forEach(b=>b.onclick=()=>{const k=b.dataset.fk;
+  const e=DOC.fae.map[k]||{v:0};e.v=((e.v||0)+1)%3;e.t=nowT();DOC.fae.map[k]=e;DOC.fae.t=nowT();touch();render();});
+}
+function renderFinal(){
+ const ids=ppl();
+ let html=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.4px">
+  <thead><tr><th style="text-align:left;padding:7px;border-bottom:1px solid var(--line)">维度</th>
+  ${ids.map(p=>`<th style="padding:7px;border-bottom:1px solid var(--line)">${WHO_NAME[p]}·初级</th><th style="padding:7px;border-bottom:1px solid var(--line)">${WHO_NAME[p]}·中1</th>`).join("")}</tr></thead><tbody>`;
+ FAE_DEF.forEach((D,d)=>{let cells="";
+  ids.forEach(p=>{let a1=0,t1=0,a2=0,t2=0;
+   D.g.forEach((G,g)=>{if(G.kind==="初"){if(G.it.length===0){t1++;a1++;}else G.it.forEach((t,i)=>{t1++;if(((DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0)>=1)a1++;});}
+    else G.it.forEach((t,i)=>{t2++;if(((DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0)===2)a2++;});});
+   cells+=`<td style="padding:7px;text-align:center">${t1?a1+"/"+t1:"—"}</td><td style="padding:7px;text-align:center">${t2?a2+"/"+t2:"—"}</td>`;});
+  html+=`<tr><td style="padding:7px;border-bottom:1px solid var(--line)">${D.k}</td>${cells}</tr>`;});
+ html+=`</tbody></table></div><div class="muted" style="margin-top:10px">保底：初级各维度全 ✔/△（无 ○）。突破：中1 的「问题解决 / 客户支持 / 专业知识」做到可独立。</div>`;
+ document.getElementById("finalTbl").innerHTML=html;
+}
+
+/* ===================================================================
+   启动
+   =================================================================== */
+function bindStatic(){
+ document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+ document.getElementById("syncNow").onclick=()=>{if(ONLINE&&TOKEN){setSync("warn","同步中…");pull();}else setSync("warn","本地模式");};
+ document.getElementById("linksBtn").onclick=openPanel;
+ // 登录门：① 选名字即进入（主入口） ② 超级管理员：账号 + 密码（折叠）
+ document.getElementById("gPickGo").onclick=quickLogin;
+ const gpc=document.getElementById("gPc");if(gpc)gpc.addEventListener("keydown",e=>{if(e.key==="Enter")quickLogin();});
+ document.getElementById("gAdminToggle").onclick=()=>{
+  const p=document.getElementById("gLoginPane");p.classList.toggle("hide");
+  if(!p.classList.contains("hide"))document.getElementById("gHintBox").classList.add("hide");
+ };
+ document.getElementById("gGo").onclick=()=>doLogin((document.getElementById("gUser").value||"").trim(),document.getElementById("gPass").value||"");
+ document.getElementById("gPass").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gGo").click();});
+ document.getElementById("gUser").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gPass").focus();});
+ const wx=document.getElementById("gWx");if(wx)wx.onclick=doWecom;
+ document.getElementById("gHint").onclick=async()=>{
+  const box=document.getElementById("gHintBox");box.classList.toggle("hide");
+  if(box.classList.contains("hide"))return;
+  box.innerHTML="读取中…";
+  try{const r=await apiGet("/api/config");const arr=(r.data&&r.data.defaults)||[];
+   if(!arr.length){box.innerHTML="初始默认账号已被管理员修改。请直接找 <b>超级管理员（admin）</b> 要账号或邀请链接。";return;}
+   box.innerHTML="<b>初始默认账号（仅首次部署有效，登录后请立即改密）</b><br>"+
+    arr.map(u=>`${esc(u.name)}（${ROLE_NAME[u.role]||u.role}）· 账号 <b>${esc(u.username)}</b> · 密码 <b>${esc(u.pass)}</b>`).join("<br>")+
+    "<br>超级管理员登录后，可在右上角「账号管理」里建账号、分配角色、发邀请链接。";
+  }catch(e){box.innerHTML="需先连上服务器。若只是自己预览，请用下方「本地演示模式」。";}
+ };
+ document.getElementById("gLocal").onclick=()=>{const b=document.getElementById("gLocalBox");b.classList.toggle("hide");
+  if(!b.classList.contains("hide"))document.getElementById("gHintBox").classList.add("hide");};
+ document.getElementById("gLocalGo").onclick=()=>localMode(document.getElementById("gLocalWho").value);
+ document.getElementById("ovl").onclick=e=>{if(e.target.id==="ovl")closeOvl();};
+}
+/* 用已有令牌建立会话（企业微信回调 ?token= / 本机缓存令牌） */
+async function enterByToken(t){
+ TOKEN=t;ONLINE=true;MY_ROLE="";
+ let st={};
+ try{st=await apiGet("/api/state");}catch(e){showGate("连不上服务器，请稍后重试。");return;}
+ if(!st.data||!st.data.ok){try{localStorage.removeItem(LS_TOKEN);}catch(e){}showGate("登录会话已失效，请重新登录。");return;}
+ WHO=st.data.who||"";MY_ROLE=st.data.role||"";
+ try{const me=await apiGet("/api/me");if(me.data&&me.data.ok&&me.data.user)MY_PWLESS=!!me.data.user.pwless;}catch(e){}
+ try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
+ try{history.replaceState(null,"",location.pathname);}catch(e){}
+ if(st.data.doc){DOC=norm(st.data.doc);lsSave();}else{DOC=seedDoc();lsSave();await push();}
+ try{const c=await apiGet("/api/config");if(c.data&&c.data.users)applyAccounts(c.data.users);}catch(e){}
+ connectSSE();showApp();setSync("ok");
+}
+/* 登录前取一次配置：启用企业微信时显示扫码入口 + 预载账号姓名 */
+async function loadGateConfig(){
+ try{const c=await apiGet("/api/config");
+  if(c.data&&c.data.ok){SERVER_OK=true;
+   if(c.data.users)applyAccounts(c.data.users);
+   if(c.data.wecom&&c.data.wecom.enabled){const w=document.getElementById("gWx");if(w)w.classList.remove("hide");}
+   try{const rr=await apiGet("/api/roster");
+     if(rr.data&&rr.data.ok)renderRoster(rr.data.members,rr.data.needPasscode);
+   }catch(e){}
+  }else SERVER_OK=false;
+ }catch(e){SERVER_OK=false;}
+ if(SERVER_OK!==true)renderRoster(null,false);   // 离线预览：用演示名单兜底
+ reflectGateServer();
+}
+async function boot(){
+ bindStatic();
+ await loadGateConfig();
+ const qs=new URLSearchParams(location.search);
+ const qInvite=qs.get("invite"),qToken=qs.get("token"),qWx=qs.get("wxmsg");
+ if(qInvite){showGate();await showInvite(qInvite);}          // 邀请链接 → 本人设密码
+ else if(qToken){await enterByToken(qToken);}               // 企业微信回调 → 直接进
+ else{
+  let tok="",who="";
+  try{tok=localStorage.getItem(LS_TOKEN)||"";who=localStorage.getItem(LS_WHO)||"";}catch(e){}
+  if(tok&&who){await enterByToken(tok);}else{showGate();}
+ }
+ if(qWx)setGMsg(esc(qWx));
+ // 兜底：SSE 断开时也能定时拿到最新数据
+ setInterval(()=>{if(!document.hidden&&ONLINE&&TOKEN&&!busy)pull();},15000);
+ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&ONLINE&&TOKEN)pull();});
+}
+boot();
+</script>
+</body>
+</html>

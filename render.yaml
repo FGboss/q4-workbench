@@ -1,0 +1,31 @@
+# Render Blueprint —— 「一键上线」用。
+# 用法：把本目录推到 GitHub 仓库，在 Render 里 New → Blueprint → 选该仓库，即自动创建下面这个 Web 服务。
+services:
+  - type: web
+    name: q4-workbench
+    runtime: node
+    plan: free
+    # 用 npm ci（不用 npm install）—— 这是答题系统踩过的坑：npm install 会静默卡死
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "18"
+      # 部署后的公网地址，如 https://q4-workbench.onrender.com（首次可先留空，拿到域名后回来补）
+      - key: PUBLIC_URL
+        sync: false
+      # 令牌签名密钥，由 Render 自动生成随机值
+      - key: APP_SECRET
+        generateValue: true
+      # GitHub 持久化（三选一即可用；不配也能跑，但免费实例重启会丢数据/账号）
+      - key: GH_TOKEN
+        sync: false
+      - key: GH_REPO
+        sync: false
+      - key: GH_PATH
+        value: data/state.json
+      - key: GH_USERS_PATH
+        value: data/users.json
+      - key: GH_BRANCH
+        value: main

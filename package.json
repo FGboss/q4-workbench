@@ -1,0 +1,16 @@
+{
+  "name": "q4-workbench-online",
+  "version": "5.0.0",
+  "private": true,
+  "description": "Q4 新人培养 · 在线协作工作台（Express + SPA，服务器为唯一数据源）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
