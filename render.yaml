@@ -18,6 +18,13 @@ services:
       # 令牌签名密钥，由 Render 自动生成随机值
       - key: APP_SECRET
         generateValue: true
+      # Supabase 云库（推荐：根除免费实例休眠丢数据）。填了这两项即自动启用，未填则回退本地/GitHub。
+      #   SUPABASE_URL         形如 https://xxxxxxxx.supabase.co
+      #   SUPABASE_SERVICE_KEY Supabase → Project Settings → API → service_role secret（服务端用，勿外泄）
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
       # GitHub 持久化（三选一即可用；不配也能跑，但免费实例重启会丢数据/账号）
       - key: GH_TOKEN
         sync: false

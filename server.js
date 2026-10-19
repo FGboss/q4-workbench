@@ -36,6 +36,20 @@ const GH_USERS_PATH = process.env.GH_USERS_PATH || "data/users.json";   // 账�
 const GH_BRANCH = process.env.GH_BRANCH || "main";
 const GH_ON = !!(GH_TOKEN && GH_REPO);
 
+/* ---------- Supabase 云库（可选，推荐：根除免费实例休眠丢数据） ----------
+   只需配 SUPABASE_URL + SUPABASE_SERVICE_KEY，其余自动。
+   后端用 PostgREST（fetch），不引入额外依赖，npm ci 更快、不易卡死。
+   建表 SQL（在 Supabase → SQL Editor 里执行一次）：
+     create table if not exists q4_workbench (
+       k text primary key,
+       v jsonb not null,
+       updated_at timestamptz default now()
+     ); */
+const SB_URL = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || "";
+const SB_TABLE = process.env.SUPABASE_TABLE || "q4_workbench";
+const SB_ON = !!(SB_URL && SB_KEY);
+
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
 const ROLES = ["admin", "lead", "mentor", "newbie"];
 const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", newbie: "新人" };
@@ -96,7 +110,7 @@ function ensureUsers() {
   writeJson(USERS_FILE, USERS);
 }
 /* 账号变更：本地落盘 +（若配了 GitHub）同步到仓库，避免重启丢账号 */
-function saveUsers() { writeJson(USERS_FILE, USERS); if (GH_ON) ghPushUsers(); }
+function saveUsers() { writeJson(USERS_FILE, USERS); sbPushUsers(); if (GH_ON) ghPushUsers(); }
 const findUser = id => (USERS.users || []).find(u => u.id === id) || null;
 const findByUsername = n => (USERS.users || []).find(u => u.username === String(n || "").trim().toLowerCase()) || null;
 const findByInvite = t => (USERS.users || []).find(u => u.invite && u.invite === String(t || "")) || null;
@@ -247,6 +261,46 @@ async function ghPullUsers() {
   return false;
 }
 
+/* ---------- Supabase 读写（PostgREST） ---------- */
+function sbHeaders(extra) {
+  return Object.assign({
+    apikey: SB_KEY,
+    Authorization: "Bearer " + SB_KEY,
+    "Content-Type": "application/json",
+  }, extra || {});
+}
+async function sbGet(key) {
+  const r = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}?k=eq.${encodeURIComponent(key)}&select=v`, { headers: sbHeaders() });
+  if (!r.ok) throw new Error("Supabase GET " + r.status + " " + (await r.text()).slice(0, 160));
+  const rows = await r.json();
+  return rows && rows[0] ? rows[0].v : null;
+}
+async function sbPut(key, value) {
+  const r = await fetch(`${SB_URL}/rest/v1/${SB_TABLE}`, {
+    method: "POST",
+    headers: sbHeaders({ Prefer: "resolution=merge-duplicates,return=minimal" }),
+    body: JSON.stringify([{ k: key, v: value, updated_at: new Date().toISOString() }]),
+  });
+  if (!r.ok) throw new Error("Supabase PUT " + r.status + " " + (await r.text()).slice(0, 160));
+}
+async function sbPullUsers() {
+  if (!SB_ON) return false;
+  try {
+    const d = await sbGet("users");
+    if (d && Array.isArray(d.users) && d.users.length) { USERS = d; console.log("[sbPullUsers] loaded from Supabase"); return true; }
+  } catch (e) { console.error("[sbPullUsers]", e.message); }
+  return false;
+}
+async function sbPullDoc() {
+  if (!SB_ON) return;
+  try {
+    const d = await sbGet("state");
+    if (d) { DOC = normDoc(d); console.log("[sbPullDoc] loaded from Supabase"); }
+  } catch (e) { console.error("[sbPullDoc]", e.message); }
+}
+async function sbPushUsers() { if (!SB_ON || !USERS) return; try { await sbPut("users", USERS); } catch (e) { console.error("[sbPushUsers]", e.message); } }
+async function sbPushDoc() { if (!SB_ON || !DOC) return; try { await sbPut("state", DOC); } catch (e) { console.error("[sbPushDoc]", e.message); } }
+
 /* ---------- 企业微信（可选）：换取 access_token / userid ---------- */
 let WX_TOKEN = { v: "", exp: 0 };
 async function wecomAccessToken() {
@@ -286,7 +340,7 @@ app.get("/api/config", (req, res) => {
     users: (USERS.users || []).filter(u => u.active).map(pubUser),
     initialized: !!(DOC && Object.keys(DOC.people || {}).length),
     wecom: { enabled: WECOM_ON, corpid: WECOM_CORPID, agentid: WECOM_AGENTID },
-    github: GH_ON, publicUrl: PUBLIC_URL });
+    github: GH_ON, supabase: SB_ON, publicUrl: PUBLIC_URL });
 });
 
 /* 账号 + 密码登录 */
@@ -362,6 +416,7 @@ app.post("/api/save", async (req, res) => {
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
   broadcast();
+  sbPushDoc();
   ghPush();
   res.json({ ok: true, doc: DOC });
 });
@@ -521,14 +576,18 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
 /* ---------- 启动 ---------- */
 (async () => {
   ensureDir();
-  await ghPullUsers();          // 账号优先从 GitHub 恢复（若配置），避免重启丢成员
-  ensureUsers();                // 否则用本地文件；都没有则建默认账号
+  // 数据恢复优先级：Supabase（云库，最可靠）→ GitHub → 本地文件 → 默认账号
+  let usersLoaded = false;
+  if (SB_ON) usersLoaded = await sbPullUsers();
+  if (!usersLoaded) await ghPullUsers();
+  ensureUsers();                // 本地文件兜底；都没有则建默认账号
   rotateLegacyWeakPasswords();  // 历史弱默认密码 → 随机密码（防冒用）
-  if (GH_ON) await ghPull();
+  if (SB_ON) { await sbPullDoc(); if (!DOC) console.log("[boot] Supabase 中尚无业务数据，等待前端首次写入"); }
+  else if (GH_ON) await ghPull();
   else if (!DOC) console.log("[boot] 尚无数据，等待前端首次写入");
   app.listen(PORT, () => {
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
-    console.log(`持久化： ${GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
+    console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
