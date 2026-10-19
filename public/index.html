@@ -122,7 +122,14 @@
   .chip.k1{background:var(--amber-l);color:var(--amber-d);border-color:#EAD9BC;cursor:pointer}
   .chip.k2{background:var(--green-l);color:var(--green-d);border-color:#D0DFBF;cursor:pointer}
   .chip.b{border-color:var(--line);background:#fff;color:var(--ink2)}
+  .chip.sel{outline:2px solid var(--blue);outline-offset:1px;font-weight:700}
+  .chip.pend{border-style:dashed;border-width:1.5px}
   .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .evwrap{display:flex;flex-direction:column;gap:5px;margin-top:5px}
+  .evchip{display:flex;gap:7px;align-items:flex-start;font-size:12.2px;color:var(--ink2);
+    background:#F7F9FB;border:1px solid var(--line);border-radius:8px;padding:6px 9px;cursor:pointer}
+  .evchip input{margin-top:3px;flex:none}
+  .evchip:hover{border-color:var(--blue-m)}
 
   .faedim{border:1px solid var(--line);border-radius:11px;padding:12px 14px;margin-bottom:10px;background:#fff}
   .faedim.pri{border-color:#CFE0F0;background:var(--blue-l)}
@@ -365,7 +372,7 @@
 
   <div id="tab-coach" class="hide">
     <section>
-      <h2>产品地图打卡 · 学—测—用 <span class="h">按 IMA 知识库出题：学 1 个节点 → 3 题随堂小测（系统自动判卷）→ 写 ≤50 字笔记 + 1 个场景联想；自由节奏，按期完成整级（青铜 24 / 白银 18 / 黄金 12）</span></h2>
+      <h2>产品地图打卡 · 学—测—用 <span class="h">按 IMA 知识库出题：学 1 个节点 → 5 题随堂小测（系统自动判卷）→ 写 ≤50 字笔记 + 1 个场景联想；自由节奏，按期完成整级（青铜 24 / 白银 18 / 黄金 12）</span></h2>
       <div id="ciDemo"></div>
       <div class="card pad" style="margin-top:12px"><div class="grid2" id="ciBlk"></div></div>
       <div class="card pad" style="margin-top:12px"><div id="ciForm"></div></div>
@@ -380,7 +387,7 @@
       <div class="card pad"><div id="kitList"></div><div id="kitForm" style="margin-top:10px"></div></div>
     </section>
     <section>
-      <h2>协同知识沉淀 <span class="h">一个问题一卡片 · 带教金句萃取墙 · 高频卡点月度 TOP5</span></h2>
+      <h2>协同知识沉淀 <span class="h">一个问题一卡片 · 带教金句萃取墙 · 新人沉淀与分享 · 高频卡点月度 TOP5</span></h2>
       <div class="card pad">
         <div class="chips" id="knoTabs" style="margin-bottom:12px"></div>
         <div id="knoBody"></div>
@@ -430,7 +437,7 @@
       </div>
     </section>
     <section>
-      <h2>FAE 对照表 · 逐条打勾 <span class="h">初级→中1 的唯一尺子；点标签在 ○未涉及 / △需指导 / ✔可独立 间切换</span></h2>
+      <h2>FAE 对照表 · 逐条印证 <span class="h">初级→中1 的唯一尺子；点标签进入「状态 + 真实记录/案例」印证，导师确认后才计入</span></h2>
       <div class="card pad">
         <div class="row" id="faeBar" style="margin-bottom:10px"></div>
         <div id="faeList"></div>
@@ -484,6 +491,17 @@ const LEVELS=BANK.map(L=>({k:L.k,n:L.n,goal:L.goal,c:L.c,period:L.period,desc:L.
 const NODES=[];BANK.forEach(L=>(L.nodes||[]).forEach(nd=>NODES.push(Object.assign({},nd,{level:L.k,levelName:L.n,period:L.period}))));
 const NODE_BY_ID={};NODES.forEach(n=>NODE_BY_ID[n.id]=n);
 const TOTAL_NODES=NODES.length;
+/* IMA 资料链接：优先用节点自带 link（或 meta.links[id]）→ 直接打开原文；
+   没有直链时，给出「IMA 知识库入口」+「复制文档名去检索」两步，不让新人空手找资料 */
+function nodeImaHTML(nd){
+ const M=(window.BANK||{}).meta||{};
+ const url=nd.link||((M.links||{})[nd.id])||"";
+ if(url)return `<a href="${esc(url)}" target="_blank" rel="noopener" style="font-weight:700;color:var(--blue);text-decoration:underline">📖 打开 IMA 资料原文</a>`;
+ const kw=String(nd.ref||nd.t||"").replace(/^IMA\s*知识库\s*\/\s*/,"").trim();
+ const home=M.imaHome||"https://ima.qq.com";
+ return `<button class="btn sm gh" data-copyima="${esc(kw||nd.t)}" title="复制后到 IMA 知识库里检索打开">① 复制文档名去 IMA</button>`
+   +`<a class="btn sm gh" href="${esc(home)}" target="_blank" rel="noopener" title="打开 IMA 知识库" style="text-decoration:none;display:inline-block">② 打开 IMA 知识库 ↗</a>`;
+}
 
 const CATS=["硬件/显示","软件/配置","网络/连线","客户沟通","方案/选型","其他"];
 const RMONTH=["10 月","11 月","12 月"];
@@ -536,7 +554,7 @@ function emptyDoc(){return {v:5,t:0,
  meta:{t:0}, people:{t:0}, plan:{t:0},
  carriers:{t:0,list:[]}, issues:{t:0,list:[]}, drills:{t:0,list:[]},
  checkins:{t:0,list:[]}, kit:{t:0,list:[]}, cards:{t:0,list:[]}, quotes:{t:0,list:[]},
- triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}};}
+ triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}, deposits:{t:0,list:[]}};}
 function seedDoc(){const t=nowT();return {v:5,t,
  meta:{t,goal:"向「初级 → 中级(中1)」靠拢：保底初级各项达标，争取中1核心项「可独立」。",
    accept:"12 月中旬前，两人各自独立跟完 1 个真实客户/项目，并在真实场合清楚讲解 1 次；初级各项达标、中1 核心项可独立。",
@@ -554,7 +572,7 @@ function seedDoc(){const t=nowT();return {v:5,t,
    {id:uid(),name:"典型客户问题应答 SOP",note:"高频问题标准处理步骤",link:"",updatedAt:t},
    {id:uid(),name:"项目复盘引导清单",note:"复盘固定问的问题清单",link:"",updatedAt:t},
    {id:uid(),name:"能力差距诊断问卷",note:"对照 FAE 找短板",link:"",updatedAt:t}]},
- cards:{t,list:[]}, quotes:{t,list:[]},
+ cards:{t,list:[]}, quotes:{t,list:[]}, deposits:{t,list:[]},
  triggers:{t,list:[]}, fae:{t,map:{}}, reviews:{t,map:{}}};}
 /* 本地演示模式下额外塞 2 条「示例问题」，让责任看板/必回清单一眼能看到效果（服务器数据不受影响） */
 function demoDoc(){const d=seedDoc(),tt=nowT(),H=3600000;
@@ -594,12 +612,12 @@ function mergeMap(L,R){const map={};
 function mergePlain(L,R){return (L&&L.t||0)>=(R&&R.t||0)?(L||{}):(R||{});}
 function mergeDoc(A,B){const a=A||emptyDoc(),b=B||emptyDoc();const o={v:5,t:Math.max(a.t||0,b.t||0)};
  ["meta","people","plan"].forEach(k=>o[k]=mergePlain(a[k],b[k]));
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers"].forEach(k=>o[k]=mergeList(a[k],b[k]));
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits"].forEach(k=>o[k]=mergeList(a[k],b[k]));
  o.fae=mergeMap(a.fae,b.fae);o.reviews=mergeMap(a.reviews,b.reviews);return o;}
 function norm(r){const e=emptyDoc();if(!r||typeof r!=="object"||Array.isArray(r))return e;
  const o={v:5,t:r.t||0};
  ["meta","people","plan"].forEach(k=>o[k]=(r[k]&&typeof r[k]==="object"&&!Array.isArray(r[k]))?r[k]:e[k]);
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
  o.fae=(r.fae&&r.fae.map&&typeof r.fae.map==="object"&&!Array.isArray(r.fae.map))?r.fae:{t:(r.fae&&r.fae.t)||0,map:{}};
  o.reviews=(r.reviews&&r.reviews.map&&typeof r.reviews.map==="object"&&!Array.isArray(r.reviews.map))?r.reviews:{t:(r.reviews&&r.reviews.t)||0,map:{}};
  return o;}
@@ -1236,7 +1254,7 @@ function renderCoach(){
   x.del=true;x.updatedAt=nowT();DOC.kit.t=nowT();touch();render();});
 
  // 协同知识沉淀
- const KT=[["cards","一个问题一卡片"],["quotes","带教金句萃取墙"],["top5","高频卡点月度 TOP5"]];
+ const KT=[["cards","一个问题一卡片"],["quotes","带教金句萃取墙"],["dep","新人沉淀 · 分享"],["top5","高频卡点月度 TOP5"]];
  document.getElementById("knoTabs").innerHTML=KT.map(([k,l])=>`<button class="chip ${KNO===k?"k1":"b"}" data-kno="${k}">${l}</button>`).join("");
  document.querySelectorAll("[data-kno]").forEach(b=>b.onclick=()=>{KNO=b.dataset.kno;renderCoach();});
  let body="";
@@ -1252,6 +1270,26 @@ function renderCoach(){
     <div class="meta">— ${WHO_NAME[x.by]||""} · ${fmt(x.createdAt)}</div>
     ${isStaff()?`<div class="row" style="margin-top:6px"><button class="btn sm danger" data-quotedel="${x.id}">×</button></div>`:""}</div>`).join("")+`</div>`
    :`<div class="empty">还没有金句 —— 在问题卡的导师回复旁点「萃一句金句」</div>`;}
+ else if(KNO==="dep"){const D=(DOC.deposits.list||[]).filter(x=>!x.del).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  body=`<div class="muted" style="margin-bottom:9px">沉淀自己遇到的<b>好资料 / 好方法 / 好经验</b>：写清「什么场景、怎么做、能被谁复用」。
+    导师可「加精」；这些沉淀是 FAE「组织积淀」与月度复盘的<b>真实印证</b>，也是新人要练的能力本身。</div>`
+   +`<div class="form" style="background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:13px">
+      <div class="grid2"><input id="dpTitle" placeholder="标题（如：客户 LED 屏偏色排查三步法）"><input id="dpLink" placeholder="链接（选填：飞书文档 / 网盘 / 附件）"></div>
+      <input id="dpScene" placeholder="场景 / 背景：什么情况下遇到的">
+      <input id="dpFix" placeholder="做法 / 解法：具体怎么处理">
+      <input id="dpReuse" placeholder="可复用点：别人遇到同类问题可以怎么用">
+      <div class="row"><button class="btn" id="dpAdd">＋ 沉淀一条</button><span class="muted" id="dpMsg"></span></div>
+     </div>`
+   +(D.length?D.map(x=>`<div class="item">
+      <div class="hd"><span class="tt">${x.star?"★ ":""}${esc(x.title)}</span>
+       <span class="chips">${x.star?`<span class="tag ok">导师加精</span>`:""}
+        ${isStaff()?`<button class="btn sm ${x.star?"":"gh"}" data-dpstar="${x.id}">${x.star?"取消加精":"加精"}</button>`:""}
+        ${(isStaff()||mineP(x.who))?`<button class="btn sm danger" data-dpdel="${x.id}">×</button>`:""}</span></div>
+      <div class="meta">${esc(WHO_NAME[x.who]||"")} · ${fmt(x.createdAt)}</div>
+      <div class="body"><b>场景：</b>${nl(x.scene||"—")}<br><b>做法：</b>${nl(x.fix||"—")}<br><b>可复用：</b>${nl(x.reuse||"—")}</div>
+      ${x.link?`<div class="meta"><a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(x.link)}</a></div>`:""}
+     </div>`).join("")
+    :`<div class="empty">还没有沉淀 —— 把今天解决的、别人也能用的一条写下来</div>`);}
  else {const mo=RV_M;const list=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
   const inMon=x=>{const d=new Date(x.createdAt||0);return d.getMonth()-9===mo-0||(mo===0&&d.getMonth()===9);};
   const cnt={};list.forEach(x=>{if(!inMon(x))return;const c=x.cat||"其他";cnt[c]=(cnt[c]||0)+1;});
@@ -1263,6 +1301,18 @@ function renderCoach(){
  document.querySelectorAll("[data-topm]").forEach(b=>b.onclick=()=>{RV_M=+b.dataset.topm;renderCoach();});
  document.querySelectorAll("[data-carddel]").forEach(b=>b.onclick=()=>{const x=DOC.cards.list.find(i=>i.id===b.dataset.carddel);if(!x)return;x.del=true;x.updatedAt=nowT();DOC.cards.t=nowT();touch();render();});
  document.querySelectorAll("[data-quotedel]").forEach(b=>b.onclick=()=>{const x=DOC.quotes.list.find(i=>i.id===b.dataset.quotedel);if(!x)return;x.del=true;x.updatedAt=nowT();DOC.quotes.t=nowT();touch();render();});
+ const dpAdd=document.getElementById("dpAdd");
+ if(dpAdd)dpAdd.onclick=()=>{const t=document.getElementById("dpTitle").value.trim();
+  if(!t){document.getElementById("dpTitle").focus();return;}
+  DOC.deposits.list=DOC.deposits.list||[];
+  DOC.deposits.list.push({id:uid(),who:WHO,title:t,scene:document.getElementById("dpScene").value.trim(),
+   fix:document.getElementById("dpFix").value.trim(),reuse:document.getElementById("dpReuse").value.trim(),
+   link:document.getElementById("dpLink").value.trim(),star:false,createdAt:nowT(),updatedAt:nowT()});
+  DOC.deposits.t=nowT();touch();render();};
+ document.querySelectorAll("[data-dpstar]").forEach(b=>b.onclick=()=>{const x=DOC.deposits.list.find(i=>i.id===b.dataset.dpstar);if(!x)return;
+  x.star=!x.star;x.updatedAt=nowT();DOC.deposits.t=nowT();touch();render();});
+ document.querySelectorAll("[data-dpdel]").forEach(b=>b.onclick=()=>{const x=DOC.deposits.list.find(i=>i.id===b.dataset.dpdel);if(!x)return;
+  x.del=true;x.updatedAt=nowT();DOC.deposits.t=nowT();touch();render();});
 
  // 触发式加练
  document.getElementById("trigRules").innerHTML="触发条件（任一出现 → 导师加练 + 主管介入）：客户交付异常 ｜ 连续 2 个月复盘没有实质改进 ｜ 实操/测验连续不达标。";
@@ -1345,7 +1395,7 @@ function renderCheckins(ids){
  let html=`<div class="chips" style="margin-top:2px">${LEVELS.map(lv=>{
    const n=mine?(ciStats(WHO).lv[lv.k]||0):ids.reduce((a,id)=>a+((ciStats(id).lv[lv.k])||0),0);
    return `<button class="chip ${CI_LV===lv.k?"on":"b"}" data-cilv="${lv.k}">${lv.n} · ${lv.period} · ${n}/${lv.goal}</button>`;}).join("")}</div>
-  <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：学要点 → 做 3 题小测（自动判卷）→ 写笔记打卡</b>":"　<b>点节点可查看要点与小测、以及两人的完成情况</b>"}</div>
+  <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：先看引导去 IMA 学原文 → 做 5 题小测（自动判卷）→ 写笔记打卡</b>":"　<b>点节点可查看引导与小测、以及两人的完成情况</b>"}</div>
   <div class="nodegrid">${nodes.map(nd=>{
    if(mine){
      const r=ciRec(WHO,nd.id);
@@ -1380,7 +1430,7 @@ function renderCheckins(ids){
      ${(x.wrong||[]).length?`<div class="meta" style="color:var(--red-d)">答错：${esc((x.wrong||[]).join("；"))}</div>`:""}
    </div>`).join(""):`<div class="empty">还没有打卡记录 —— 点上面的节点开始</div>`);
 
- html+=`<div class="muted" style="margin-top:12px">打卡规则：每个节点 3 题随堂小测（系统自动判卷、立即出对错与解析，答完 3 题即可打卡）→ 写 ≤50 字笔记 + 1 个场景联想；
+ html+=`<div class="muted" style="margin-top:12px">打卡规则：每个节点 5 题随堂小测（系统自动判卷、立即出对错与解析，答完 5 题即可打卡）→ 写 ≤50 字笔记 + 1 个场景联想；
    自由节奏、按期完成整级即可；连续天数与整级解锁徽章自动统计，同时实时同步到「④ 把控」看板与导师端。</div>`;
 
  document.getElementById("ciForm").innerHTML=html;
@@ -1404,10 +1454,16 @@ function paintCiNode(){
   <div class="pad">
    <div class="row" style="gap:8px;flex-wrap:wrap"><span class="tag gy">${esc(nd.levelName)} · ${esc(nd.period)}</span>
      ${nd.demo?`<span class="tag wt">示例题（待 IMA 题库替换）</span>`:`<span class="tag ok">已接入题库</span>`}</div>
-   <div class="muted" style="margin-top:11px;font-weight:700;color:var(--ink2)">① 学 · 学习要点</div>
-   <ul class="ptlist">${(nd.pt||[]).map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
-   <div class="muted" style="margin-top:7px">参考出处：${esc(nd.ref||"—")}　·　建议先按出处去 IMA 知识库看完原文，再做下面的小测。</div>
-   <div class="muted" style="margin-top:13px;font-weight:700;color:var(--ink2)">② 测 · 随堂小测（3 题 · 系统自动判卷，选完立即出对错与解析）</div>
+   <div class="muted" style="margin-top:11px;font-weight:700;color:var(--ink2)">① 学 · 学习引导</div>
+   <div class="muted" style="margin-top:6px">先带着问题去 IMA 知识库看原文，再回来做小测；要点放在下面折叠里，<b>建议看完原文最后再展开自查</b>。</div>
+   <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--blue-l);border:1px solid #CFE0EF;border-radius:10px;padding:8px 10px;font-size:12.4px">
+     <span>资料出处：<b>${esc(nd.ref||"—")}</b></span>${nodeImaHTML(nd)}
+   </div>
+   <details style="margin-top:8px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 11px">
+     <summary style="cursor:pointer;font-size:12.5px;color:var(--ink2);font-weight:700">我已看完原文，展开自查要点（展开会看到答案，建议最后看）</summary>
+     <ul class="ptlist" style="margin-top:7px">${(nd.pt||[]).map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
+   </details>
+   <div class="muted" style="margin-top:13px;font-weight:700;color:var(--ink2)">② 测 · 随堂小测（${nd.qz.length} 题 · 系统自动判卷，选完立即出对错与解析）</div>
    ${nd.qz.map((q,qi)=>{
      const a=CI_ANS[qi],revealed=(a>=0)||!mine;
      return `<div class="qz">
@@ -1438,6 +1494,9 @@ function paintCiNode(){
 
  document.getElementById("ovlBox").innerHTML=H+`</div>`;
  document.getElementById("ovlClose").onclick=closeOvl;
+ document.querySelectorAll("[data-copyima]").forEach(b=>b.onclick=()=>{const o=b.textContent;
+   copyText(b.dataset.copyima).then(()=>{b.textContent="已复制，去 IMA 粘贴搜索";setTimeout(()=>b.textContent=o,1500);})
+    .catch(()=>{b.textContent="请手动复制";setTimeout(()=>b.textContent=o,1600);});});
  if(!mine)return;
  document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=()=>{
   const [qi,oi]=el.dataset.ciopt.split(".").map(Number);
@@ -1459,29 +1518,59 @@ function paintCiNode(){
 }
 
 /* ---------- ④ 把控 ---------- */
+/* FAE 记录：{v, ev, evid[], by, conf, t}
+   v = 0/1/2（○未涉及 / △需指导 / ✔可独立）
+   ev = 真实案例 / 情况说明；evid = 引用的真实记录标签（地图/问题/演练/沉淀）
+   conf === false 表示「新人已提交、导师尚未确认」—— 未确认前不计入 FAE 尺子 */
+const faeKey=(d,g,i,p)=>d+"."+g+"."+i+"."+p;
+function faeRec(k){return (DOC.fae.map||{})[k]||{};}
+function faeVal(k){const r=faeRec(k);return r.conf===false?0:(r.v||0);}
+function faeIsPending(k){const r=faeRec(k);return r.conf===false&&(r.v||0)>=1;}
 function faeCount(p){let a1=0,t1=0,a2=0,t2=0;const per=[];
  FAE_DEF.forEach((D,d)=>{let da=0,dt=0;
   D.g.forEach((G,g)=>{
    if(G.kind==="初"){
     if(G.it.length===0){t1++;a1++;da++;dt++;}
-    else G.it.forEach((t,i)=>{t1++;dt++;const v=(DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0;if(v>=1){a1++;da++;}});
-   } else G.it.forEach((t,i)=>{t2++;const v=(DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0;if(v===2)a2++;});
+    else G.it.forEach((t,i)=>{t1++;dt++;const v=faeVal(faeKey(d,g,i,p));if(v>=1){a1++;da++;}});
+   } else G.it.forEach((t,i)=>{t2++;const v=faeVal(faeKey(d,g,i,p));if(v===2)a2++;});
   });
   per.push(dt?Math.round(da/dt*100):100);});
  return {faeJ:t1?Math.round(a1/t1*100):0,faeZ:t2?Math.round(a2/t2*100):0,faeA1:a1,faeT1:t1,faeA2:a2,faeT2:t2,per};}
-const faeKey=(d,g,i,p)=>d+"."+g+"."+i+"."+p;
+function faePendingCount(p){let n=0;FAE_DEF.forEach((D,d)=>D.g.forEach((G,g)=>G.it.forEach((t,i)=>{if(faeIsPending(faeKey(d,g,i,p)))n++;})));return n;}
+/* 印证来源：把该成员的真实记录（产品地图 / 问题处理 / 演练 / 知识沉淀）装配成可勾选凭证 */
+function evidenceFor(who){
+ const out=[];const push=(g,label)=>{if(label&&!out.some(x=>x.label===label))out.push({g,label});};
+ // ① 产品地图 · 学习打卡
+ const ck=(DOC.checkins.list||[]).filter(x=>!x.del&&x.who===who);
+ const done=new Set(ck.map(x=>x.nodeId).filter(Boolean));
+ if(done.size){const st=ciStats(who);push("产品地图",`产品地图：已完成 ${done.size}/${TOTAL_NODES} 个节点${st.acc==null?"":" · 小测正确率 "+st.acc+"%"}`);}
+ ck.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,4).forEach(x=>{const nd=NODE_BY_ID[x.nodeId];if(nd)push("产品地图",`节点已通关：${nd.t}（小测 ${x.correct||0}/${x.total||0}）`);});
+ // ② 问题处理 · 项目闭环
+ const iss=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&x.who===who);
+ iss.filter(x=>(x.status||0)===2).slice(0,6).forEach(x=>push("问题处理",`问题已闭环：${(x.proj||x.text||"未命名").slice(0,40)}`));
+ iss.filter(x=>(x.status||0)<2).slice(0,3).forEach(x=>push("问题处理",`问题进行中：${(x.proj||x.text||"未命名").slice(0,40)}`));
+ // ③ 演讲演练
+ const dr=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===who&&x.score);
+ dr.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,6).forEach(x=>push("演讲演练",`演练：${(x.topic||"未命名").slice(0,36)} · 评分 ${x.score}`));
+ // ④ 知识沉淀 · 分享
+ (DOC.deposits.list||[]).filter(x=>!x.del&&x.who===who).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).slice(0,6)
+  .forEach(x=>push("知识沉淀",`沉淀分享：${(x.title||"未命名").slice(0,36)}`));
+ return out;
+}
 
 function stats(){
  const C=(DOC.carriers.list||[]).filter(x=>!x.del),I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
  const D=(DOC.drills.list||[]).filter(x=>!x.del),T=(DOC.triggers.list||[]).filter(x=>!x.del),CK=(DOC.checkins.list||[]).filter(x=>!x.del);
+ const DP=(DOC.deposits.list||[]).filter(x=>!x.del);
  const per={};NEWCOMERS.forEach(id=>{
-  const c=C.filter(x=>x.who===id),i=I.filter(x=>x.who===id),d=D.filter(x=>x.who===id),ck=CK.filter(x=>x.who===id);
+  const c=C.filter(x=>x.who===id),i=I.filter(x=>x.who===id),d=D.filter(x=>x.who===id),ck=CK.filter(x=>x.who===id),dp=DP.filter(x=>x.who===id);
   per[id]={carrier:c.length,closed:c.filter(x=>x.st===2).length,
    issue:i.length,pending:i.filter(x=>(x.status||0)===0).length,issueClosed:i.filter(x=>(x.status||0)===2).length,
    actions:(c.reduce((a,x)=>a+(x.actions||[]).filter(v=>!v.del&&v.st!==2).length,0)),
    drill:d.length,scored:d.filter(x=>x.score).length,checkin:ck.length,streak:ciStreak(id),
+   deposit:dp.length,depositStar:dp.filter(x=>x.star).length,
    nodes:new Set(ck.map(x=>x.nodeId).filter(Boolean)).size,acc:ciStats(id).acc,...faeCount(id)};});
- return {C,I,D,T,CK,per};
+ return {C,I,D,T,CK,DP,per};
 }
 function radarSVG(per){
  const R=104,cx=118,cy=118,n=8,pts=[];
@@ -1504,7 +1593,8 @@ function renderMonitor(){
  document.getElementById("mStats").innerHTML=[
   statCard(allCar,"载体登记"),statCard(closed,"已闭环载体"),statCard(S.I.length,"问题记录"),
   statCard(pend,"待导师答复"),statCard(card,"知识卡片"),statCard(q,"带教金句"),
-  statCard(new Set(S.CK.map(x=>x.nodeId).filter(Boolean)).size,"已完成节点"),statCard(S.D.filter(x=>x.score).length,"已评分演练")
+  statCard(new Set(S.CK.map(x=>x.nodeId).filter(Boolean)).size,"已完成节点"),statCard(S.D.filter(x=>x.score).length,"已评分演练"),
+  statCard(S.DP.length,"知识沉淀"),statCard(S.DP.filter(x=>x.star).length,"沉淀加精")
  ].map(x=>x).join("");
  document.getElementById("mPeople").innerHTML=ids.map(id=>{const p=S.per[id];
   return `<div class="card pad"><h3>${WHO_NAME[id]}</h3>
@@ -1513,6 +1603,7 @@ function renderMonitor(){
    <div class="muted" style="margin-top:9px">客户维护行动：${p.actions} 项未完成</div>
    <div class="muted" style="margin-top:9px">问题记录：共 ${p.issue} · 待答复 ${p.pending} · 已闭环 ${p.issueClosed}</div>
    <div class="muted" style="margin-top:6px">每周演练：${p.drill} 次 · 已评分 ${p.scored}</div>
+   <div class="muted" style="margin-top:6px">知识沉淀：沉淀 ${p.deposit} 篇 · 导师加精 ${p.depositStar} 篇</div>
    <div class="muted" style="margin-top:6px">产品地图：已完成 ${p.nodes}/${TOTAL_NODES} 个节点 · 小测正确率 ${p.acc==null?"—":p.acc+"%"} · 连续 ${p.streak} 天</div>
    <div class="muted" style="margin-top:9px">FAE 尺子</div>
    <div class="row" style="justify-content:space-between;font-size:12.6px"><span>初级达标</span><span>${p.faeA1}/${p.faeT1}</span></div>
@@ -1658,21 +1749,75 @@ function renderReview(){
  document.querySelectorAll("[data-rvgo]").forEach(b=>b.onclick=()=>{const [s,id]=b.dataset.rvgo.split(".");setCell(RV_M,id,{status:+s});touch();render();});
  renderFae();renderFinal();
 }
+let FAE_ONLY_PENDING=false, FAE_EDIT=null;
+const faeShort=p=>p==="zhan"?"詹":p==="tong"?"童":(WHO_NAME[p]||p).slice(0,1);
+const faeEvTitle=r=>((r.evid||[]).concat(r.ev?[r.ev]:[])).join("；");
 function renderFae(){
  const ids=ppl();
- document.getElementById("faeBar").innerHTML=ids.map(p=>{const c=faeCount(p);
-  return `<span class="chip b"><b>${WHO_NAME[p]}</b> 初级达标 ${c.faeA1}/${c.faeT1} · 中1 可独立 ${c.faeA2}/${c.faeT2}</span>`;}).join("")
-  +(isStaff()?`<button class="btn sm gh" id="faeReset" style="margin-left:auto">重置</button>`:"");
- if(isStaff()){const r=document.getElementById("faeReset");if(r)r.onclick=()=>{if(confirm("清空两人所有打勾记录？")){DOC.fae.map={};DOC.fae.t=nowT();touch();render();}};}
- document.getElementById("faeList").innerHTML=FAE_DEF.map((D,d)=>`<div class="faedim ${D.cls||""}">
-   <div class="faehd"><span style="font-size:14.5px;font-weight:700">${D.k}</span>${D.tag?`<span class="tag ${D.cls==="pri"?"pri":D.cls==="base"?"base":""}">${D.tag}</span>`:""}</div>
-   ${D.g.map((G,g)=>G.it.length?`<div class="faegrp">${G.n}</div>`+G.it.map((t,i)=>{
-     const tgs=ids.map(p=>{const k=faeKey(d,g,i,p);const v=(DOC.fae.map[k]||{}).v||0;
-       return `<button class="chip k${v}" data-fk="${k}" ${isStaff()?"":'style="cursor:default"'} title="${WHO_NAME[p]}：${FSTAT[v]}">${p==="zhan"?"詹":"童"} ${FSTAT[v]}</button>`;}).join("");
-     return `<div class="faeitem"><span class="tx">${esc(t)}</span><span class="chips">${tgs}</span></div>`;}).join("")
-    :`<div class="muted" style="font-size:12px;margin-top:4px">${G.n}</div>`).join("")}</div>`).join("");
- if(isStaff())document.querySelectorAll("#faeList [data-fk]").forEach(b=>b.onclick=()=>{const k=b.dataset.fk;
-  const e=DOC.fae.map[k]||{v:0};e.v=((e.v||0)+1)%3;e.t=nowT();DOC.fae.map[k]=e;DOC.fae.t=nowT();touch();render();});
+ document.getElementById("faeBar").innerHTML=ids.map(p=>{const c=faeCount(p),pd=faePendingCount(p);
+  return `<span class="chip b"><b>${WHO_NAME[p]}</b> 初级达标 ${c.faeA1}/${c.faeT1} · 中1 可独立 ${c.faeA2}/${c.faeT2}${pd?` · <span style="color:var(--amber-d)">待确认 ${pd}</span>`:""}</span>`;}).join("")
+  +(isStaff()?`<button class="btn sm ${FAE_ONLY_PENDING?"":"gh"}" id="faePend" style="margin-left:auto">${FAE_ONLY_PENDING?"显示全部":"只看待确认"}</button><button class="btn sm gh" id="faeReset">重置</button>`:"");
+ if(isStaff()){const r=document.getElementById("faeReset");if(r)r.onclick=()=>{if(confirm("清空两人所有打勾与印证记录？")){DOC.fae.map={};DOC.fae.t=nowT();touch();render();}};
+  const pb=document.getElementById("faePend");if(pb)pb.onclick=()=>{FAE_ONLY_PENDING=!FAE_ONLY_PENDING;renderFae();};}
+ document.getElementById("faeList").innerHTML=
+  `<div class="muted" style="margin:0 0 10px">这一栏<b>不是自评</b>：选 △/✔ 必须给出印证 —— 勾选该成员<b>真实记录</b>（产品地图 / 问题处理 / 演练 / 知识沉淀），或写清真实案例。
+   ${isStaff()?"导师/主管保存即时生效；新人提交需你确认后才计入尺子。":"新人提交后由导师/主管确认，才计入尺子。"}</div>`
+  +FAE_DEF.map((D,d)=>{
+   const grps=D.g.map((G,g)=>{
+    if(!G.it.length)return `<div class="muted" style="font-size:12px;margin-top:4px">${G.n}</div>`;
+    const rows=G.it.filter((t,i)=>!FAE_ONLY_PENDING||ids.some(p=>faeIsPending(faeKey(d,g,i,p)))).map((t,i)=>{
+      const tgs=ids.map(p=>{const k=faeKey(d,g,i,p);const r=faeRec(k);const v=r.v||0;const pend=faeIsPending(k);const ttl=faeEvTitle(r);
+        return `<button class="chip k${v}${pend?" pend":""}" data-faeopen="${k}" title="${esc(WHO_NAME[p]+"："+FSTAT[v]+(pend?"（待确认）":"")+(ttl?"　印证："+ttl:""))}">${faeShort(p)} ${FSTAT[v]}${pend?"?":""}</button>`;}).join("");
+      return `<div class="faeitem"><span class="tx">${esc(t)}</span><span class="chips">${tgs}</span></div>`;}).join("");
+    return rows?`<div class="faegrp">${G.n}</div>`+rows:"";
+   }).join("");
+   return `<div class="faedim ${D.cls||""}">
+    <div class="faehd"><span style="font-size:14.5px;font-weight:700">${D.k}</span>${D.tag?`<span class="tag ${D.cls==="pri"?"pri":D.cls==="base"?"base":""}">${D.tag}</span>`:""}</div>
+    ${grps}</div>`;
+  }).join("");
+ document.querySelectorAll("#faeList [data-faeopen]").forEach(b=>b.onclick=()=>{
+  const parts=b.dataset.faeopen.split(".");openFaeItem(+parts[0],+parts[1],+parts[2],parts.slice(3).join("."));});
+}
+/* FAE 印证弹窗：状态 + 真实记录引用 + 案例说明 → 导师确认 */
+function openFaeItem(d,g,i,p){FAE_EDIT={d,g,i,p,v:(faeRec(faeKey(d,g,i,p)).v||0)};paintFaeItem();document.getElementById("ovl").classList.remove("hide");}
+function paintFaeItem(){
+ if(!FAE_EDIT)return;
+ const {d,g,i,p}=FAE_EDIT;const k=faeKey(d,g,i,p);const rec=faeRec(k);const G=FAE_DEF[d].g[g];
+ const canEdit=isStaff()||mineP(p);
+ const pend=faeIsPending(k);
+ const evid=rec.evid||[];
+ const cands=evidenceFor(p);
+ const evHTML=cands.length?cands.map(c=>
+   `<label class="evchip"><input type="checkbox" value="${esc(c.label)}" ${evid.indexOf(c.label)>=0?"checked":""}><span>${esc(c.label)}</span></label>`).join("")
+  :`<div class="muted" style="font-size:12px">该成员暂无可用真实记录 —— 先在产品地图 / 问题 / 演练 / 沉淀里产生记录，或直接在下方写案例说明。</div>`;
+ document.getElementById("ovlBox").innerHTML=`<div class="mh"><b>FAE 印证</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div class="pad">
+   <div class="muted" style="font-size:11.8px">${esc(FAE_DEF[d].k)} · ${esc(G.n)} · 成员：<b>${esc(WHO_NAME[p]||p)}</b></div>
+   <div style="font-size:13.6px;font-weight:700;margin-top:4px">${esc(G.it[i])}</div>
+   ${pend?`<span class="tag wt" style="margin-top:7px;display:inline-block">新人已提交 · 待导师/主管确认</span>`:((rec.conf===true&&(rec.v||0)>=1)?`<span class="tag ok" style="margin-top:7px;display:inline-block">已确认 · 计入尺子</span>`:"")}
+   <div class="muted" style="margin-top:12px;font-weight:700;color:var(--ink2)">① 状态（点选）</div>
+   <div class="chips" id="faeStat" style="margin-top:6px">${FSTAT.map((s,idx)=>`<button class="chip k${idx}${FAE_EDIT.v===idx?" sel":""}" data-faev="${idx}">${s} ${["未涉及","需指导","可独立"][idx]}</button>`).join("")}</div>
+   <div class="muted" style="margin-top:12px;font-weight:700;color:var(--ink2)">② 印证材料（来自该成员真实记录，可勾选引用）</div>
+   <div id="faeEvid" class="evwrap">${evHTML}</div>
+   <div class="muted" style="margin-top:12px;font-weight:700;color:var(--ink2)">③ 真实案例 / 情况说明</div>
+   <textarea id="faeEv" placeholder="什么场景、你做了什么、结果如何（选 △/✔ 时 ②③至少填一项）" style="width:100%;min-height:64px;margin-top:5px;border:1px solid var(--line);border-radius:9px;padding:9px;font-size:12.6px">${esc(rec.ev||"")}</textarea>
+   <div class="row" style="margin-top:12px">
+    ${canEdit?`<button class="btn" id="faeSave">${isStaff()?"保存并确认":"提交（待导师确认）"}</button>`:`<span class="muted">仅本人或导师/主管可修改</span>`}
+    <span class="muted" id="faeMsg"></span></div>
+   <div class="muted" style="margin-top:9px">规则：○ 未涉及不必填；选 △/✔ 必须附「真实记录」或「案例说明」至少一项；新人提交需导师/主管确认后才计入尺子。</div>
+  </div>`;
+ document.getElementById("ovlClose").onclick=closeOvl;
+ document.querySelectorAll("#faeStat [data-faev]").forEach(b=>b.onclick=()=>{FAE_EDIT.v=+b.dataset.faev;
+  document.querySelectorAll("#faeStat [data-faev]").forEach(x=>x.classList.toggle("sel",+x.dataset.faev===FAE_EDIT.v));});
+ if(!canEdit)return;
+ const sv=document.getElementById("faeSave");
+ if(sv)sv.onclick=()=>{
+  const v=FAE_EDIT.v|0;
+  const ev=(document.getElementById("faeEv").value||"").trim();
+  const evidArr=Array.from(document.querySelectorAll("#faeEvid input:checked")).map(x=>x.value);
+  if(v>=1&&!ev&&!evidArr.length){document.getElementById("faeMsg").textContent="选 △/✔ 需至少勾一条真实记录或写案例说明";document.getElementById("faeEv").focus();return;}
+  DOC.fae.map[k]=Object.assign({},rec,{v,ev,evid:evidArr,by:WHO,conf:!!isStaff(),t:nowT()});DOC.fae.t=nowT();
+  touch();closeOvl();render();};
 }
 function renderFinal(){
  const ids=ppl();
@@ -1681,11 +1826,11 @@ function renderFinal(){
   ${ids.map(p=>`<th style="padding:7px;border-bottom:1px solid var(--line)">${WHO_NAME[p]}·初级</th><th style="padding:7px;border-bottom:1px solid var(--line)">${WHO_NAME[p]}·中1</th>`).join("")}</tr></thead><tbody>`;
  FAE_DEF.forEach((D,d)=>{let cells="";
   ids.forEach(p=>{let a1=0,t1=0,a2=0,t2=0;
-   D.g.forEach((G,g)=>{if(G.kind==="初"){if(G.it.length===0){t1++;a1++;}else G.it.forEach((t,i)=>{t1++;if(((DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0)>=1)a1++;});}
-    else G.it.forEach((t,i)=>{t2++;if(((DOC.fae.map[faeKey(d,g,i,p)]||{}).v||0)===2)a2++;});});
+   D.g.forEach((G,g)=>{if(G.kind==="初"){if(G.it.length===0){t1++;a1++;}else G.it.forEach((t,i)=>{t1++;if(faeVal(faeKey(d,g,i,p))>=1)a1++;});}
+    else G.it.forEach((t,i)=>{t2++;if(faeVal(faeKey(d,g,i,p))===2)a2++;});});
    cells+=`<td style="padding:7px;text-align:center">${t1?a1+"/"+t1:"—"}</td><td style="padding:7px;text-align:center">${t2?a2+"/"+t2:"—"}</td>`;});
   html+=`<tr><td style="padding:7px;border-bottom:1px solid var(--line)">${D.k}</td>${cells}</tr>`;});
- html+=`</tbody></table></div><div class="muted" style="margin-top:10px">保底：初级各维度全 ✔/△（无 ○）。突破：中1 的「问题解决 / 客户支持 / 专业知识」做到可独立。</div>`;
+ html+=`</tbody></table></div><div class="muted" style="margin-top:10px">保底：初级各维度全 ✔/△（无 ○）。突破：中1 的「问题解决 / 客户支持 / 专业知识」做到可独立。<b>注：</b>仅计入已由导师/主管确认的条目，新人待确认的暂不计数。</div>`;
  document.getElementById("finalTbl").innerHTML=html;
 }
 
