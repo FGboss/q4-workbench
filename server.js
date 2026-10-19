@@ -36,6 +36,9 @@ const GH_USERS_PATH = process.env.GH_USERS_PATH || "data/users.json";   // 账�
 const GH_BRANCH = process.env.GH_BRANCH || "main";
 const GH_ON = !!(GH_TOKEN && GH_REPO);
 
+/* 选名字进入（默认关闭）：无鉴权、可冒用他人身份，仅在确需时设 ALLOW_PICK_LOGIN=1 开启 */
+const PICK_LOGIN_ON = process.env.ALLOW_PICK_LOGIN === "1";
+
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
 const ROLES = ["admin", "lead", "mentor", "newbie"];
 const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", newbie: "新人" };
@@ -261,7 +264,7 @@ app.get("/api/config", (req, res) => {
     defaults: USERS.changed ? null : DEFAULT_USERS.map(u => ({ username: u.username, name: u.name, role: u.role, pass: u.pass })),
     selfService: { enabled: true, needPasscode: !!USERS.teamPasscode },
     wecom: { enabled: WECOM_ON, corpid: WECOM_CORPID, agentid: WECOM_AGENTID },
-    github: GH_ON, publicUrl: PUBLIC_URL });
+    github: GH_ON, publicUrl: PUBLIC_URL, allowPickLogin: PICK_LOGIN_ON });
 });
 
 /* ---------- 极简登录：选一下「你是谁」即可进入（无账号、无密码） ---------- */
@@ -273,6 +276,7 @@ app.get("/api/roster", (req, res) => {
   res.json({ ok: true, needPasscode: !!USERS.teamPasscode, members });
 });
 app.post("/api/quick_login", (req, res) => {
+  if (!PICK_LOGIN_ON) return res.status(403).json({ ok: false, msg: "已关闭「选名字进入」，请用账号密码登录或注册" });
   const b = req.body || {};
   const u = findUser(String(b.id || ""));
   if (!u || !u.active || u.role === "admin") return res.status(401).json({ ok: false, msg: "该身份不可用，请联系超级管理员" });
@@ -291,6 +295,25 @@ app.post("/api/login", (req, res) => {
   if (!u.active) return res.status(403).json({ ok: false, msg: "账号已停用，请联系管理员" });
   if (!u.activated) return res.status(403).json({ ok: false, msg: "账号未激活：请使用管理员发来的邀请链接设置密码" });
   if (hashPass(password, u.salt) !== u.pass) return res.status(401).json({ ok: false, msg: "账号或密码不正确" });
+  res.json({ ok: true, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
+});
+
+/* ---------- 学员自助注册：姓名 + 用户名 + 密码 → 注册即「新人」身份 ---------- */
+app.post("/api/register", (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || "").trim();
+  const username = String(b.username || "").trim().toLowerCase();
+  const password = String(b.password || "");
+  if (!name) return res.status(400).json({ ok: false, msg: "请填写姓名" });
+  if (!/^[a-z0-9_]{3,20}$/.test(username)) return res.status(400).json({ ok: false, msg: "用户名需为 3–20 位小写字母 / 数字 / 下划线" });
+  if (password.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
+  if (findByUsername(username)) return res.status(409).json({ ok: false, msg: "该用户名已被占用，请换一个" });
+  const salt = newSalt();
+  const u = { id: uid(), username, name, role: "newbie", salt,
+    pass: hashPass(password, salt), active: true, activated: true, invite: null,
+    mustReset: false, wecom: "", pwless: false, createdAt: Date.now() };
+  USERS.users.push(u);
+  saveUsers();
   res.json({ ok: true, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
 });
 
