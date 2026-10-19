@@ -240,7 +240,7 @@
       <div class="btns" style="margin-top:12px;justify-content:flex-start;flex-wrap:wrap">
         <button class="btn" id="gGo">登录</button>
         <button class="btn gh sm hide" id="gWx">企业微信扫码登录</button>
-        <button class="btn gh sm" id="gHint">首次部署？看初始账号</button>
+        <button class="btn gh sm" id="gHint">登录 / 注册说明</button>
       </div>
     </div>
 
@@ -457,7 +457,7 @@
    Q4 新人培养 · 协作工作台 v5.0（在线版）
    架构：Express 服务托管 SPA + REST 同步 API + SSE 实时推送
        服务器是唯一数据源（Single Source of Truth），本地 localStorage 仅作缓存
-   身份：进入时「选身份 + 口令」，令牌存本机；进入后身份锁定、不可切换
+   身份：账号 + 密码登录（新人自助注册；主管/导师/管理员由超管建号分配）
    同步：改动本地合并 → 700ms 防抖提交服务器；SSE 收到变更 → 拉取并合并 → 自动刷新
    合并：按 id + updatedAt，软删除（tombstone），多端不互相覆盖
    =================================================================== */
@@ -720,7 +720,7 @@ async function enterSession(tok,user){
  try{const c=await apiGet("/api/config");if(c.data&&c.data.users)applyAccounts(c.data.users);}catch(e){}
  connectSSE();showApp();setSync("ok");
 }
-/* 邀请激活：新人点开链接 → 只设一个自己的密码 */
+/* 邀请激活：本人点开链接 → 必须设置一个自己的密码（不再有免密码进入） */
 let INVITE="";
 async function showInvite(t){
  INVITE=t;
@@ -735,26 +735,21 @@ async function showInvite(t){
   f.innerHTML=`<div class="gcard" style="background:var(--red-l);border-color:#EFC9C3;color:var(--red-d)">${esc((r.data&&r.data.msg)||"邀请链接无效或已使用")}<br>请联系超级管理员重新生成。</div>`;
   return;
  }
- f.innerHTML=`<div class="gcard">你好，<b>${esc(r.data.name)}</b>（${esc(r.data.roleName)}）。<br>这是你首次进入：<b>点一下「一键进入」即可，不用记任何口令</b>。</div>
-  <div class="btns" style="margin-top:12px;justify-content:flex-start"><button class="btn" id="ivGo">一键进入工作台</button></div>
-  <div class="muted" style="margin-top:10px">想以后在<b>别的电脑/手机</b>上也能登录？可以顺手设个密码（可选）：</div>
-  <div class="form" style="margin-top:8px">
-   <input id="ivP" type="password" placeholder="设置密码（可选 · 留空即免口令）" autocomplete="new-password">
-   <input id="ivP2" type="password" placeholder="再输一次（设密码时填写）" autocomplete="new-password">
+ f.innerHTML=`<div class="gcard">你好，<b>${esc(r.data.name)}</b>（${esc(r.data.roleName)}）。<br>这是你首次进入：请<b>设置一个自己的密码</b>，之后用「用户名 + 密码」登录。</div>
+  <div class="form" style="margin-top:10px">
+   <label>用户名（你的登录名）</label><input value="${esc(r.data.username)}" disabled>
+   <label>设置密码（至少 4 位）</label><input id="ivP" type="password" placeholder="至少 4 位" autocomplete="new-password">
+   <label>确认密码</label><input id="ivP2" type="password" placeholder="再输一次" autocomplete="new-password">
   </div>
-  <div class="btns" style="margin-top:10px;justify-content:flex-start"><button class="btn gh" id="ivGoPw">设置密码并进入</button></div>
-  <div class="muted" style="margin-top:9px">免口令进入后，本机会自动记住登录；若换了设备，让超级管理员再发一条邀请链接即可。</div>`;
- document.getElementById("ivGo").onclick=()=>doActivate(true);
- document.getElementById("ivGoPw").onclick=()=>doActivate(false);
+  <div class="btns" style="margin-top:10px;justify-content:flex-start"><button class="btn" id="ivGoPw">设置密码并进入</button></div>
+  <div class="muted" style="margin-top:9px">密码由你自己设定、请牢记；忘了可让超级管理员重置。</div>`;
+ document.getElementById("ivP2").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("ivGoPw").click();});
+ document.getElementById("ivGoPw").onclick=()=>doActivate();
 }
-async function doActivate(pwless){
- if(pwless)return doActivateWith("");
+async function doActivate(){
  const p=(document.getElementById("ivP")||{}).value||"",p2=(document.getElementById("ivP2")||{}).value||"";
- if(p.length<4){setGMsg("密码至少 4 位（或点「一键进入」免口令进入）");return;}
+ if(p.length<4){setGMsg("密码至少 4 位");return;}
  if(p!==p2){setGMsg("两次输入不一致，请重新输入");return;}
- return doActivateWith(p);
-}
-async function doActivateWith(p){
  try{const r=await apiPost("/api/activate",{invite:INVITE,password:p});
   if(r.data&&r.data.ok){await enterSession(r.data.token,r.data.user);}
   else setGMsg((r.data&&r.data.msg)||"激活失败，请让管理员重新发邀请链接");}
@@ -1722,16 +1717,14 @@ function bindStatic(){
   document.getElementById("gRegPass2").value||"");
  document.getElementById("gRegPass2").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gRegGo").click();});
  const wx=document.getElementById("gWx");if(wx)wx.onclick=doWecom;
- document.getElementById("gHint").onclick=async()=>{
+ document.getElementById("gHint").onclick=()=>{
   const box=document.getElementById("gHintBox");box.classList.toggle("hide");
   if(box.classList.contains("hide"))return;
-  box.innerHTML="读取中…";
-  try{const r=await apiGet("/api/config");const arr=(r.data&&r.data.defaults)||[];
-   if(!arr.length){box.innerHTML="初始默认账号已被管理员修改。请直接找 <b>超级管理员（admin）</b> 要账号或邀请链接。";return;}
-   box.innerHTML="<b>初始默认账号（仅首次部署有效，登录后请立即改密）</b><br>"+
-    arr.map(u=>`${esc(u.name)}（${ROLE_NAME[u.role]||u.role}）· 账号 <b>${esc(u.username)}</b> · 密码 <b>${esc(u.pass)}</b>`).join("<br>")+
-    "<br>超级管理员登录后，可在右上角「账号管理」里建账号、分配角色、发邀请链接。";
-  }catch(e){box.innerHTML="需先连上服务器。若只是自己预览，请用下方「本地演示模式」。";}
+  box.innerHTML="<b>登录 / 注册说明</b><br>"+
+   "· <b>新人</b>：点上方「<b>学员注册</b>」自己注册（姓名 + 用户名 + 密码），注册后即为「新人」身份；<br>"+
+   "· <b>主管 / 导师 / 管理员</b>：账号与初始密码由<b>超级管理员</b>创建后单独发给你，用自己的「用户名 + 密码」登录；<br>"+
+   "· <b>每人一个账号、一份密码</b>，登录后只能进入自己的身份，无法冒用他人；<br>"+
+   "· 忘记密码：联系超级管理员重置。超级管理员的初始账号见部署说明，首次登录后请立即改密。";
  };
  document.getElementById("gLocal").onclick=()=>{const b=document.getElementById("gLocalBox");b.classList.toggle("hide");
   if(!b.classList.contains("hide"))document.getElementById("gHintBox").classList.add("hide");};

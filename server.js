@@ -36,20 +36,19 @@ const GH_USERS_PATH = process.env.GH_USERS_PATH || "data/users.json";   // 账�
 const GH_BRANCH = process.env.GH_BRANCH || "main";
 const GH_ON = !!(GH_TOKEN && GH_REPO);
 
-/* 选名字进入（默认关闭）：无鉴权、可冒用他人身份，仅在确需时设 ALLOW_PICK_LOGIN=1 开启 */
-const PICK_LOGIN_ON = process.env.ALLOW_PICK_LOGIN === "1";
-
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
 const ROLES = ["admin", "lead", "mentor", "newbie"];
 const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", newbie: "新人" };
 
-// 默认账号：首次部署即用；admin 首次登录后建议立即改密
+// 首次部署预置账号（结构与演示数据一致）。
+// · admin：固定初始密码 admin123（公开文档，首次登录必须立即改密）
+// · 其余：初始密码在首次启动时随机生成、只打印在服务日志里，由超管分发给本人；仓库中不预置任何可用密码
 const DEFAULT_USERS = [
   { id: "admin",  username: "admin",  name: "超级管理员", role: "admin",  pass: "admin123", mustReset: true },
-  { id: "lead",   username: "lead",   name: "主管",       role: "lead",   pass: "8888" },
-  { id: "mentor", username: "mentor", name: "导师",       role: "mentor", pass: "6666" },
-  { id: "zhan",   username: "zhan",   name: "詹祥雨",     role: "newbie", pass: "1111" },
-  { id: "tong",   username: "tong",   name: "童伟桀",     role: "newbie", pass: "2222" },
+  { id: "lead",   username: "lead",   name: "主管",       role: "lead",   random: true },
+  { id: "mentor", username: "mentor", name: "导师",       role: "mentor", random: true },
+  { id: "zhan",   username: "zhan",   name: "詹祥雨",     role: "newbie", random: true },
+  { id: "tong",   username: "tong",   name: "童伟桀",     role: "newbie", random: true },
 ];
 
 const sha = s => crypto.createHash("sha256").update(String(s)).digest("hex");
@@ -71,13 +70,19 @@ function ensureUsers() {
   if (!USERS || !Array.isArray(USERS.users) || !USERS.users.length) USERS = readJson(USERS_FILE, null);
   if (!USERS || !Array.isArray(USERS.users) || !USERS.users.length) {
     const now = Date.now();
+    const boot = [];
     const users = DEFAULT_USERS.map(u => {
+      const pw = u.pass || crypto.randomBytes(4).toString("hex");
       const salt = newSalt();
+      boot.push({ username: u.username, name: u.name, role: u.role, pass: pw, mustReset: !!u.mustReset });
       return { id: u.id, username: u.username, name: u.name, role: u.role, salt,
-        pass: hashPass(u.pass, salt), active: true, activated: true, invite: null,
+        pass: hashPass(pw, salt), active: true, activated: true, invite: null,
         mustReset: !!u.mustReset, wecom: "", pwless: false, createdAt: now };
     });
     USERS = { v: 2, users, changed: false, teamPasscode: process.env.TEAM_PASSCODE || "" };
+    console.log("[首次部署] 已生成初始账号（除 admin 外均为本次随机密码，请分别发给本人）:");
+    boot.forEach(b => console.log("  " + b.name + "（" + (ROLE_NAME[b.role] || b.role) + "）· 用户名 " + b.username
+      + " · 密码 " + b.pass + (b.mustReset ? "  ← 请登录后立即改密" : "")));
   }
   if (typeof USERS.changed !== "boolean") USERS.changed = true;
   if (typeof USERS.teamPasscode !== "string") USERS.teamPasscode = "";
@@ -98,6 +103,24 @@ const findByInvite = t => (USERS.users || []).find(u => u.invite && u.invite ===
 const findByWecom = w => (USERS.users || []).find(u => u.wecom && u.wecom === String(w || "")) || null;
 const pubUser = u => ({ id: u.id, username: u.username, name: u.name, role: u.role,
   active: u.active, activated: !!u.activated, mustReset: !!u.mustReset, wecom: u.wecom || "", pwless: !!u.pwless });
+
+/* 一次性安全迁移：早期版本用过的弱默认密码（仓库里公开可读），启动时强制换成随机密码并打印到日志，
+   避免任何人凭已知密码冒用他人身份。已自行改过密码的账号不受影响。 */
+const LEGACY_WEAK = { lead: "8888", mentor: "6666", zhan: "1111", tong: "2222" };
+function rotateLegacyWeakPasswords() {
+  let n = 0;
+  (USERS.users || []).forEach(u => {
+    const weak = LEGACY_WEAK[u.username];
+    if (weak && u.salt && hashPass(weak, u.salt) === u.pass) {
+      u.salt = newSalt();
+      const np = crypto.randomBytes(4).toString("hex");
+      u.pass = hashPass(np, u.salt);
+      console.log("[安全迁移] " + u.name + "（" + u.username + "）初始弱密码已重置为随机密码：" + np + "  ← 请分发给本人");
+      n++;
+    }
+  });
+  if (n) saveUsers();
+}
 
 /* 令牌：id.base64 + 签名（密码变更/停用后旧令牌自动失效） */
 function userToken(u) { return Buffer.from(u.id).toString("base64url") + "." + sha(u.id + "|" + u.pass + "|" + APP_SECRET); }
@@ -256,35 +279,14 @@ app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204); next(); });
 
-/* 登录页需要：角色清单 + 企业微信是否可用 + 是否还是初始默认密码 + 极简登录开关 */
+/* 登录页需要：角色清单 + 企业微信是否可用（不对外暴露任何账号密码） */
 app.get("/api/config", (req, res) => {
   res.json({ ok: true, roles: ROLES, roleName: ROLE_NAME,
     users: (USERS.users || []).filter(u => u.active).map(pubUser),
     initialized: !!(DOC && Object.keys(DOC.people || {}).length),
-    defaults: USERS.changed ? null : DEFAULT_USERS.map(u => ({ username: u.username, name: u.name, role: u.role, pass: u.pass })),
-    selfService: { enabled: true, needPasscode: !!USERS.teamPasscode },
     wecom: { enabled: WECOM_ON, corpid: WECOM_CORPID, agentid: WECOM_AGENTID },
-    github: GH_ON, publicUrl: PUBLIC_URL, allowPickLogin: PICK_LOGIN_ON });
+    github: GH_ON, publicUrl: PUBLIC_URL });
 });
-
-/* ---------- 极简登录：选一下「你是谁」即可进入（无账号、无密码） ---------- */
-/* 成员名册：只列出非管理员的启用账号，按角色分组 */
-app.get("/api/roster", (req, res) => {
-  const members = (USERS.users || [])
-    .filter(u => u.active && u.role !== "admin")
-    .map(u => ({ id: u.id, name: u.name, role: u.role, roleName: ROLE_NAME[u.role] }));
-  res.json({ ok: true, needPasscode: !!USERS.teamPasscode, members });
-});
-app.post("/api/quick_login", (req, res) => {
-  if (!PICK_LOGIN_ON) return res.status(403).json({ ok: false, msg: "已关闭「选名字进入」，请用账号密码登录或注册" });
-  const b = req.body || {};
-  const u = findUser(String(b.id || ""));
-  if (!u || !u.active || u.role === "admin") return res.status(401).json({ ok: false, msg: "该身份不可用，请联系超级管理员" });
-  if (USERS.teamPasscode && String(b.passcode || "") !== USERS.teamPasscode)
-    return res.status(401).json({ ok: false, msg: "团队口令不正确" });
-  res.json({ ok: true, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
-});
-
 
 /* 账号 + 密码登录 */
 app.post("/api/login", (req, res) => {
@@ -323,7 +325,7 @@ app.get("/api/me", (req, res) => {
   res.json({ ok: true, user: pubUser(me), roleName: ROLE_NAME[me.role] });
 });
 
-/* ---------- 邀请链接（新人首次进入只用设一个自己的密码） ---------- */
+/* ---------- 邀请链接（本人首次进入必须设置一个自己的密码） ---------- */
 app.get("/api/invite_info", (req, res) => {
   const u = findByInvite(req.query.invite);
   if (!u) return res.json({ ok: false, msg: "邀请链接无效或已使用" });
@@ -336,14 +338,13 @@ app.post("/api/activate", (req, res) => {
   if (!u) return res.status(400).json({ ok: false, msg: "邀请链接无效或已使用" });
   if (!u.active) return res.status(403).json({ ok: false, msg: "账号已停用，请联系管理员" });
   const np = String(b.password || "");
-  if (np && np.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位（也可两个都留空，直接进入）" });
+  if (np.length < 4) return res.status(400).json({ ok: false, msg: "请设置至少 4 位密码（不接受免密码进入）" });
   u.salt = newSalt();
-  // 留空密码 = 免口令进入：本机令牌即身份，任何人无需记录/分发口令
-  if (np) { u.pass = hashPass(np, u.salt); u.pwless = false; }
-  else { u.pass = hashPass("__pwless__" + newInvite(), u.salt); u.pwless = true; }
+  u.pass = hashPass(np, u.salt);
+  u.pwless = false;
   u.activated = true; u.invite = null; u.mustReset = false;
   saveUsers();
-  res.json({ ok: true, passwordless: !np, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
+  res.json({ ok: true, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
 });
 
 app.get("/api/state", (req, res) => {
@@ -512,6 +513,8 @@ app.get("/api/events", (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "public")));
+/* 未匹配的 /api/* 一律 404（不进入 SPA 兜底），避免已下线的接口被静态页"顶包" */
+app.use("/api", (req, res) => res.status(404).json({ ok: false, msg: "接口不存在" }));
 app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 /* ---------- 启动 ---------- */
@@ -519,13 +522,14 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   ensureDir();
   await ghPullUsers();          // 账号优先从 GitHub 恢复（若配置），避免重启丢成员
   ensureUsers();                // 否则用本地文件；都没有则建默认账号
+  rotateLegacyWeakPasswords();  // 历史弱默认密码 → 随机密码（防冒用）
   if (GH_ON) await ghPull();
   else if (!DOC) console.log("[boot] 尚无数据，等待前端首次写入");
   app.listen(PORT, () => {
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
     console.log(`持久化： ${GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
-    if (!USERS.changed) console.log("[账号] 初始默认 → admin/admin123 · lead/8888 · mentor/6666 · zhan/1111 · tong/2222");
+    console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
   });
 })();
