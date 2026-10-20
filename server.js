@@ -160,7 +160,7 @@ function emptyDoc() {
     carriers: { t: 0, list: [] }, issues: { t: 0, list: [] }, drills: { t: 0, list: [] },
     map: { t: 0, checks: [] }, kit: { t: 0, list: [] }, cards: { t: 0, list: [] }, quotes: { t: 0, list: [] },
     triggers: { t: 0, list: [] }, fae: { t: 0, map: {} }, reviews: { t: 0, map: {} }, checkins: { t: 0, list: [] },
-    deposits: { t: 0, list: [] } };
+    deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] } };
 }
 function mergeList(L, R) {
   const m = {};
@@ -189,7 +189,7 @@ function mergeDoc(A, B) {
   const a = A || emptyDoc(), b = B || emptyDoc();
   const o = { v: 5, t: Math.max(a.t || 0, b.t || 0) };
   ["sec", "meta", "people", "plan"].forEach(k => o[k] = mergePlain(a[k], b[k]));
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits"].forEach(k => o[k] = mergeList(a[k], b[k]));
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits", "reveals"].forEach(k => o[k] = mergeList(a[k], b[k]));
   o.map = mergeChecks(a.map, b.map);
   o.fae = mergeMap(a.fae, b.fae);
   o.reviews = mergeMap(a.reviews, b.reviews);
@@ -201,7 +201,7 @@ function normDoc(r) {
   const o = { v: 5, t: r.t || 0 };
   o.sec = (r.sec && r.sec.h) ? r.sec : e.sec;
   ["meta", "people", "plan"].forEach(k => o[k] = (r[k] && typeof r[k] === "object" && !Array.isArray(r[k])) ? r[k] : e[k]);
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits"].forEach(k =>
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits", "reveals"].forEach(k =>
     o[k] = (r[k] && Array.isArray(r[k].list)) ? r[k] : { t: (r[k] && r[k].t) || 0, list: [] });
   o.map = (r.map && Array.isArray(r.map.checks)) ? r.map : { t: 0, checks: [] };
   o.fae = (r.fae && r.fae.map && typeof r.fae.map === "object" && !Array.isArray(r.fae.map)) ? r.fae : { t: 0, map: {} };

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Q4 新人培养 · 协作工作台 v6.2 · 在线版</title>
+<title>Q4 新人培养 · 协作工作台 v6.3 · 在线版</title>
 <style>
   :root{
     --blue:#17558F; --blue-d:#0B3A63; --blue-l:#EDF4FA; --blue-m:#3B7CB0;
@@ -467,7 +467,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v6.2 · 2026.10.20　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 责任制看板 + 成长护照</div>
+    <div style="margin-top:5px"><b>版本：</b>v6.3 · 2026.10.20　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 责任制看板 + 成长护照</div>
   </footer>
 </div>
 </div>
@@ -573,7 +573,8 @@ function emptyDoc(){return {v:5,t:0,
  meta:{t:0}, people:{t:0}, plan:{t:0},
  carriers:{t:0,list:[]}, issues:{t:0,list:[]}, drills:{t:0,list:[]},
  checkins:{t:0,list:[]}, kit:{t:0,list:[]}, cards:{t:0,list:[]}, quotes:{t:0,list:[]},
- triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}, deposits:{t:0,list:[]}};}
+ triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}, deposits:{t:0,list:[]},
+ reveals:{t:0,list:[]}};}
 function seedDoc(){const t=nowT();return {v:5,t,
  meta:{t,goal:"向「初级 → 中级(中1)」靠拢：保底初级各项达标，争取中1核心项「可独立」。",
    accept:"12 月中旬前，两人各自独立跟完 1 个真实客户/项目，并在真实场合清楚讲解 1 次；初级各项达标、中1 核心项可独立。",
@@ -591,7 +592,7 @@ function seedDoc(){const t=nowT();return {v:5,t,
    {id:uid(),name:"典型客户问题应答 SOP",note:"高频问题标准处理步骤",link:"",updatedAt:t},
    {id:uid(),name:"项目复盘引导清单",note:"复盘固定问的问题清单",link:"",updatedAt:t},
    {id:uid(),name:"能力差距诊断问卷",note:"对照 FAE 找短板",link:"",updatedAt:t}]},
- cards:{t,list:[]}, quotes:{t,list:[]}, deposits:{t,list:[]},
+ cards:{t,list:[]}, quotes:{t,list:[]}, deposits:{t,list:[]}, reveals:{t,list:[]},
  triggers:{t,list:[]}, fae:{t,map:{}}, reviews:{t,map:{}}};}
 /* 本地演示模式下额外塞 2 条「示例问题」，让责任看板/必回清单一眼能看到效果（服务器数据不受影响） */
 function demoDoc(){const d=seedDoc(),tt=nowT(),H=3600000;
@@ -631,12 +632,12 @@ function mergeMap(L,R){const map={};
 function mergePlain(L,R){return (L&&L.t||0)>=(R&&R.t||0)?(L||{}):(R||{});}
 function mergeDoc(A,B){const a=A||emptyDoc(),b=B||emptyDoc();const o={v:5,t:Math.max(a.t||0,b.t||0)};
  ["meta","people","plan"].forEach(k=>o[k]=mergePlain(a[k],b[k]));
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits"].forEach(k=>o[k]=mergeList(a[k],b[k]));
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=mergeList(a[k],b[k]));
  o.fae=mergeMap(a.fae,b.fae);o.reviews=mergeMap(a.reviews,b.reviews);return o;}
 function norm(r){const e=emptyDoc();if(!r||typeof r!=="object"||Array.isArray(r))return e;
  const o={v:5,t:r.t||0};
  ["meta","people","plan"].forEach(k=>o[k]=(r[k]&&typeof r[k]==="object"&&!Array.isArray(r[k]))?r[k]:e[k]);
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
+ ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
  o.fae=(r.fae&&r.fae.map&&typeof r.fae.map==="object"&&!Array.isArray(r.fae.map))?r.fae:{t:(r.fae&&r.fae.t)||0,map:{}};
  o.reviews=(r.reviews&&r.reviews.map&&typeof r.reviews.map==="object"&&!Array.isArray(r.reviews.map))?r.reviews:{t:(r.reviews&&r.reviews.t)||0,map:{}};
  return o;}
@@ -1411,6 +1412,25 @@ function ciStats(who){
  return {done,lv,acc,mon,streak:ciStreak(who),recs};
 }
 let CI_LV=null,CI_NODE=null,CI_ANS=[];
+/* 学习行为监测：新人点开节点里的「展开自查要点」（含答案）逐次留痕，随 DOC 自动同步到看板/产品地图。 */
+let RV_GUARD={};
+function rvList(who){const L=(DOC.reveals&&DOC.reveals.list)||[];return L.filter(x=>!x.del&&(!who||x.who===who));}
+function rvNodeCount(who,nid){return rvList(who).filter(x=>x.nodeId===nid).length;}
+function rvStat(who){const l=rvList(who);const nodes=new Set(l.map(x=>x.nodeId));
+ const last=l.reduce((a,x)=>Math.max(a,x.at||0),0);
+ const ln=l.filter(x=>(x.at||0)===last)[0]||{};
+ return {n:l.length,nodes:nodes.size,last,lastNode:ln.nodeTitle||""};}
+function recordReveal(nid){
+ if(!isNew())return;                                  /* 只监测新人 */
+ const nd=NODE_BY_ID[nid];if(!nd)return;
+ const t=nowT();
+ if(RV_GUARD[nid]&&t-RV_GUARD[nid]<1500)return;       /* 防抖：连点/重绘不重复计数 */
+ RV_GUARD[nid]=t;
+ DOC.reveals=DOC.reveals||{t:0,list:[]};
+ DOC.reveals.list.push({id:uid(),who:WHO,nodeId:nid,nodeTitle:nd.t,at:t,updatedAt:t});
+ DOC.reveals.t=t;
+ touch();                                            /* 立即落本机 + 后台异步同步，不阻塞 */
+}
 const levelNodes=k=>NODES.filter(n=>n.level===k);
 function ciHeat(who){const m=ciDayCount(who);const today=new Date();
  const dow=(today.getDay()+6)%7;const weeks=10;const start=new Date(today);
@@ -1431,6 +1451,7 @@ function renderCheckins(ids){
 
  document.getElementById("ciBlk").innerHTML=ids.map(id=>{
   const st=ciStats(id);
+  const rv=rvStat(id);
   return `<div class="card pad">
    <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]} · 产品地图</h3>
      <span class="tag ${st.streak>0?"ok":"gy"}">连续 ${st.streak} 天</span></div>
@@ -1442,6 +1463,7 @@ function renderCheckins(ids){
      return `<div class="tier"><span class="tn">${L.n}</span><span class="tb"><i style="width:${pc}%;background:${L.c}"></i></span><span class="muted" style="font-size:11.4px;min-width:46px;text-align:right">${n}/${L.goal}</span></div>`;}).join("")}
    <div class="hmw" style="margin-top:12px">${ciHeat(id)}</div>
    <div class="hmlegend">少<span class="hm hm0"></span><span class="hm hm1"></span><span class="hm hm2"></span><span class="hm hm3"></span>多　·　近 10 周</div>
+   <div class="muted" style="margin-top:10px;padding-top:9px;border-top:1px dashed var(--line)">自查要点展开 <b>${rv.n}</b> 次 · 涉及 <b>${rv.nodes}</b> 个节点${rv.last?` · 最近 ${fmt(rv.last)}${rv.lastNode?"（"+esc(rv.lastNode)+"）":""}`:" · 暂无记录"}</div>
   </div>`;}).join("");
 
  if(!CI_LV||!LEVELS.some(L=>L.k===CI_LV))CI_LV=(LEVELS[0]||{}).k;
@@ -1514,10 +1536,12 @@ function paintCiNode(){
    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--blue-l);border:1px solid #CFE0EF;border-radius:10px;padding:8px 10px;font-size:12.4px">
      <span>资料出处：<b>${esc(nd.ref||"—")}</b></span>${nodeImaHTML(nd)}
    </div>
-   <details style="margin-top:8px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 11px">
+   <details id="ciPtFold" style="margin-top:8px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 11px">
      <summary style="cursor:pointer;font-size:12.5px;color:var(--ink2);font-weight:700">我已看完原文，展开自查要点（展开会看到答案，建议最后看）</summary>
      <ul class="ptlist" style="margin-top:7px">${(nd.pt||[]).map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
    </details>
+   <div class="muted" style="margin-top:5px;font-size:12px">${mine?`自查要点展开：<b id="ciRvCnt">${rvNodeCount(WHO,nd.id)}</b> 次 · 每次展开都会记录，供导师了解学习习惯`
+     :`该节点自查要点展开：${NEWCOMERS.map(id=>`${WHO_NAME[id]} <b>${rvNodeCount(id,nd.id)}</b> 次`).join("　·　")}`}</div>
    <div class="muted" style="margin-top:13px;font-weight:700;color:var(--ink2)">② 测 · 随堂小测（${nd.qz.length} 题 · 系统自动判卷，选完立即出对错与解析）</div>
    ${nd.qz.map((q,qi)=>{
      const a=CI_ANS[qi],revealed=(a>=0)||!mine;
@@ -1549,6 +1573,9 @@ function paintCiNode(){
 
  document.getElementById("ovlBox").innerHTML=H+`</div>`;
  document.getElementById("ovlClose").onclick=closeOvl;
+ /* 「展开自查要点」留痕：新人每次点开都记录 1 次（含节点与时间） */
+ const fold=document.getElementById("ciPtFold");
+ if(fold)fold.addEventListener("toggle",()=>{if(fold.open){recordReveal(nd.id);const c=document.getElementById("ciRvCnt");if(c)c.textContent=rvNodeCount(WHO,nd.id);}});
  document.querySelectorAll("[data-copyima]").forEach(b=>b.onclick=()=>{const o=b.textContent;
    copyText(b.dataset.copyima).then(()=>{b.textContent="已复制，去 IMA 粘贴搜索";setTimeout(()=>b.textContent=o,1500);})
     .catch(()=>{b.textContent="请手动复制";setTimeout(()=>b.textContent=o,1600);});});
@@ -1765,6 +1792,17 @@ function renderDuty(){
          :`<div class="muted" style="margin-top:8px">导师职责：先接住问题、给思路；超 8 小时自动升级主管。</div>`}
        </div>`;}).join("")
      :`<div class="empty">还没有导师/主管账号</div>`}
+   </div>`;
+
+ document.getElementById("dutyBlk").innerHTML+=
+  `<div class="card pad"><h3>学习行为 · 自查要点展开（抢先看答案监测）</h3>
+    ${NEWCOMERS.map(id=>{const s=rvStat(id);
+      return `<div style="border-top:1px dashed var(--line);padding-top:9px;margin-top:9px">
+        <div class="row" style="justify-content:space-between"><b>${WHO_NAME[id]}</b>
+          <span class="tag ${s.n===0?"ok":s.n<=3?"gy":"wt"}">${s.n===0?"未提前展开":"展开 "+s.n+" 次"}</span></div>
+        <div class="muted" style="margin-top:4px">涉及节点 <b>${s.nodes}</b> 个${s.last?` · 最近 ${fmt(s.last)}${s.lastNode?"（"+esc(s.lastNode)+"）":""}`:" · 暂无记录"}</div>
+      </div>`;}).join("")}
+    <div class="muted" style="margin-top:10px">口径：新人点开节点内「展开自查要点」（含答案）即计 1 次；展开次数多、且集中在打卡前，通常意味着「先看答案再做题」，建议导师提醒先读 IMA 原文再自查。</div>
    </div>`;
 
  document.querySelectorAll("[data-drrep]").forEach(b=>b.onclick=()=>{
