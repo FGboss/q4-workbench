@@ -508,15 +508,18 @@ const NODES=[];BANK.forEach(L=>(L.nodes||[]).forEach(nd=>NODES.push(Object.assig
 const NODE_BY_ID={};NODES.forEach(n=>NODE_BY_ID[n.id]=n);
 const TOTAL_NODES=NODES.length;
 /* IMA 资料链接：优先用节点自带 link（或 meta.links[id]）→ 直接打开原文；
-   没有直链时，给出「IMA 知识库入口」+「复制文档名去检索」两步，不让新人空手找资料 */
+   没有直链时，给出「复制文档名去检索」+「打开本知识库」两步，不让新人空手找资料。
+   注意：imaHome 直接指向「诺瓦音视频集成知识库」分享页，点开即进入对应知识库，
+   而不是 IMA 公共首页。 */
 function nodeImaHTML(nd){
  const M=(window.BANK||{}).meta||{};
  const url=nd.link||((M.links||{})[nd.id])||"";
  if(url)return `<a href="${esc(url)}" target="_blank" rel="noopener" style="font-weight:700;color:var(--blue);text-decoration:underline">📖 打开 IMA 资料原文</a>`;
  const kw=String(nd.ref||nd.t||"").replace(/^IMA\s*知识库\s*\/\s*/,"").trim();
  const home=M.imaHome||"https://ima.qq.com";
+ const kbName=(M.brand?M.brand+" ":"")+"知识库";
  return `<button class="btn sm gh" data-copyima="${esc(kw||nd.t)}" title="复制后到 IMA 知识库里检索打开">① 复制文档名去 IMA</button>`
-   +`<a class="btn sm gh" href="${esc(home)}" target="_blank" rel="noopener" title="打开 IMA 知识库" style="text-decoration:none;display:inline-block">② 打开 IMA 知识库 ↗</a>`;
+   +`<a class="btn sm gh" href="${esc(home)}" target="_blank" rel="noopener" title="直接进入本知识库" style="text-decoration:none;display:inline-block">② 打开 IMA ${esc(kbName)} ↗</a>`;
 }
 
 const CATS=["硬件/显示","软件/配置","网络/连线","客户沟通","方案/选型","其他"];
@@ -649,11 +652,14 @@ function setSync(state,msg){const d=document.getElementById("syncDot"),t=documen
  if(!d)return;d.className="dot"+(state==="warn"?" warn":state==="err"?" err":"");
  t.textContent=msg||(state==="ok"?"已同步 · "+fmt(nowT()):state==="err"?"离线（本地已存）":state);}
 function lsSave(){try{localStorage.setItem(LS_LOCAL,JSON.stringify(DOC));}catch(e){}}
-function touch(){DOC.t=nowT();dirty=true;lsSave();schedulePush();}
-function schedulePush(){clearTimeout(pushTimer);pushTimer=setTimeout(push,700);}
+/* 本地改动：立刻写本机 localStorage（绝不丢），界面即时反馈「已保存」；
+   网络同步全部放到后台异步进行，不阻塞任何操作。 */
+function touch(){DOC.t=nowT();dirty=true;lsSave();setSync("warn","已保存 · 后台同步中…");schedulePush();}
+function schedulePush(){clearTimeout(pushTimer);pushTimer=setTimeout(push,450);}
 
 async function push(){
- if(!ONLINE||!TOKEN||!dirty||busy)return;
+ if(!ONLINE||!TOKEN||!dirty)return;
+ if(busy){schedulePush();return;}          // 上一笔还在传 → 让出，稍后补传（dirty 保留，绝不丢）
  busy=true;dirty=false;
  try{
   const r=await apiPost("/api/save",{doc:DOC});
@@ -664,14 +670,17 @@ async function push(){
   }else{dirty=true;setSync("err",(r.data&&r.data.msg)||"保存失败");}
  }catch(e){dirty=true;setSync("err","离线（本地已保存，联网后自动补传）");}
  busy=false;
+ if(dirty)schedulePush();                  // 传输期间又有新改动 → 立即补传，确保最终落库不丢数据
 }
-async function pull(){
+/* 拉取远端：silent=true 用于后台定时 / SSE 触发的拉取 —— 不闪「同步中」，静默更新 */
+async function pull(silent){
  if(!ONLINE||!TOKEN)return;
- if(dirty){await push();return;}
- setSync("warn","同步中…");
+ if(dirty){if(!silent)await push();return;}
+ if(!silent)setSync("warn","同步中…");
  try{const r=await apiGet("/api/state");
-  if(r.data&&r.data.ok){applyRemote(r.data.doc);setSync("ok");}else setSync("err");}
- catch(e){setSync("err");}
+  if(r.data&&r.data.ok){applyRemote(r.data.doc);setSync("ok");}
+  else if(!silent)setSync("err");}
+ catch(e){if(!silent)setSync("err");}
 }
 function applyRemote(remote,mode){
  const r=norm(remote);
@@ -689,11 +698,8 @@ function connectSSE(){
   sse.onerror=()=>setSync("warn","实时连接中断，自动重连…");
  }catch(e){}
 }
-function onRemoteSignal(){clearTimeout(pullTimer);pullTimer=setTimeout(async()=>{
- if(!ONLINE||!TOKEN||busy)return;
- try{const r=await apiGet("/api/state");if(r.data&&r.data.ok){applyRemote(r.data.doc);setSync("ok");}}
- catch(e){setSync("err");}
-},250);}
+/* 收到其它端的变更：静默拉取并合并，不打断当前操作 */
+function onRemoteSignal(){clearTimeout(pullTimer);pullTimer=setTimeout(()=>{if(!ONLINE||!TOKEN||busy)return;pull(true);},250);}
 
 /* ---------- 身份 ---------- */
 function setGMsg(m){const e=document.getElementById("gMsg");if(e)e.innerHTML=m||"";}
@@ -744,14 +750,14 @@ async function doRegister(name,username,password,password2){
   btns.forEach(b=>b.disabled=false);
  }
 }
-/* 建立会话：写令牌 → 拉数据 → 拉账号清单 → 连 SSE */
+/* 建立会话：写令牌 → 并行拉「数据 + 账号清单」（少一次往返，进入更快）→ 连 SSE */
 async function enterSession(tok,user){
  TOKEN=tok;WHO=user.id;MY_ROLE=user.role;MY_PWLESS=!!user.pwless;ONLINE=true;
  try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
- const st=await apiGet("/api/state");
+ const [st,c]=await Promise.all([apiGet("/api/state"),apiGet("/api/config")]);
+ if(c&&c.data&&c.data.users)applyAccounts(c.data.users);
  if(st.data&&st.data.ok&&st.data.doc){DOC=norm(st.data.doc);lsSave();}
  else{DOC=seedDoc();lsSave();await push();}
- try{const c=await apiGet("/api/config");if(c.data&&c.data.users)applyAccounts(c.data.users);}catch(e){}
  connectSSE();showApp();setSync("ok");
 }
 /* 邀请激活：本人点开链接 → 必须设置一个自己的密码（不再有免密码进入） */
@@ -803,12 +809,34 @@ function localMode(who){
  lsSave();
  showApp();setSync("warn","本地演示模式 · 数据只存本机");
 }
+/* 退出登录：若有未同步的改动，先「后台补传」（不等待结果，既不丢数据也不拖慢退出）；
+   随后就地清空状态、切回登录页 —— 不再整页 reload，退出瞬间完成。 */
+function resetGate(){
+ const lp=document.getElementById("gLoginPane");if(lp)lp.classList.remove("hide");
+ const rp=document.getElementById("gRegPane");if(rp)rp.classList.add("hide");
+ const iv=document.getElementById("gInvitePane");if(iv)iv.classList.add("hide");
+ const hb=document.getElementById("gHintBox");if(hb)hb.classList.add("hide");
+ const lb=document.getElementById("gLocalBox");if(lb)lb.classList.add("hide");
+ const ns=document.getElementById("gNoSrv");if(ns)ns.classList.add("hide");
+ const tl=document.getElementById("gTabLogin"),tr=document.getElementById("gTabReg");
+ if(tl)tl.classList.add("on");if(tr)tr.classList.remove("on");
+ setGMsg("");
+}
+const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl"];
 function logout(){
  if(!confirm("退出并回到登录页？（服务器数据不受影响）"))return;
- if(sse){try{sse.close();}catch(e){}sse=null;}
- ONLINE=false;TOKEN="";MY_ROLE="";dirty=false;
- try{localStorage.removeItem(LS_TOKEN);}catch(e){}
- location.reload();
+ if(dirty&&ONLINE&&TOKEN){try{push();}catch(e){}}   // 后台补传最后一笔改动，不等待
+ if(sse){try{sse.close();}catch(e){}}
+ clearTimeout(pushTimer);clearTimeout(pullTimer);
+ sse=null;ONLINE=false;TOKEN="";WHO="";MY_ROLE="";MY_PWLESS=false;dirty=false;busy=false;
+ try{localStorage.removeItem(LS_TOKEN);localStorage.removeItem(LS_WHO);}catch(e){}
+ try{history.replaceState(null,"",location.pathname);}catch(e){}
+ DOC=emptyDoc();
+ closeOvl();
+ CLEAR_IDS.forEach(id=>{const e=document.getElementById(id);if(e)e.innerHTML="";});
+ const gu=document.getElementById("gUser"),gp=document.getElementById("gPass");
+ if(gu)gu.value="";if(gp)gp.value="";
+ resetGate();showGate();
 }
 
 /* ---------- 右上角面板：管理员→账号管理；其他人→使用说明 ---------- */
@@ -945,10 +973,18 @@ function statCard(v,k){return `<div class="stat"><div class="v">${v}</div><div c
 /* ===================================================================
    渲染
    =================================================================== */
-function render(){if(!WHO)return;for(const f of [renderPassport,renderPlan,renderAssist,renderCoach,renderMonitor,renderDuty,renderReview])try{f();}catch(e){console.error(e);}}
+/* 按标签页分组渲染：只重绘「当前可见」的面板，避免每次操作都全量重绘 7 个面板造成卡顿；
+   同一帧内多次渲染请求用 requestAnimationFrame 合并，进一步减少重绘次数。
+   切换标签页时自动重绘目标页；跨页聚合（如成长看板）在切到该页时重新计算，数据与逻辑不受影响。 */
+const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[renderCoach],monitor:[renderMonitor,renderDuty],review:[renderReview]};
+let _rPend=null;
+function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
+function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
+function render(){if(!WHO)return;_queueRender(TAB);}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
- window.scrollTo({top:0,behavior:"smooth"});}
+ render();
+ window.scrollTo({top:0,behavior:"auto"});}
 
 /* ---------- 成长护照（新人首页）----------
    目的：让新人打开就想「今天再进一格」，而不是当成负担。
@@ -1892,18 +1928,19 @@ function bindStatic(){
  document.getElementById("gLocalGo").onclick=()=>localMode(document.getElementById("gLocalWho").value);
  document.getElementById("ovl").onclick=e=>{if(e.target.id==="ovl")closeOvl();};
 }
-/* 用已有令牌建立会话（企业微信回调 ?token= / 本机缓存令牌） */
+/* 用已有令牌建立会话（企业微信回调 ?token= / 本机缓存令牌）：并行拉取，进入更快 */
 async function enterByToken(t){
  TOKEN=t;ONLINE=true;MY_ROLE="";
- let st={};
- try{st=await apiGet("/api/state");}catch(e){showGate("连不上服务器，请稍后重试。");return;}
+ let st={},me={},c={};
+ try{[st,me,c]=await Promise.all([apiGet("/api/state"),apiGet("/api/me"),apiGet("/api/config")]);}
+ catch(e){showGate("连不上服务器，请稍后重试。");return;}
  if(!st.data||!st.data.ok){try{localStorage.removeItem(LS_TOKEN);}catch(e){}showGate("登录会话已失效，请重新登录。");return;}
  WHO=st.data.who||"";MY_ROLE=st.data.role||"";
- try{const me=await apiGet("/api/me");if(me.data&&me.data.ok&&me.data.user)MY_PWLESS=!!me.data.user.pwless;}catch(e){}
+ if(me.data&&me.data.ok&&me.data.user)MY_PWLESS=!!me.data.user.pwless;
+ if(c.data&&c.data.users)applyAccounts(c.data.users);
  try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
  try{history.replaceState(null,"",location.pathname);}catch(e){}
  if(st.data.doc){DOC=norm(st.data.doc);lsSave();}else{DOC=seedDoc();lsSave();await push();}
- try{const c=await apiGet("/api/config");if(c.data&&c.data.users)applyAccounts(c.data.users);}catch(e){}
  connectSSE();showApp();setSync("ok");
 }
 /* 登录前取一次配置：启用企业微信时显示扫码入口 + 预载账号姓名 */
@@ -1929,9 +1966,9 @@ async function boot(){
   if(tok&&who){await enterByToken(tok);}else{showGate();}
  }
  if(qWx)setGMsg(esc(qWx));
- // 兜底：SSE 断开时也能定时拿到最新数据
- setInterval(()=>{if(!document.hidden&&ONLINE&&TOKEN&&!busy)pull();},15000);
- document.addEventListener("visibilitychange",()=>{if(!document.hidden&&ONLINE&&TOKEN)pull();});
+ // 兜底：SSE 断开时也能定时拿到最新数据（静默拉取，不打扰当前操作）
+ setInterval(()=>{if(!document.hidden&&ONLINE&&TOKEN&&!busy)pull(true);},15000);
+ document.addEventListener("visibilitychange",()=>{if(!document.hidden&&ONLINE&&TOKEN&&!busy)pull(true);});
 }
 boot();
 </script>

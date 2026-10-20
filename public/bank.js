@@ -17,8 +17,9 @@ window.BANK = {
     "brand": "诺瓦 / 嗨动",
     "source": "IMA 知识库",
     "demo": false,
-    /* IMA 知识库入口（每个节点「去 IMA 学原文」的兜底链接） */
-    "imaHome": "https://ima.qq.com",
+    /* IMA 知识库入口：直接指向「诺瓦音视频集成知识库」分享页，
+       新人点开即进入本知识库（而不是 IMA 公共首页）。 */
+    "imaHome": "https://ima.qq.com/wiki/?shareId=54a3462dbc5cec987fb459725d0eee751de0972b7a1f911952532cd3965127ec",
     /* 节点 → IMA 原文直链。拿到某份资料的分享链接后，按节点 id 填在这里，
        例如 "links": { "b01": "https://ima.qq.com/wiki/?shareId=xxxx" }，
        前端会自动把「复制检索词去 IMA」升级为「打开 IMA 资料原文」。 */
