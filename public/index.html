@@ -820,6 +820,9 @@ function resetGate(){
  const ns=document.getElementById("gNoSrv");if(ns)ns.classList.add("hide");
  const tl=document.getElementById("gTabLogin"),tr=document.getElementById("gTabReg");
  if(tl)tl.classList.add("on");if(tr)tr.classList.remove("on");
+ /* 登录/注册提交时会临时禁用按钮，回到登录门时统一恢复可用，
+    避免「退出登录后登录按钮仍是禁用态、必须刷新页面」的问题。 */
+ document.querySelectorAll("#gLoginPane .btn,#gRegPane .btn").forEach(b=>b.disabled=false);
  setGMsg("");
 }
 const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl"];
