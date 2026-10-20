@@ -8,6 +8,10 @@ services:
     # 用 npm ci（不用 npm install）—— 这是答题系统踩过的坑：npm install 会静默卡死
     buildCommand: npm ci
     startCommand: node server.js
+    # 开启自动部署：推送到 master 分支后 Render 自动拉取构建上线，无需再手动点 Deploy Hook
+    autoDeploy: true
+    # 部署触发分支（仓库默认分支即 master）
+    branch: master
     healthCheckPath: /
     envVars:
       - key: NODE_VERSION
