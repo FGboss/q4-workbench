@@ -41,9 +41,10 @@ services:
       - key: GH_BRANCH
         value: main
       # 邮件通知（推荐：GitHub Actions + QQ 邮箱，全免费、可按人分邮）
-      #   GH_DISPATCH_TOKEN  有该仓库 Actions: write 权限的 GitHub Token（服务端用它触发发信 workflow）
+      #   GH_DISPATCH_TOKEN  可留空：留空时自动复用已有的 GH_TOKEN 触发发信 workflow
+      #                      （若提示 token 权限不足，再单独填一个有 Actions: write 权限的 Token）
       #   GH_DISPATCH_REPO   仓库，默认 FGboss/q4-workbench
-      #   RELAY_TOKEN        可留空；留空时自动复用 GH_DISPATCH_TOKEN（需与仓库 Secrets 的 RELAY_TOKEN 一致）
+      #   RELAY_TOKEN        可留空；留空时自动复用触发用 token（需与仓库 Secrets 的 RELAY_TOKEN 一致）
       #   真正的 SMTP 账号/授权码配在 GitHub 仓库 Secrets（SMTP_USER / SMTP_PASS / RELAY_TOKEN）
       #   ALERT_TO 兜底收件人，多个用逗号分隔（领导邮箱都填这里即可，领导不用注册）
       - key: GH_DISPATCH_TOKEN

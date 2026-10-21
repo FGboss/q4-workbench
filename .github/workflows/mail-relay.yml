@@ -2,32 +2,37 @@ name: mail-relay
 
 # 免费发信中继：公开仓库 Actions 分钟数不限，runner 可连 QQ 邮箱 SMTP。
 # 触发方式：
-#   1) repository_dispatch（服务端事件：登录/新问题/测试/日报）—— 秒级
-#   2) schedule（工作日 18:00 北京时间 = 10:00 UTC）—— 拉取日报并发送
+#   1) repository_dispatch（服务端事件：登录/新问题/测试/日报）—— 秒级发信
+#   2) schedule（工作日 18:15 北京时间 = 10:15 UTC）—— 唤醒免费实例，让它补发当日日报
 #   3) 手动 workflow_dispatch
+#
+# 仓库 Secrets 只需两个：SMTP_USER、SMTP_PASS
 
 on:
   repository_dispatch:
     types: [send-mail]
   schedule:
-    - cron: "0 10 * * 1-5"
+    - cron: "15 10 * * 1-5"
   workflow_dispatch:
 
 jobs:
   send:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+        if: github.event_name == 'repository_dispatch'
 
       - uses: actions/setup-node@v4
+        if: github.event_name == 'repository_dispatch'
         with:
           node-version: "20"
 
       - name: 安装依赖
+        if: github.event_name == 'repository_dispatch'
         run: npm ci
 
-      - name: 发送事件邮件（服务端触发）
+      - name: 发送邮件（服务端已按人算好收件人）
         if: github.event_name == 'repository_dispatch'
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
@@ -35,10 +40,10 @@ jobs:
           PAYLOAD_B64: ${{ github.event.client_payload.b64 }}
         run: node mail-relay.js
 
-      - name: 发送每日进度日报（定时/手动）
+      - name: 定时兜底：唤醒实例并补发当日日报
         if: github.event_name != 'repository_dispatch'
-        env:
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
-        run: node mail-relay.js
+        run: |
+          APP="https://q4-workbench.onrender.com"
+          curl -fsS -m 90 "$APP/" > /dev/null || true
+          sleep 10
+          curl -fsS -m 120 "$APP/api/daily_ping" || true

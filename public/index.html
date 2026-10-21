@@ -2012,7 +2012,7 @@ async function renderMailBox(){
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>${s.replyTo?`　·　回复地址：<b>${esc(s.replyTo)}</b>`:""}　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
      <div class="muted" style="margin-top:3px">自动触发：新人登录提醒（30 分钟内不重复）· 新人发问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 整体进度日报</div>
-     ${on?"":`<div class="tag wt" style="margin-top:6px">需在 Render 配 GH_DISPATCH_TOKEN、在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN（GitHub Actions 免费中继，推荐）；现在事件会记录但不发信</div>`}</div>
+     ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px">
      <button class="btn sm gh" id="mailTestBtn">发测试邮件</button>
      <button class="btn sm" id="mailRepBtn">立即发今日日报</button></div>

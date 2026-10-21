@@ -96,10 +96,11 @@ const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
    仓库 Secrets（GitHub 里配，不放在本服务）：
        SMTP_USER / SMTP_PASS（QQ 邮箱地址 + 授权码）
    未配置时自动回退到下面各直连通道。 */
-const GH_DISPATCH_TOKEN = process.env.GH_DISPATCH_TOKEN || "";
-const GH_DISPATCH_REPO = process.env.GH_DISPATCH_REPO || "FGboss/q4-workbench";
+/* 触发 workflow 用的 token：优先 GH_DISPATCH_TOKEN；没单独配就复用已有的 GH_TOKEN（少配一个变量） */
+const GH_DISPATCH_TOKEN = process.env.GH_DISPATCH_TOKEN || process.env.GH_TOKEN || "";
+const GH_DISPATCH_REPO = process.env.GH_DISPATCH_REPO || GH_REPO || "FGboss/q4-workbench";
 /* 中继口令：未单独配置 RELAY_TOKEN 时直接复用 GH_DISPATCH_TOKEN，少配一个环境变量 */
-const RELAY_TOKEN = process.env.RELAY_TOKEN || process.env.GH_DISPATCH_TOKEN || "";
+const RELAY_TOKEN = process.env.RELAY_TOKEN || GH_DISPATCH_TOKEN || "";
 const GHA_ON = !!GH_DISPATCH_TOKEN;
 const MAIL_ON = !!(GHA_ON || SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
 const MAIL_CHANNEL = GHA_ON ? "github-actions" : SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
@@ -627,9 +628,8 @@ function reportPayload() {
   return { to: mailTo(), subject, html: mailShell(subject, r.html, note), from: MAIL_FROM, replyTo: MAIL_REPLY_TO, today: r.today };
 }
 /* 工作日到点自动发日报：每 5 分钟检查一次，同一天只发一次。
-   GitHub Actions 中继已接管定时（workflow 里的 cron），这里不再重复发，避免一天两封。 */
+   GitHub Actions 的 cron 只负责「唤醒实例 + 触发 /api/daily_ping」兜底，不会重复发。 */
 function startDailyReportTimer() {
-  if (GHA_ON) { console.log("[mail] 日报由 GitHub Actions 定时任务发送，服务端定时器不启用"); return; }
   setInterval(() => {
     if (!MAIL_ON) return;                          // 未配置密钥时不占用「今日已发」标记
     const d = bj(Date.now());
@@ -1005,12 +1005,26 @@ app.post("/api/mail_report", async (req, res) => {
   const r = await sendDailyReport(bjKey(Date.now()));
   res.status(r.ok ? 200 : 400).json(r);
 });
-/* GitHub Actions 定时任务用它拉取日报内容（服务端不发送），规避 Render 免费实例休眠导致定时器不触发 */
+/* GitHub Actions 定时任务用它拉取日报内容（备用；主链路是下面的 daily_ping 让服务端自己触发） */
 app.get("/api/report_payload", (req, res) => {
   const t = String(req.query.token || "");
   if (!RELAY_TOKEN || t !== RELAY_TOKEN) return res.status(403).json({ ok: false, msg: "口令不正确" });
   try { res.json({ ok: true, mail: reportPayload() }); }
   catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
+});
+/* 定时兜底：GitHub Actions 工作日 18:15 访问此接口唤醒免费实例，由服务端自己判断是否该发今日日报。
+   同一天只发一次（看 MS.lastReport），重复访问不会重复发信。 */
+app.get("/api/daily_ping", async (req, res) => {
+  const key = bjKey(Date.now());
+  if (!MAIL_ON) return res.json({ ok: false, msg: "邮件通道未配置", skipped: "未配置" });
+  const d = bj(Date.now());
+  const wd = d.getUTCDay(), hour = d.getUTCHours();
+  if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
+  if (hour < REPORT_HOUR) return res.json({ ok: true, skipped: "未到 " + REPORT_HOUR + ":00" });
+  if ((MS.lastReport || "") === key) return res.json({ ok: true, skipped: "今日已发" });
+  const r = await sendDailyReport(key);
+  if (r.ok) { MS.lastReport = key; saveMS(); }
+  res.json({ ok: !!r.ok, msg: r.msg || "", to: r.to || [], channel: r.channel || "" });
 });
 
 /* ---------- 企业微信扫码登录（可选） ---------- */
