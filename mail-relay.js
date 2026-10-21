@@ -35,7 +35,11 @@ async function main() {
     auth: { user: SMTP_USER, pass: SMTP_PASS },
     connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 30000,
   });
-  const opt = { from: mail.from || `Q4 工作台 <${SMTP_USER}>`, to: to.join(","), subject: mail.subject || "Q4 工作台通知", html: mail.html || "" };
+  /* 发件人固定用登录授权的 QQ 邮箱：QQ SMTP 不允许冒用其他地址（服务端默认的
+     onboarding@resend.dev 在这里会被拒信），显示名沿用服务端传来的即可 */
+  const nameMatch = String(mail.from || "").match(/^\s*(.*?)\s*</);
+  const from = `${(nameMatch && nameMatch[1]) || "Q4 工作台"} <${SMTP_USER}>`;
+  const opt = { from, to: to.join(","), subject: mail.subject || "Q4 工作台通知", html: mail.html || "" };
   if (mail.replyTo) opt.replyTo = mail.replyTo;
   const info = await transporter.sendMail(opt);
   console.log("已发送：" + opt.subject);
