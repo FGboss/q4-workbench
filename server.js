@@ -50,19 +50,35 @@ const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || p
 const SB_TABLE = process.env.SUPABASE_TABLE || "q4_workbench";
 const SB_ON = !!(SB_URL && SB_KEY);
 
-/* ---------- 邮件通知（Resend，可选，配置即启用） ----------
-   环境变量：
-     RESEND_API_KEY  Resend 控制台创建的 API Key（必填才启用）
-     MAIL_FROM       发件人，默认 "Q4 工作台 <onboarding@resend.dev>"；
-                     验证域名后可改成 "Q4 工作台 <workbench@你的域名>"
-     ALERT_TO        导师/主管收件人，多个用逗号分隔；默认 liwf@novastar.tech
+/* ---------- 邮件通知（QQ 邮箱 SMTP / Brevo / Resend，配置任一即启用） ----------
+   注意：Render 免费实例屏蔽了外发 SMTP 端口 25/465/587，QQ 邮箱直连需付费实例；
+        免费实例请用 Brevo 或 Resend 的 HTTP 接口（走 443）。
+   QQ 邮箱 SMTP（一个发件账号即可发给任意多位领导，无需每人注册）：
+     SMTP_USER  发件 QQ 邮箱，例：916941476@qq.com
+     SMTP_PASS  QQ 邮箱「设置 → 账户 → POP3/SMTP 服务」生成的 16 位授权码（不是登录密码）
+     SMTP_HOST  默认 smtp.qq.com；SMTP_PORT 默认 465（SSL）
+   Brevo（免费 300 封/天；只需验证发件邮箱，收 6 位验证码，无需改 DNS）：
+     BREVO_API_KEY  Brevo 控制台 → SMTP & API → API Keys
+   Resend（可选；免发件人验证，但发到任意地址需验证域名 DNS）：
+     RESEND_API_KEY
+   通用：
+     MAIL_FROM       发件人；默认 "Q4 工作台 <SMTP_USER / 916941476@qq.com / onboarding@resend.dev>"
+     ALERT_TO        收件人，多个用逗号分隔；默认 liwf@novastar.tech
      DAILY_REPORT_HOUR  工作日日报时间（北京时间，默认 18）
-   未配置 RESEND_API_KEY 时全部降级为「只记录不发送」，不影响登录/保存等主流程。 */
+   优先级：SMTP > Brevo > Resend；都未配置时降级为「只记录不发送」。 */
 const RESEND_KEY = process.env.RESEND_API_KEY || "";
-const MAIL_FROM = process.env.MAIL_FROM || "Q4 工作台 <onboarding@resend.dev>";
-const MAIL_TO = String(process.env.ALERT_TO || "liwf@novastar.tech").split(/[,;\s]+/).filter(Boolean);
+const BREVO_KEY = process.env.BREVO_API_KEY || "";
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const SMTP_HOST = process.env.SMTP_HOST || (SMTP_USER ? "smtp.qq.com" : "");
+const SMTP_PORT = +(process.env.SMTP_PORT || 465);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "true") !== "false";
+const SMTP_ON = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
+const MAIL_FROM = process.env.MAIL_FROM || (SMTP_USER ? `Q4 工作台 <${SMTP_USER}>` : BREVO_KEY ? "Q4 工作台 <916941476@qq.com>" : "Q4 工作台 <onboarding@resend.dev>");
+const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@novastar.tech")).split(/[,;\s]+/).filter(Boolean);
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
-const MAIL_ON = !!RESEND_KEY;
+const MAIL_ON = !!(SMTP_ON || BREVO_KEY || RESEND_KEY);
+const MAIL_CHANNEL = SMTP_ON ? "smtp" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : ""));
 const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
 
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
@@ -237,8 +253,20 @@ const mailTo = () => {
   return [...set];
 };
 const nameOf = id => { const u = findUser(id); return u ? u.name : id; };
+/* QQ 邮箱等 SMTP 发信：懒加载 nodemailer，连接复用，失败不影响主流程 */
+let smtpTransporter = null;
+function getSmtp() {
+  if (smtpTransporter) return smtpTransporter;
+  const nodemailer = require("nodemailer");
+  smtpTransporter = nodemailer.createTransport({
+    host: SMTP_HOST, port: SMTP_PORT, secure: SMTP_SECURE,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    pool: true, maxConnections: 1, connectionTimeout: 15000, greetingTimeout: 15000, socketTimeout: 30000,
+  });
+  return smtpTransporter;
+}
 async function sendMail(subject, inner, note) {
-  if (!MAIL_ON) return { ok: false, msg: "未配置 RESEND_API_KEY（已记录事件，未发送）" };
+  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（QQ 邮箱 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
   const to = mailTo();
   if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO）" };
   const html = `<div style="font-family:-apple-system,'Microsoft YaHei',sans-serif;max-width:680px;margin:0 auto;color:#16202C;line-height:1.7">
@@ -249,6 +277,26 @@ async function sendMail(subject, inner, note) {
       <div style="color:#7C8896;font-size:12px;margin-top:16px">${note || ""}${PUBLIC_URL ? `<br>打开工作台：<a href="${h(PUBLIC_URL)}">${h(PUBLIC_URL)}</a>` : ""}</div>
     </div></div>`;
   try {
+    if (SMTP_ON) {
+      const info = await getSmtp().sendMail({ from: MAIL_FROM, to: to.join(","), subject, html });
+      MS.lastSent = Date.now(); saveMS();
+      console.log("[mail] 已发送(" + SMTP_HOST + ")：" + subject + " → " + to.join(",") + " · " + (info.messageId || ""));
+      return { ok: true, id: info.messageId || "", to, channel: "smtp" };
+    }
+    if (BREVO_KEY) {
+      const m = String(MAIL_FROM).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+      const sender = m ? { name: m[1] || "Q4 工作台", email: m[2] } : { name: "Q4 工作台", email: String(MAIL_FROM).trim() };
+      const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: { "api-key": BREVO_KEY, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ sender, to: to.map(email => ({ email })), subject, htmlContent: html }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { console.error("[mail] Brevo 发送失败", r.status, j.message || j.code || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
+      MS.lastSent = Date.now(); saveMS();
+      console.log("[mail] 已发送(brevo)：" + subject + " → " + to.join(","));
+      return { ok: true, id: j.messageId || "", to, channel: "brevo" };
+    }
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: "Bearer " + RESEND_KEY, "Content-Type": "application/json" },
@@ -257,9 +305,13 @@ async function sendMail(subject, inner, note) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { console.error("[mail] 发送失败", r.status, j.message || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
     MS.lastSent = Date.now(); saveMS();
-    console.log("[mail] 已发送：" + subject + " → " + to.join(","));
-    return { ok: true, id: j.id, to };
-  } catch (e) { console.error("[mail]", e.message); return { ok: false, msg: e.message }; }
+    console.log("[mail] 已发送(resend)：" + subject + " → " + to.join(","));
+    return { ok: true, id: j.id, to, channel: "resend" };
+  } catch (e) {
+    console.error("[mail]", e.message);
+    smtpTransporter = null;   // 认证/连接失败后丢弃旧连接，下次重建
+    return { ok: false, msg: e.message };
+  }
 }
 
 /* 新人登录：记录登录轨迹 + 立即邮件提醒导师/主管（同一人 30 分钟内不重复轰炸） */
@@ -763,13 +815,14 @@ function requireStaff(req, res) {
 }
 app.get("/api/mail_status", (req, res) => {
   if (!requireStaff(req, res)) return;
-  res.json({ ok: true, enabled: MAIL_ON, from: MAIL_FROM, to: mailTo(), reportHour: REPORT_HOUR,
+  res.json({ ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL, smtpHost: SMTP_ON ? SMTP_HOST : "", smtpUser: SMTP_ON ? SMTP_USER : "",
+    from: MAIL_FROM, to: mailTo(), reportHour: REPORT_HOUR,
     lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today: bjKey(Date.now()) });
 });
 app.post("/api/mail_test", async (req, res) => {
   if (!requireStaff(req, res)) return;
   const r = await sendMail("【测试】Q4 工作台邮件通知链路已连通",
-    `<p>这是一封测试邮件。</p><p>收到它说明 Resend 通道、发件人、收件人都已配置正确。</p>
+    `<p>这是一封测试邮件。</p><p>收到它说明邮件通道（QQ 邮箱 SMTP / Resend）、发件人、收件人都已配置正确。</p>
      <p style="color:#5C6772;font-size:13px">后续会自动发送：新人登录提醒、新人问题/诉求提醒、工作日 ${REPORT_HOUR}:00 的每日进度报告。</p>`,
     "测试邮件 · 手动触发");
   res.status(r.ok ? 200 : 400).json(r);
@@ -840,7 +893,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
     console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
-    console.log(`邮件通知： ${MAIL_ON ? "已启用 · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置 RESEND_API_KEY（登录/问题提醒会记录但不发信）"}`);
+    console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置（QQ SMTP / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
     startDailyReportTimer();
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
