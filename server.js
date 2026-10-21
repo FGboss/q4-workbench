@@ -85,8 +85,24 @@ const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@no
 /* 回复地址：邮件转发给领导后，领导点「回复」即回到这个邮箱（默认取第一个收件人） */
 const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || MAIL_TO[0] || "";
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
-const MAIL_ON = !!(SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
-const MAIL_CHANNEL = SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
+/* ---------- GitHub Actions 发信中继（推荐：全免费、无需注册任何邮件平台、可精准按人发送） ----------
+   Render / Railway 等免费云都封了 25/465/587 端口，服务端自己发不出去。
+   方案：服务端只负责「生成邮件 + 触发」，真正的发信交给公开仓库的 GitHub Actions
+   （公开仓库 Actions 分钟数不限，runner 可连 QQ 邮箱 SMTP，收件人可任意指定）。
+     环境变量：
+       GH_DISPATCH_TOKEN  有 Actions 写权限的 GitHub Token（触发 workflow 用）
+       GH_DISPATCH_REPO   仓库，默认 FGboss/q4-workbench
+       RELAY_TOKEN        中继口令，供定时任务拉取日报内容
+   仓库 Secrets（GitHub 里配，不放在本服务）：
+       SMTP_USER / SMTP_PASS（QQ 邮箱地址 + 授权码）
+   未配置时自动回退到下面各直连通道。 */
+const GH_DISPATCH_TOKEN = process.env.GH_DISPATCH_TOKEN || "";
+const GH_DISPATCH_REPO = process.env.GH_DISPATCH_REPO || "FGboss/q4-workbench";
+/* 中继口令：未单独配置 RELAY_TOKEN 时直接复用 GH_DISPATCH_TOKEN，少配一个环境变量 */
+const RELAY_TOKEN = process.env.RELAY_TOKEN || process.env.GH_DISPATCH_TOKEN || "";
+const GHA_ON = !!GH_DISPATCH_TOKEN;
+const MAIL_ON = !!(GHA_ON || SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
+const MAIL_CHANNEL = GHA_ON ? "github-actions" : SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
 const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
 
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
@@ -284,18 +300,60 @@ async function getWecomToken() {
   wecomToken = { token: j.access_token, expire: now + (j.expires_in || 7200) * 1000 - 300000 };
   return j.access_token;
 }
-async function sendMail(subject, inner, note) {
-  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（QQ 邮箱 SMTP_USER/SMTP_PASS 或 企业微信 WECOM_CORP_ID/WECOM_CORP_SECRET 或 RESEND_API_KEY），已记录事件但未发送" };
-  const to = mailTo();
-  if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO）" };
-  const html = `<div style="font-family:-apple-system,'Microsoft YaHei',sans-serif;max-width:680px;margin:0 auto;color:#16202C;line-height:1.7">
+/* 按人分邮：新人相关提醒只发给他的直属导师 + 直属主管 + 兜底收件人。
+   账号上没配 mentorId/leadId 时，退化为「全部导师与主管」，保证不漏人。 */
+function staffEmailsFor(newbieId) {
+  const set = new Set(MAIL_TO);
+  const nb = findUser(newbieId);
+  const direct = [nb && nb.mentorId, nb && nb.leadId].filter(Boolean).map(findUser).filter(u => u && u.active && u.email);
+  if (direct.length) direct.forEach(u => set.add(u.email));
+  else (USERS.users || []).forEach(u => { if (u.email && u.active && (u.role === "mentor" || u.role === "lead" || u.role === "admin")) set.add(u.email); });
+  return [...set];
+}
+/* GitHub Actions 中继：把整封邮件塞进 client_payload（base64，避开引号/换行问题），由 workflow 用 QQ SMTP 发出 */
+async function dispatchViaGithub(mail) {
+  const b64 = Buffer.from(JSON.stringify(mail), "utf8").toString("base64");
+  if (b64.length > 60000) return { ok: false, msg: "邮件内容过大（" + Math.round(b64.length / 1024) + "KB），超出 GitHub 触发载荷上限" };
+  const r = await fetch(`https://api.github.com/repos/${GH_DISPATCH_REPO}/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + GH_DISPATCH_TOKEN,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "q4-workbench",
+    },
+    body: JSON.stringify({ event_type: "send-mail", client_payload: { b64 } }),
+  });
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    let msg = "GitHub 触发失败 HTTP " + r.status;
+    if (r.status === 401) msg = "GH_DISPATCH_TOKEN 无效或已过期";
+    else if (r.status === 404) msg = "仓库不存在或 token 无 Actions 权限（" + GH_DISPATCH_REPO + "）";
+    else if (r.status === 403) msg = "token 权限不足（需 Actions: write）";
+    console.error("[mail] " + msg, t.slice(0, 200));
+    return { ok: false, msg };
+  }
+  MS.lastSent = Date.now(); saveMS();
+  console.log("[mail] 已触发 GitHub Actions 发信：" + mail.subject + " → " + mail.to.join(","));
+  return { ok: true, id: "", to: mail.to, channel: "github-actions", async: true };
+}
+function mailShell(subject, inner, note) {
+  return `<div style="font-family:-apple-system,'Microsoft YaHei',sans-serif;max-width:680px;margin:0 auto;color:#16202C;line-height:1.7">
     <div style="background:#17558F;color:#fff;padding:15px 20px;border-radius:10px 10px 0 0">
       <b style="font-size:16px">Q4 新人培养 · 协作工作台</b>
       <div style="font-size:13px;opacity:.9;margin-top:4px">${h(subject)}</div></div>
     <div style="border:1px solid #E3E8EE;border-top:0;border-radius:0 0 10px 10px;padding:18px 20px">${inner}
       <div style="color:#7C8896;font-size:12px;margin-top:16px">${note || ""}${PUBLIC_URL ? `<br>打开工作台：<a href="${h(PUBLIC_URL)}">${h(PUBLIC_URL)}</a>` : ""}</div>
     </div></div>`;
+}
+async function sendMail(subject, inner, note, opts) {
+  const o = opts || {};
+  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（GH_DISPATCH_TOKEN 或 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
+  const to = (o.to && o.to.length ? o.to : mailTo());
+  if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO 或给账号填邮箱）" };
+  const html = mailShell(subject, inner, note);
   try {
+    if (GHA_ON) return await dispatchViaGithub({ to, subject, html, from: MAIL_FROM, replyTo: MAIL_REPLY_TO });
     if (SMTP_ON) {
       const opt = { from: MAIL_FROM, to: to.join(","), subject, html };
       if (MAIL_REPLY_TO) opt.replyTo = MAIL_REPLY_TO;
@@ -377,25 +435,31 @@ function recordLogin(u) {
     `<p><b>${h(u.name)}</b>（新人）刚登录了工作台。</p>
      <p>时间：${bjTime(now)} ${wk}</p>
      <p style="color:#5C6772;font-size:13px">若长时间无进展，可主动在「协助」或「把控」里看一眼他的问题与待办。</p>`,
-    "登录提醒 · 自动发送");
+    "登录提醒 · 自动发送", { to: staffEmailsFor(u.id) });
 }
 
 /* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
 function notifyNewIssues(items) {
   if (!MAIL_ON || !items.length) return;
-  const rows = items.slice(0, 6).map(x => `<tr>
-     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(nameOf(x.who))}</td>
-     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${x.type === "wish" ? "诉求/吐槽" : "项目问题"}</td>
-     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.text || "").slice(0, 300)}
-       ${x.proj ? `<div style="color:#7C8896;font-size:12px">项目：${h(x.proj)}${x.cat ? " · " + h(x.cat) : ""}</div>` : ""}
-       ${x.blk ? `<div style="color:#7C8896;font-size:12px">卡点：${h(x.blk).slice(0, 160)}</div>` : ""}
-       ${x.need ? `<div style="color:#7C8896;font-size:12px">需要谁：${h(x.need)}</div>` : ""}</td></tr>`).join("");
-  const more = items.length > 6 ? `<p style="color:#7C8896;font-size:12px">另有 ${items.length - 6} 条，请到工作台查看。</p>` : "";
-  sendMail(`【问题协助】${nameOf(items[0].who)} 等 ${items.length} 条新问题/诉求`,
-    `<table style="border-collapse:collapse;width:100%;font-size:13px">
-       <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">新人</th><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
-       ${rows}</table>${more}`,
-    "问题协助提醒 · 自动发送");
+  /* 按人分邮：同一位新人的多条合并成一封，发给他的导师/主管；多人则各自一封 */
+  const byWho = {};
+  items.forEach(x => { (byWho[x.who] = byWho[x.who] || []).push(x); });
+  Object.keys(byWho).forEach(who => {
+    const list = byWho[who];
+    const rws = list.slice(0, 6).map(x => `<tr>
+       <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${x.type === "wish" ? "诉求/吐槽" : "项目问题"}</td>
+       <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.text || "").slice(0, 300)}
+         ${x.proj ? `<div style="color:#7C8896;font-size:12px">项目：${h(x.proj)}${x.cat ? " · " + h(x.cat) : ""}</div>` : ""}
+         ${x.blk ? `<div style="color:#7C8896;font-size:12px">卡点：${h(x.blk).slice(0, 160)}</div>` : ""}
+         ${x.need ? `<div style="color:#7C8896;font-size:12px">需要谁：${h(x.need)}</div>` : ""}</td></tr>`).join("");
+    const m = list.length > 6 ? `<p style="color:#7C8896;font-size:12px">另有 ${list.length - 6} 条，请到工作台查看。</p>` : "";
+    sendMail(`【问题协助】${nameOf(who)} 新提了 ${list.length} 条问题/诉求`,
+      `<p><b>${h(nameOf(who))}</b> 在工作台提交了新内容，请尽快回应。</p>
+       <table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
+       ${rws}</table>${m}`,
+      "问题协助提醒 · 自动发送", { to: staffEmailsFor(who) });
+  });
 }
 
 function drillTotalServer(d) {
@@ -553,10 +617,19 @@ function buildDailyReport(day) {
 function sendDailyReport(day) {
   const r = buildDailyReport(day);
   return sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
-    `自动发送 · 工作日 ${REPORT_HOUR}:00 后由服务端汇总；如未收到请检查 RESEND_API_KEY / ALERT_TO。`);
+    `自动发送 · 工作日 ${REPORT_HOUR}:00 后汇总；由 GitHub Actions 定时任务投递。`);
 }
-/* 工作日到点自动发日报：每 5 分钟检查一次，同一天只发一次 */
+/* 供 GitHub Actions 定时任务拉取日报（只生成内容，不在服务端发送；Render 免费实例会休眠，定时器不可靠） */
+function reportPayload() {
+  const r = buildDailyReport();
+  const subject = `【每日进度】${r.today} 新人培养整体进度`;
+  const note = `自动发送 · 工作日 ${REPORT_HOUR}:00 汇总。`;
+  return { to: mailTo(), subject, html: mailShell(subject, r.html, note), from: MAIL_FROM, replyTo: MAIL_REPLY_TO, today: r.today };
+}
+/* 工作日到点自动发日报：每 5 分钟检查一次，同一天只发一次。
+   GitHub Actions 中继已接管定时（workflow 里的 cron），这里不再重复发，避免一天两封。 */
 function startDailyReportTimer() {
+  if (GHA_ON) { console.log("[mail] 日报由 GitHub Actions 定时任务发送，服务端定时器不启用"); return; }
   setInterval(() => {
     if (!MAIL_ON) return;                          // 未配置密钥时不占用「今日已发」标记
     const d = bj(Date.now());
@@ -804,7 +877,7 @@ function requireAdmin(req, res) {
 app.get("/api/users", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ ok: true, teamPasscode: USERS.teamPasscode || "",
-    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", inviteUrl: u.invite ? inviteUrl(u) : "" })) });
+    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", mentorId: u.mentorId || "", leadId: u.leadId || "", inviteUrl: u.invite ? inviteUrl(u) : "" })) });
 });
 
 /* 团队口令（可选）：全组共用一个，开启后「选名字进入」需带上它；留空=完全免口令 */
@@ -857,6 +930,9 @@ app.post("/api/user_update", (req, res) => {
   }
   if (b.wecom != null) u.wecom = String(b.wecom).trim();
   if (b.email != null) u.email = String(b.email).trim();
+  /* 直属导师 / 直属主管：只影响「提醒邮件发给谁」，不改变任何业务数据 */
+  if (b.mentorId != null) u.mentorId = String(b.mentorId).trim();
+  if (b.leadId != null) u.leadId = String(b.leadId).trim();
   if (b.password != null && String(b.password).length) {
     const np = String(b.password);
     if (np.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
@@ -929,6 +1005,13 @@ app.post("/api/mail_report", async (req, res) => {
   const r = await sendDailyReport(bjKey(Date.now()));
   res.status(r.ok ? 200 : 400).json(r);
 });
+/* GitHub Actions 定时任务用它拉取日报内容（服务端不发送），规避 Render 免费实例休眠导致定时器不触发 */
+app.get("/api/report_payload", (req, res) => {
+  const t = String(req.query.token || "");
+  if (!RELAY_TOKEN || t !== RELAY_TOKEN) return res.status(403).json({ ok: false, msg: "口令不正确" });
+  try { res.json({ ok: true, mail: reportPayload() }); }
+  catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
+});
 
 /* ---------- 企业微信扫码登录（可选） ---------- */
 app.get("/api/wecom_login", (req, res) => {
@@ -990,7 +1073,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
     console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
-    console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置（QQ SMTP / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
+    console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
     startDailyReportTimer();
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));

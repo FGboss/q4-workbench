@@ -1,0 +1,44 @@
+name: mail-relay
+
+# 免费发信中继：公开仓库 Actions 分钟数不限，runner 可连 QQ 邮箱 SMTP。
+# 触发方式：
+#   1) repository_dispatch（服务端事件：登录/新问题/测试/日报）—— 秒级
+#   2) schedule（工作日 18:00 北京时间 = 10:00 UTC）—— 拉取日报并发送
+#   3) 手动 workflow_dispatch
+
+on:
+  repository_dispatch:
+    types: [send-mail]
+  schedule:
+    - cron: "0 10 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 发送事件邮件（服务端触发）
+        if: github.event_name == 'repository_dispatch'
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          PAYLOAD_B64: ${{ github.event.client_payload.b64 }}
+        run: node mail-relay.js
+
+      - name: 发送每日进度日报（定时/手动）
+        if: github.event_name != 'repository_dispatch'
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          RELAY_TOKEN: ${{ secrets.RELAY_TOKEN }}
+        run: node mail-relay.js

@@ -40,16 +40,19 @@ services:
         value: data/users.json
       - key: GH_BRANCH
         value: main
-      # 邮件通知：免费实例（Free）禁止外发 SMTP 25/465/587，QQ 邮箱直连需付费实例。
-      #   免费推荐：Brevo（免费 300 封/天，只需验证发件邮箱，收 6 位验证码，不用改 DNS）
-      #     BREVO_API_KEY  Brevo 控制台 → SMTP & API → API Keys
-      #     MAIL_FROM      已验证的发件邮箱，如 "Q4 工作台 <916941476@qq.com>"
-      #   QQ 邮箱直连（需付费实例）：
-      #     SMTP_USER      发件 QQ 邮箱
-      #     SMTP_PASS      QQ 邮箱「设置 → 账户 → POP3/SMTP 服务」生成的 16 位授权码
-      #     SMTP_HOST 默认 smtp.qq.com；SMTP_PORT 默认 465
-      #   ALERT_TO 收件人，多个用逗号分隔（领导邮箱都填这里即可，领导不用注册）
-      #   DAILY_REPORT_HOUR 工作日日报时间（北京时间，默认 18）
+      # 邮件通知（推荐：GitHub Actions + QQ 邮箱，全免费、可按人分邮）
+      #   GH_DISPATCH_TOKEN  有该仓库 Actions: write 权限的 GitHub Token（服务端用它触发发信 workflow）
+      #   GH_DISPATCH_REPO   仓库，默认 FGboss/q4-workbench
+      #   RELAY_TOKEN        可留空；留空时自动复用 GH_DISPATCH_TOKEN（需与仓库 Secrets 的 RELAY_TOKEN 一致）
+      #   真正的 SMTP 账号/授权码配在 GitHub 仓库 Secrets（SMTP_USER / SMTP_PASS / RELAY_TOKEN）
+      #   ALERT_TO 兜底收件人，多个用逗号分隔（领导邮箱都填这里即可，领导不用注册）
+      - key: GH_DISPATCH_TOKEN
+        sync: false
+      - key: GH_DISPATCH_REPO
+        value: FGboss/q4-workbench
+      - key: RELAY_TOKEN
+        sync: false
+      # 以下为「免费实例直连」的旧通道（Render Free 封 SMTP 端口，一般仅付费实例可用）
       - key: BREVO_API_KEY
         sync: false
       - key: SMTP_USER
