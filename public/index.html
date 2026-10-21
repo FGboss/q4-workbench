@@ -888,6 +888,7 @@ async function openAccounts(){
  if(!r.data||!r.data.ok){alert((r.data&&r.data.msg)||"读取账号失败，请确认你是超级管理员并已连上服务器。");return;}
  const users=r.data.users||[];
  const roleOpts=sel=>["admin","lead","mentor","newbie"].map(k=>`<option value="${k}" ${sel===k?"selected":""}>${ROLE_NAME[k]}</option>`).join("");
+ const peopleOpts=(role,sel)=>`<option value="">— 未指定 —</option>`+users.filter(x=>x.role===role).map(x=>`<option value="${x.id}" ${sel===x.id?"selected":""}>${esc(x.name)}</option>`).join("");
  let html=`<div class="mh"><b>账号管理</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
  html+=`<div class="muted" style="margin-bottom:10px">在这里给人建账号、分配角色：加完后，他打开网址用<b>这个用户名和密码登录</b>即可。</div>
   <div class="card pad" style="margin-bottom:14px">
@@ -916,13 +917,19 @@ async function openAccounts(){
      <button class="btn sm danger" data-udel="${u.id}">删除</button>
     </div>
    </div>
+   <div class="grid2" style="margin-top:8px">
+    <input data-uemail="${u.id}" value="${esc(u.email||"")}" placeholder="邮箱（收提醒用，选填）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+    <input data-uwecom="${u.id}" value="${esc(u.wecom||"")}" placeholder="企业微信 userid（选填）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+   </div>
    <div class="row" style="margin-top:8px;flex-wrap:wrap">
-    <input data-uwecom="${u.id}" value="${esc(u.wecom||"")}" placeholder="企业微信 userid（选填，用于扫码登录绑定）" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+    <select data-umentor="${u.id}" title="直属导师：该新人的登录/问题提醒只发给这位导师">${peopleOpts("mentor",u.mentorId)}</select>
+    <select data-ulead="${u.id}" title="直属主管：该新人的登录/问题提醒只发给这位主管">${peopleOpts("lead",u.leadId)}</select>
     <button class="btn sm gh" data-usave="${u.id}">保存</button>
    </div>
    ${inv}
   </div>`;}).join("");
  html+=`<div class="muted" style="margin-top:12px">· 角色说明：超级管理员可管理账号；主管可做终评、看责任看板；导师可回复、复评、评分；新人只有自己的记录。<br>
+  · 精准提醒：给导师/主管填好<b>邮箱</b>，再给新人的账号选上<b>直属导师/直属主管</b>后，该新人的登录与问题提醒只发给这两位（+兜底收件人），不会打扰其他人；不选则发给全体导师与主管。<br>
   · 企业微信扫码登录：在服务器配置 4 个环境变量后自动启用，并在上面为每个人填好 userid 即可绑定。</div>`;
  if(ONLINE&&WHO)html+=`<div class="row" style="margin-top:12px"><button class="btn gh sm" id="exitBtn">退出登录</button></div>`;
  html+=`</div>`;
@@ -951,9 +958,14 @@ async function openAccounts(){
   if(rr.data&&rr.data.ok)openAccounts();else alert((rr.data&&rr.data.msg)||"操作失败");
  });
  document.querySelectorAll("[data-usave]").forEach(b=>b.onclick=async()=>{
-  const inp=document.querySelector(`[data-uwecom="${b.dataset.usave}"]`);
-  const rr=await apiPost("/api/user_update",{id:b.dataset.usave,wecom:(inp.value||"").trim()});
-  if(rr.data&&rr.data.ok)alert("已保存企业微信绑定");else alert((rr.data&&rr.data.msg)||"保存失败");
+  const id=b.dataset.usave;
+  const em=document.querySelector(`[data-uemail="${id}"]`);
+  const wc=document.querySelector(`[data-uwecom="${id}"]`);
+  const mt=document.querySelector(`[data-umentor="${id}"]`);
+  const ld=document.querySelector(`[data-ulead="${id}"]`);
+  const rr=await apiPost("/api/user_update",{id,email:(em.value||"").trim(),wecom:(wc.value||"").trim(),
+    mentorId:(mt.value||""),leadId:(ld.value||"")});
+  if(rr.data&&rr.data.ok)alert("已保存：邮箱/导师/主管绑定成功");else alert((rr.data&&rr.data.msg)||"保存失败");
  });
  document.querySelectorAll("[data-uinvite]").forEach(b=>b.onclick=async()=>{
   if(!confirm("生成新的邀请链接？本人需重新设一次密码（原密码立即失效）。"))return;
