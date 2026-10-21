@@ -8,9 +8,9 @@ services:
     # 用 npm ci（不用 npm install）—— 这是答题系统踩过的坑：npm install 会静默卡死
     buildCommand: npm ci
     startCommand: node server.js
-    # 开启自动部署：推送到 master 分支后 Render 自动拉取构建上线，无需再手动点 Deploy Hook
+    # 仅当本服务由 Blueprint 创建时才生效。
+    # 当前 q4-workbench 是控制台手工创建的服务，不受本文件管理，Auto-Deploy 需在控制台开启。
     autoDeploy: true
-    # 部署触发分支（仓库默认分支即 master）
     branch: master
     healthCheckPath: /
     envVars:
