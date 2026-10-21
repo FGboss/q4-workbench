@@ -50,6 +50,21 @@ const SB_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || p
 const SB_TABLE = process.env.SUPABASE_TABLE || "q4_workbench";
 const SB_ON = !!(SB_URL && SB_KEY);
 
+/* ---------- 邮件通知（Resend，可选，配置即启用） ----------
+   环境变量：
+     RESEND_API_KEY  Resend 控制台创建的 API Key（必填才启用）
+     MAIL_FROM       发件人，默认 "Q4 工作台 <onboarding@resend.dev>"；
+                     验证域名后可改成 "Q4 工作台 <workbench@你的域名>"
+     ALERT_TO        导师/主管收件人，多个用逗号分隔；默认 liwf@novastar.tech
+     DAILY_REPORT_HOUR  工作日日报时间（北京时间，默认 18）
+   未配置 RESEND_API_KEY 时全部降级为「只记录不发送」，不影响登录/保存等主流程。 */
+const RESEND_KEY = process.env.RESEND_API_KEY || "";
+const MAIL_FROM = process.env.MAIL_FROM || "Q4 工作台 <onboarding@resend.dev>";
+const MAIL_TO = String(process.env.ALERT_TO || "liwf@novastar.tech").split(/[,;\s]+/).filter(Boolean);
+const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
+const MAIL_ON = !!RESEND_KEY;
+const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
+
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
 const ROLES = ["admin", "lead", "mentor", "newbie"];
 const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", newbie: "新人" };
@@ -209,6 +224,207 @@ function normDoc(r) {
   return o;
 }
 
+/* ---------- 邮件通知实现（Resend） ---------- */
+let MS = readJson(MAIL_STATE_FILE, { logins: [], lastLogin: {}, lastReport: "", lastSent: 0 });
+function saveMS() { writeJson(MAIL_STATE_FILE, MS); }
+const bj = t => new Date((t || Date.now()) + 8 * 3600000);           // 北京时间（用 UTC 取值）
+const bjKey = t => { const d = bj(t); return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0"); };
+const bjTime = t => { const d = bj(t); return (d.getUTCMonth() + 1) + "-" + d.getUTCDate() + " " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+const h = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const mailTo = () => {
+  const set = new Set(MAIL_TO);
+  (USERS.users || []).forEach(u => { if (u.email && u.active && ["lead", "mentor", "admin"].indexOf(u.role) >= 0) set.add(u.email); });
+  return [...set];
+};
+const nameOf = id => { const u = findUser(id); return u ? u.name : id; };
+async function sendMail(subject, inner, note) {
+  if (!MAIL_ON) return { ok: false, msg: "未配置 RESEND_API_KEY（已记录事件，未发送）" };
+  const to = mailTo();
+  if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO）" };
+  const html = `<div style="font-family:-apple-system,'Microsoft YaHei',sans-serif;max-width:680px;margin:0 auto;color:#16202C;line-height:1.7">
+    <div style="background:#17558F;color:#fff;padding:15px 20px;border-radius:10px 10px 0 0">
+      <b style="font-size:16px">Q4 新人培养 · 协作工作台</b>
+      <div style="font-size:13px;opacity:.9;margin-top:4px">${h(subject)}</div></div>
+    <div style="border:1px solid #E3E8EE;border-top:0;border-radius:0 0 10px 10px;padding:18px 20px">${inner}
+      <div style="color:#7C8896;font-size:12px;margin-top:16px">${note || ""}${PUBLIC_URL ? `<br>打开工作台：<a href="${h(PUBLIC_URL)}">${h(PUBLIC_URL)}</a>` : ""}</div>
+    </div></div>`;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + RESEND_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: MAIL_FROM, to, subject, html }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { console.error("[mail] 发送失败", r.status, j.message || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
+    MS.lastSent = Date.now(); saveMS();
+    console.log("[mail] 已发送：" + subject + " → " + to.join(","));
+    return { ok: true, id: j.id, to };
+  } catch (e) { console.error("[mail]", e.message); return { ok: false, msg: e.message }; }
+}
+
+/* 新人登录：记录登录轨迹 + 立即邮件提醒导师/主管（同一人 30 分钟内不重复轰炸） */
+function recordLogin(u) {
+  const now = Date.now();
+  MS.logins = ((MS.logins || []).concat([{ id: u.id, name: u.name, at: now }])).slice(-400);
+  const last = MS.lastLogin[u.id] || 0;
+  MS.lastLogin[u.id] = now; saveMS();
+  if (!MAIL_ON || now - last < 30 * 60000) return;
+  const d = bj(now);
+  const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getUTCDay()];
+  sendMail(`【登录提醒】${u.name} 已登录工作台`,
+    `<p><b>${h(u.name)}</b>（新人）刚登录了工作台。</p>
+     <p>时间：${bjTime(now)} ${wk}</p>
+     <p style="color:#5C6772;font-size:13px">若长时间无进展，可主动在「协助」或「把控」里看一眼他的问题与待办。</p>`,
+    "登录提醒 · 自动发送");
+}
+
+/* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
+function notifyNewIssues(items) {
+  if (!MAIL_ON || !items.length) return;
+  const rows = items.slice(0, 6).map(x => `<tr>
+     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(nameOf(x.who))}</td>
+     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${x.type === "wish" ? "诉求/吐槽" : "项目问题"}</td>
+     <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.text || "").slice(0, 300)}
+       ${x.proj ? `<div style="color:#7C8896;font-size:12px">项目：${h(x.proj)}${x.cat ? " · " + h(x.cat) : ""}</div>` : ""}
+       ${x.blk ? `<div style="color:#7C8896;font-size:12px">卡点：${h(x.blk).slice(0, 160)}</div>` : ""}
+       ${x.need ? `<div style="color:#7C8896;font-size:12px">需要谁：${h(x.need)}</div>` : ""}</td></tr>`).join("");
+  const more = items.length > 6 ? `<p style="color:#7C8896;font-size:12px">另有 ${items.length - 6} 条，请到工作台查看。</p>` : "";
+  sendMail(`【问题协助】${nameOf(items[0].who)} 等 ${items.length} 条新问题/诉求`,
+    `<table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">新人</th><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
+       ${rows}</table>${more}`,
+    "问题协助提醒 · 自动发送");
+}
+
+function drillTotalServer(d) {
+  const dims = [["content", 30], ["express", 25], ["pro", 25], ["qa", 20]];
+  const ss = (d && Array.isArray(d.scores)) ? d.scores.filter(s => s && s.dims && dims.every(x => s.dims[x[0]] != null)) : [];
+  if (!ss.length) return null;
+  const avg = {}; dims.forEach(x => { avg[x[0]] = Math.round(ss.reduce((a, s) => a + Math.max(0, Math.min(100, +s.dims[x[0]] || 0)), 0) / ss.length); });
+  return Math.round(dims.reduce((a, x) => a + avg[x[0]] * x[1], 0) / 100);
+}
+function helpScoreServer(r) { if (!r || !r.help) return 0; const a = r.acks || {}; const n = (a.mentor ? 1 : 0) + (a.lead ? 1 : 0); return n >= 2 ? 3 : (n === 1 ? 1 : 0); }
+
+/* 产品地图档位（读 public/bank.js，用于日报里的「超期/节奏」判断；读不到则跳过该段） */
+let BANK = null;
+function loadBank() {
+  try {
+    const src = fs.readFileSync(path.join(__dirname, "public", "bank.js"), "utf8");
+    BANK = new Function("window", src + "\nreturn window.BANK;")({});
+    console.log("[bank] 已加载 " + ((BANK && BANK.levels) || []).length + " 个档位");
+  } catch (e) { console.log("[bank] 未加载：" + e.message); BANK = null; }
+}
+function dueOf(L) {
+  const s = String((L && L.due) || "").trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return m[1] + "-" + String(+m[2]).padStart(2, "0") + "-" + String(+m[3]).padStart(2, "0");
+  const mm = String((L && L.period) || "").match(/(\d{1,2})/);
+  if (!mm) return "";
+  const y = bj(Date.now()).getUTCFullYear(), mo = +mm[1];
+  const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  return y + "-" + String(mo).padStart(2, "0") + "-" + String(last).padStart(2, "0");
+}
+function mapPaceServer(who, checks, today) {
+  if (!BANK || !BANK.levels) return [];
+  const done = new Set(checks.filter(x => x.who === who && x.nodeId).map(x => x.nodeId));
+  return BANK.levels.map(L => {
+    const d = (L.nodes || []).filter(n => done.has(n.id)).length;
+    const remain = Math.max(0, (L.goal || (L.nodes || []).length) - d);
+    const due = dueOf(L);
+    const left = due ? Math.round((new Date(due + "T00:00:00Z") - new Date(today + "T00:00:00Z")) / 86400000) : 0;
+    return { name: L.n, d, goal: L.goal || (L.nodes || []).length, remain, due, left, over: remain > 0 && due && today > due, risk: remain > 0 && due && today <= due && left <= 7 };
+  });
+}
+
+/* 工作日日报：按北京时间当天聚合，一次发一封 */
+function buildDailyReport(day) {
+  const D = DOC || emptyDoc();
+  const today = day || bjKey(Date.now());
+  const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const checks = (D.checkins.list || []).filter(x => !x.del);
+  const carriers = (D.carriers.list || []).filter(x => !x.del);
+  const issues = (D.issues.list || []).filter(x => !x.del);
+  const drills = (D.drills.list || []).filter(x => !x.del);
+  const logins = (MS.logins || []).filter(l => bjKey(l.at) === today);
+  const card = [];
+  newbies.forEach(u => {
+    const ci = checks.filter(x => x.who === u.id);
+    const todayCi = ci.filter(x => bjKey(x.createdAt || x.updatedAt || 0) === today);
+    const cars = carriers.filter(x => x.who === u.id);
+    const acts = cars.reduce((a, c) => a.concat((c.actions || []).filter(v => !v.del)), []);
+    const open = acts.filter(v => (v.st || 0) !== 2);
+    const overdue = open.filter(v => v.due && String(v.due).slice(0, 10) < today);
+    const ops = issues.filter(x => x.who === u.id && (x.status || 0) < 2);
+    const todayOps = issues.filter(x => x.who === u.id && bjKey(x.createdAt || 0) === today);
+    const dr = drills.filter(x => x.who === u.id && Date.now() - (x.createdAt || 0) <= 14 * 86400000);
+    const scores = drills.filter(x => x.who === u.id).map(drillTotalServer).filter(v => v != null);
+    const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+    let hs = 0, hn = 0;
+    issues.forEach(x => (x.replies || []).forEach(r => { if (r.by === u.id) { const s = helpScoreServer(r); hs += s; if (s) hn++; } }));
+    const login = logins.filter(l => l.id === u.id);
+    const paces = mapPaceServer(u.id, checks, today);
+    card.push({ u, ci: ci.length, todayCi: todayCi.length, cars: cars.length, open: open.length, overdue: overdue.length,
+      ops: ops.length, todayOps: todayOps.length, dr: dr.length, avg, hs, hn, paces, login: login.length ? bjTime(login[login.length - 1].at) : "—" });
+  });
+  const needAtt = [];
+  card.forEach(c => {
+    if (!c.login || c.login === "—") needAtt.push(`${nameOf(c.u.id)} 今日未登录`);
+    if (c.overdue) needAtt.push(`${nameOf(c.u.id)} 有 ${c.overdue} 条行动已超期`);
+    if (!c.dr) needAtt.push(`${nameOf(c.u.id)} 近双周无演讲演练/客户现场培训`);
+    if (c.ops >= 3) needAtt.push(`${nameOf(c.u.id)} 未闭环问题 ${c.ops} 条`);
+    c.paces.forEach(p => {
+      if (p.over) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档已超期 ${-p.left} 天（还差 ${p.remain} 个节点）`);
+      else if (p.risk) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档仅剩 ${p.left} 天（还差 ${p.remain} 个节点，需日均 ${Math.ceil(p.remain / Math.max(1, p.left))} 个）`);
+    });
+  });
+  const rows = card.map(c => { const mp = c.paces.map(p => `<span style="color:${p.over ? "#B03A2E" : p.risk ? "#A9691B" : "#7C8896"}">${p.name} ${p.d}/${p.goal}${p.over ? " 超期" : ""}${p.risk ? " 临期" : ""}</span>`).join("<br>");
+    return `<tr>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.login}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ci}<span style="color:#7C8896">（今日 ${c.todayCi}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.todayOps ? `<span style="color:#A9691B"> · 今日 +${c.todayOps}</span>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span></td>
+    </tr>`;}).join("");
+  return { today, card, needAtt, html:
+    `<p style="margin:0 0 10px"><b>${today}</b> 工作日整体进度${newbies.length ? "" : "（暂无新人账号）"}</p>
+     <table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left">
+         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日登录</th>
+         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">待办(超期)</th>
+         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">双周演练</th><th style="padding:8px 9px">互助分</th></tr>
+       ${rows}
+     </table>
+     ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
+       <b style="color:#8C2B1F">需要关注</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>` : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">今日各项无明显阻塞。</p>`}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：打卡=已登记节点数；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。</p>` };
+}
+
+function sendDailyReport(day) {
+  const r = buildDailyReport(day);
+  return sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
+    `自动发送 · 工作日 ${REPORT_HOUR}:00 后由服务端汇总；如未收到请检查 RESEND_API_KEY / ALERT_TO。`);
+}
+/* 工作日到点自动发日报：每 5 分钟检查一次，同一天只发一次 */
+function startDailyReportTimer() {
+  setInterval(() => {
+    if (!MAIL_ON) return;                          // 未配置密钥时不占用「今日已发」标记
+    const d = bj(Date.now());
+    const wd = d.getUTCDay(), hour = d.getUTCHours();
+    const key = bjKey(Date.now());
+    if (wd === 0 || wd === 6) return;              // 周末不发
+    if (hour < REPORT_HOUR) return;
+    if ((MS.lastReport || "") === key) return;
+    if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;   // 失败后 30 分钟再试，避免刷屏
+    MS.lastTry = Date.now(); saveMS();
+    sendDailyReport(key).then(r => {
+      if (r.ok) { MS.lastReport = key; saveMS(); }
+      else console.log("[mail] 日报未发送：", r.msg);
+    });
+  }, 5 * 60000);
+}
+
 /* ---------- GitHub 持久化 ---------- */
 async function ghFetchPath(pathInRepo, method, body) {
   const url = `https://api.github.com/repos/${GH_REPO}/contents/${pathInRepo}` + (method === "GET" ? `?ref=${GH_BRANCH}` : "");
@@ -352,6 +568,7 @@ app.post("/api/login", (req, res) => {
   if (!u.active) return res.status(403).json({ ok: false, msg: "账号已停用，请联系管理员" });
   if (!u.activated) return res.status(403).json({ ok: false, msg: "账号未激活：请使用管理员发来的邀请链接设置密码" });
   if (hashPass(password, u.salt) !== u.pass) return res.status(401).json({ ok: false, msg: "账号或密码不正确" });
+  if (u.role === "newbie") { try { recordLogin(u); } catch (e) { console.error("[mail] login", e.message); } }
   res.json({ ok: true, token: userToken(u), user: pubUser(u), roleName: ROLE_NAME[u.role] });
 });
 
@@ -412,12 +629,18 @@ app.post("/api/save", async (req, res) => {
   const me = tokenFromReq(req);
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
   const incoming = normDoc(req.body && req.body.doc);
+  const oldIds = new Set(((DOC && DOC.issues && DOC.issues.list) || []).map(x => x.id));
   DOC = DOC ? mergeDoc(DOC, incoming) : incoming;
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
   broadcast();
   sbPushDoc();
   ghPush();
+  /* 新人新发的问题 / 诉求 → 立即邮件提醒导师、主管 */
+  try {
+    const fresh = ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && !oldIds.has(x.id) && findUser(x.who) && findUser(x.who).role === "newbie");
+    if (fresh.length) notifyNewIssues(fresh);
+  } catch (e) { console.error("[mail] issue", e.message); }
   res.json({ ok: true, doc: DOC });
 });
 
@@ -432,7 +655,7 @@ function requireAdmin(req, res) {
 app.get("/api/users", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ ok: true, teamPasscode: USERS.teamPasscode || "",
-    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "" })) });
+    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", inviteUrl: u.invite ? inviteUrl(u) : "" })) });
 });
 
 /* 团队口令（可选）：全组共用一个，开启后「选名字进入」需带上它；留空=完全免口令 */
@@ -484,6 +707,7 @@ app.post("/api/user_update", (req, res) => {
     u.active = !!b.active;
   }
   if (b.wecom != null) u.wecom = String(b.wecom).trim();
+  if (b.email != null) u.email = String(b.email).trim();
   if (b.password != null && String(b.password).length) {
     const np = String(b.password);
     if (np.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
@@ -528,6 +752,32 @@ app.post("/api/passwd", (req, res) => {
   me.salt = newSalt(); me.pass = hashPass(np, me.salt); me.mustReset = false; me.pwless = false;
   USERS.changed = true; saveUsers();
   res.json({ ok: true, token: userToken(me) });
+});
+
+/* ---------- 邮件通知：状态 / 测试 / 立即发送日报（导师、主管、超管可用） ---------- */
+function requireStaff(req, res) {
+  const me = tokenFromReq(req);
+  if (!me) { res.status(401).json({ ok: false, msg: "未登录或会话失效" }); return null; }
+  if (["lead", "mentor", "admin"].indexOf(me.role) < 0) { res.status(403).json({ ok: false, msg: "仅导师 / 主管 / 超管可用" }); return null; }
+  return me;
+}
+app.get("/api/mail_status", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  res.json({ ok: true, enabled: MAIL_ON, from: MAIL_FROM, to: mailTo(), reportHour: REPORT_HOUR,
+    lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today: bjKey(Date.now()) });
+});
+app.post("/api/mail_test", async (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const r = await sendMail("【测试】Q4 工作台邮件通知链路已连通",
+    `<p>这是一封测试邮件。</p><p>收到它说明 Resend 通道、发件人、收件人都已配置正确。</p>
+     <p style="color:#5C6772;font-size:13px">后续会自动发送：新人登录提醒、新人问题/诉求提醒、工作日 ${REPORT_HOUR}:00 的每日进度报告。</p>`,
+    "测试邮件 · 手动触发");
+  res.status(r.ok ? 200 : 400).json(r);
+});
+app.post("/api/mail_report", async (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const r = await sendDailyReport(bjKey(Date.now()));
+  res.status(r.ok ? 200 : 400).json(r);
 });
 
 /* ---------- 企业微信扫码登录（可选） ---------- */
@@ -581,6 +831,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   if (SB_ON) usersLoaded = await sbPullUsers();
   if (!usersLoaded) await ghPullUsers();
   ensureUsers();                // 本地文件兜底；都没有则建默认账号
+  loadBank();                   // 产品地图档位/截止日（日报进度判定用）
   rotateLegacyWeakPasswords();  // 历史弱默认密码 → 随机密码（防冒用）
   if (SB_ON) { await sbPullDoc(); if (!DOC) console.log("[boot] Supabase 中尚无业务数据，等待前端首次写入"); }
   else if (GH_ON) await ghPull();
@@ -589,6 +840,8 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
     console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
+    console.log(`邮件通知： ${MAIL_ON ? "已启用 · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置 RESEND_API_KEY（登录/问题提醒会记录但不发信）"}`);
+    startDailyReportTimer();
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
   });
