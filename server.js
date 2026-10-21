@@ -303,7 +303,13 @@ async function sendMail(subject, inner, note) {
       body: JSON.stringify({ from: MAIL_FROM, to, subject, html }),
     });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) { console.error("[mail] 发送失败", r.status, j.message || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
+    if (!r.ok) {
+      let msg = j.message || ("HTTP " + r.status);
+      if (r.status === 403 && /testing emails|verify a domain/i.test(String(msg))) msg = "Resend 未验证发件域名，只能发给注册邮箱本人。请到 resend.com/domains 验证域名（加 DNS 记录），或改用 Brevo / QQ 邮箱通道";
+      else if (r.status === 401) msg = "Resend API Key 无效或无发送权限";
+      console.error("[mail] 发送失败", r.status, msg);
+      return { ok: false, msg };
+    }
     MS.lastSent = Date.now(); saveMS();
     console.log("[mail] 已发送(resend)：" + subject + " → " + to.join(","));
     return { ok: true, id: j.id, to, channel: "resend" };
