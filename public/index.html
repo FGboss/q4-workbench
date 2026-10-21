@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Q4 新人培养 · 协作工作台 v6.6 · 在线版</title>
+<title>Q4 新人培养 · 协作工作台 v6.6.1 · 在线版</title>
 <style>
   :root{
     --blue:#17558F; --blue-d:#0B3A63; --blue-l:#EDF4FA; --blue-m:#3B7CB0;
@@ -318,7 +318,7 @@
   <div class="wrap">
     <div class="hrow">
       <div>
-        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v6.6</span></div>
+        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v6.6.1</span></div>
         <div class="sub">嗨动视觉 · 深圳服务点 · 2026 Q4（10–12 月）· 第二阶段</div>
         <div class="oneline">规划 → 协助 → 帮扶 → 把控 → 复盘　·　标准当尺、脑图当节奏、日常工作当载体</div>
       </div>
@@ -476,7 +476,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v6.6 · 2026.10.21　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件提醒与日报（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v6.6.1 · 2026.10.21　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件提醒与日报（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -1998,9 +1998,9 @@ async function renderMailBox(){
  const last=s.lastSent?fmt(s.lastSent):"暂无";
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
-     <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
+     <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>${s.replyTo?`　·　回复地址：<b>${esc(s.replyTo)}</b>`:""}　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
      <div class="muted" style="margin-top:3px">自动触发：新人登录提醒（30 分钟内不重复）· 新人发问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 整体进度日报</div>
-     ${on?"":`<div class="tag wt" style="margin-top:6px">需在服务端配置邮件通道：企业微信 WECOM_CORPID/WECOM_SECRET（免费，应用邮箱发信，投递率最高）或 BREVO_API_KEY（免费，仅验证发件邮箱）或 QQ SMTP_USER/SMTP_PASS；现在事件会记录但不发信</div>`}</div>
+     ${on?"":`<div class="tag wt" style="margin-top:6px">需在服务端配置邮件通道：RESEND_API_KEY 或 BREVO_API_KEY 或 QQ 邮箱 SMTP_USER/SMTP_PASS；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px">
      <button class="btn sm gh" id="mailTestBtn">发测试邮件</button>
      <button class="btn sm" id="mailRepBtn">立即发今日日报</button></div>

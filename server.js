@@ -81,6 +81,9 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "true") !== "false";
 const SMTP_ON = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
 
 const MAIL_FROM = process.env.MAIL_FROM || (SMTP_USER ? `Q4 工作台 <${SMTP_USER}>` : BREVO_KEY ? "Q4 工作台 <916941476@qq.com>" : "Q4 工作台 <onboarding@resend.dev>");
+/* 回复地址：邮件转发给领导后，领导直接点「回复」即回到这个邮箱。
+   默认用 ALERT_TO 的第一个地址；可显式配置 MAIL_REPLY_TO 覆盖。 */
+const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || "";
 const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@novastar.tech")).split(/[,;\s]+/).filter(Boolean);
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
 const MAIL_ON = !!(SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
@@ -295,7 +298,9 @@ async function sendMail(subject, inner, note) {
     </div></div>`;
   try {
     if (SMTP_ON) {
-      const info = await getSmtp().sendMail({ from: MAIL_FROM, to: to.join(","), subject, html });
+      const opt = { from: MAIL_FROM, to: to.join(","), subject, html };
+      if (MAIL_REPLY_TO) opt.replyTo = MAIL_REPLY_TO;
+      const info = await getSmtp().sendMail(opt);
       MS.lastSent = Date.now(); saveMS();
       console.log("[mail] 已发送(" + SMTP_HOST + ")：" + subject + " → " + to.join(",") + " · " + (info.messageId || ""));
       return { ok: true, id: info.messageId || "", to, channel: "smtp" };
@@ -322,10 +327,12 @@ async function sendMail(subject, inner, note) {
     if (BREVO_KEY) {
       const m = String(MAIL_FROM).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
       const sender = m ? { name: m[1] || "Q4 工作台", email: m[2] } : { name: "Q4 工作台", email: String(MAIL_FROM).trim() };
+      const payload = { sender, to: to.map(email => ({ email })), subject, htmlContent: html };
+      if (MAIL_REPLY_TO) payload.replyTo = { email: MAIL_REPLY_TO };
       const r = await fetch("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
         headers: { "api-key": BREVO_KEY, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ sender, to: to.map(email => ({ email })), subject, htmlContent: html }),
+        body: JSON.stringify(payload),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { console.error("[mail] Brevo 发送失败", r.status, j.message || j.code || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
@@ -333,10 +340,12 @@ async function sendMail(subject, inner, note) {
       console.log("[mail] 已发送(brevo)：" + subject + " → " + to.join(","));
       return { ok: true, id: j.messageId || "", to, channel: "brevo" };
     }
+    const payload = { from: MAIL_FROM, to, subject, html };
+    if (MAIL_REPLY_TO) payload.reply_to = MAIL_REPLY_TO;
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: "Bearer " + RESEND_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: MAIL_FROM, to, subject, html }),
+      body: JSON.stringify(payload),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -905,7 +914,7 @@ function requireStaff(req, res) {
 app.get("/api/mail_status", (req, res) => {
   if (!requireStaff(req, res)) return;
   res.json({ ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL, smtpHost: SMTP_ON ? SMTP_HOST : "", smtpUser: SMTP_ON ? SMTP_USER : "",
-    from: MAIL_FROM, to: mailTo(), reportHour: REPORT_HOUR,
+    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: REPORT_HOUR,
     lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today: bjKey(Date.now()) });
 });
 app.post("/api/mail_test", async (req, res) => {
