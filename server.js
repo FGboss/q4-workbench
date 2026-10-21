@@ -59,13 +59,18 @@ const SB_ON = !!(SB_URL && SB_KEY);
      SMTP_HOST  默认 smtp.qq.com；SMTP_PORT 默认 465（SSL）
    Brevo（免费 300 封/天；只需验证发件邮箱，收 6 位验证码，无需改 DNS）：
      BREVO_API_KEY  Brevo 控制台 → SMTP & API → API Keys
+   企业微信邮件 API（免费；走 HTTPS 不占 SMTP 端口；发件人是企业微信应用邮箱，投递率 100%）：
+     复用扫码登录的同一套企业微信自建应用配置：
+     WECOM_CORPID      企业微信 → 我的企业 → 企业信息 → 企业ID
+     WECOM_SECRET      企业微信 → 应用管理 → 自建应用 → Secret（需将应用加入「可调用应用」列表）
+     （发件人由企业微信自动分配，无需配置 MAIL_FROM；收件人填任意邮箱）
    Resend（可选；免发件人验证，但发到任意地址需验证域名 DNS）：
      RESEND_API_KEY
    通用：
-     MAIL_FROM       发件人；默认 "Q4 工作台 <SMTP_USER / 916941476@qq.com / onboarding@resend.dev>"
+     MAIL_FROM       发件人；企业微信通道下自动使用应用邮箱，此项可留空
      ALERT_TO        收件人，多个用逗号分隔；默认 liwf@novastar.tech
      DAILY_REPORT_HOUR  工作日日报时间（北京时间，默认 18）
-   优先级：SMTP > Brevo > Resend；都未配置时降级为「只记录不发送」。 */
+   优先级：SMTP > 企业微信 > Brevo > Resend；都未配置时降级为「只记录不发送」。 */
 const RESEND_KEY = process.env.RESEND_API_KEY || "";
 const BREVO_KEY = process.env.BREVO_API_KEY || "";
 const SMTP_USER = process.env.SMTP_USER || "";
@@ -74,11 +79,12 @@ const SMTP_HOST = process.env.SMTP_HOST || (SMTP_USER ? "smtp.qq.com" : "");
 const SMTP_PORT = +(process.env.SMTP_PORT || 465);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "true") !== "false";
 const SMTP_ON = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
+
 const MAIL_FROM = process.env.MAIL_FROM || (SMTP_USER ? `Q4 工作台 <${SMTP_USER}>` : BREVO_KEY ? "Q4 工作台 <916941476@qq.com>" : "Q4 工作台 <onboarding@resend.dev>");
 const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@novastar.tech")).split(/[,;\s]+/).filter(Boolean);
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
-const MAIL_ON = !!(SMTP_ON || BREVO_KEY || RESEND_KEY);
-const MAIL_CHANNEL = SMTP_ON ? "smtp" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : ""));
+const MAIL_ON = !!(SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
+const MAIL_CHANNEL = SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
 const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
 
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
@@ -265,8 +271,19 @@ function getSmtp() {
   });
   return smtpTransporter;
 }
+/* 企业微信邮件 API：access_token 缓存（有效期 7200s，提前 5 分钟刷新） */
+let wecomToken = { token: "", expire: 0 };
+async function getWecomToken() {
+  const now = Date.now();
+  if (wecomToken.token && wecomToken.expire > now) return wecomToken.token;
+  const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(WECOM_CORPID)}&corpsecret=${encodeURIComponent(WECOM_SECRET)}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.errcode) throw new Error("企业微信获取 token 失败：" + (j.errmsg || ("HTTP " + r.status)));
+  wecomToken = { token: j.access_token, expire: now + (j.expires_in || 7200) * 1000 - 300000 };
+  return j.access_token;
+}
 async function sendMail(subject, inner, note) {
-  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（QQ 邮箱 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
+  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（QQ 邮箱 SMTP_USER/SMTP_PASS 或 企业微信 WECOM_CORP_ID/WECOM_CORP_SECRET 或 RESEND_API_KEY），已记录事件但未发送" };
   const to = mailTo();
   if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO）" };
   const html = `<div style="font-family:-apple-system,'Microsoft YaHei',sans-serif;max-width:680px;margin:0 auto;color:#16202C;line-height:1.7">
@@ -282,6 +299,25 @@ async function sendMail(subject, inner, note) {
       MS.lastSent = Date.now(); saveMS();
       console.log("[mail] 已发送(" + SMTP_HOST + ")：" + subject + " → " + to.join(",") + " · " + (info.messageId || ""));
       return { ok: true, id: info.messageId || "", to, channel: "smtp" };
+    }
+    if (WECOM_ON) {
+      const token = await getWecomToken();
+      const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/exmail/app/compose_send?access_token=${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: { emails: to }, subject, content: html, content_type: "html" }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (j.errcode) {
+        let msg = j.errmsg || ("errcode " + j.errcode);
+        if (j.errcode === 40014 || j.errcode === 42001) msg = "企业微信 access_token 失效，请检查 WECOM_CORP_ID / WECOM_CORP_SECRET";
+        else if (j.errcode === 60020) msg = "企业微信应用未加入「可调用应用」列表，请在管理后台配置";
+        console.error("[mail] 企业微信发送失败", j.errcode, msg);
+        return { ok: false, msg };
+      }
+      MS.lastSent = Date.now(); saveMS();
+      console.log("[mail] 已发送(wecom)：" + subject + " → " + to.join(","));
+      return { ok: true, id: "", to, channel: "wecom" };
     }
     if (BREVO_KEY) {
       const m = String(MAIL_FROM).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
@@ -403,6 +439,8 @@ function buildDailyReport(day) {
   const carriers = (D.carriers.list || []).filter(x => !x.del);
   const issues = (D.issues.list || []).filter(x => !x.del);
   const drills = (D.drills.list || []).filter(x => !x.del);
+  const reveals = (D.reveals && D.reveals.list ? D.reveals.list : []).filter(x => !x.del);
+  const deposits = (D.deposits && D.deposits.list ? D.deposits.list : []).filter(x => !x.del);
   const logins = (MS.logins || []).filter(l => bjKey(l.at) === today);
   const card = [];
   newbies.forEach(u => {
@@ -421,8 +459,40 @@ function buildDailyReport(day) {
     issues.forEach(x => (x.replies || []).forEach(r => { if (r.by === u.id) { const s = helpScoreServer(r); hs += s; if (s) hn++; } }));
     const login = logins.filter(l => l.id === u.id);
     const paces = mapPaceServer(u.id, checks, today);
+    // 小测正确率
+    const qzAll = ci.filter(x => x.total > 0);
+    const qzToday = todayCi.filter(x => x.total > 0);
+    const correctAll = qzAll.reduce((s, x) => s + (x.correct || 0), 0);
+    const totalAll = qzAll.reduce((s, x) => s + (x.total || 0), 0);
+    const acc = totalAll > 0 ? Math.round(correctAll * 100 / totalAll) : null;
+    const todayCorrect = qzToday.reduce((s, x) => s + (x.correct || 0), 0);
+    const todayTotal = qzToday.reduce((s, x) => s + (x.total || 0), 0);
+    // 自查展开 & 知识沉淀
+    const rv = reveals.filter(x => x.who === u.id);
+    const todayRv = rv.filter(x => bjKey(x.at || x.updatedAt || 0) === today);
+    const dp = deposits.filter(x => x.who === u.id);
+    const todayDp = dp.filter(x => bjKey(x.createdAt || 0) === today);
     card.push({ u, ci: ci.length, todayCi: todayCi.length, cars: cars.length, open: open.length, overdue: overdue.length,
-      ops: ops.length, todayOps: todayOps.length, dr: dr.length, avg, hs, hn, paces, login: login.length ? bjTime(login[login.length - 1].at) : "—" });
+      ops: ops.length, todayOps: todayOps.length, dr: dr.length, avg, hs, hn, paces, login: login.length ? bjTime(login[login.length - 1].at) : "—",
+      acc, todayCorrect, todayTotal, rv: rv.length, todayRv: todayRv.length, dp: dp.length, todayDp: todayDp.length,
+      todayCars: cars.filter(x => bjKey(x.createdAt || 0) === today).length });
+  });
+  // 高频错题汇总
+  const wrongCount = {};
+  checks.forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
+  const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  // 今日打卡节点明细（按人）
+  const todayDetail = {};
+  newbies.forEach(u => {
+    todayDetail[u.id] = checks.filter(x => x.who === u.id && bjKey(x.createdAt || x.updatedAt || 0) === today)
+      .map(x => ({ module: x.module || x.line || "—", note: x.note || "", correct: x.correct, total: x.total }));
+  });
+  // 载体跟进明细
+  const carrierLines = [];
+  carriers.forEach(c => {
+    const acts = (c.actions || []).filter(v => !v.del);
+    const open = acts.filter(v => (v.st || 0) !== 2);
+    carrierLines.push({ who: c.who, name: c.name, partner: c.partner || "—", next: c.nextDate || "—", open: open.length, total: acts.length });
   });
   const needAtt = [];
   card.forEach(c => {
@@ -430,6 +500,7 @@ function buildDailyReport(day) {
     if (c.overdue) needAtt.push(`${nameOf(c.u.id)} 有 ${c.overdue} 条行动已超期`);
     if (!c.dr) needAtt.push(`${nameOf(c.u.id)} 近双周无演讲演练/客户现场培训`);
     if (c.ops >= 3) needAtt.push(`${nameOf(c.u.id)} 未闭环问题 ${c.ops} 条`);
+    if (c.acc != null && c.acc < 70 && c.todayTotal > 0) needAtt.push(`${nameOf(c.u.id)} 小测正确率 ${c.acc}% 偏低（建议回顾 IMA 原文）`);
     c.paces.forEach(p => {
       if (p.over) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档已超期 ${-p.left} 天（还差 ${p.remain} 个节点）`);
       else if (p.risk) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档仅剩 ${p.left} 天（还差 ${p.remain} 个节点，需日均 ${Math.ceil(p.remain / Math.max(1, p.left))} 个）`);
@@ -440,23 +511,35 @@ function buildDailyReport(day) {
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.login}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ci}<span style="color:#7C8896">（今日 ${c.todayCi}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.acc != null ? c.acc + "%" : "—"}${c.todayTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.todayCorrect}/${c.todayTotal}</span>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">载体 ${c.cars}${c.todayCars ? ` · 今日+${c.todayCars}` : ""}</div></td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.todayOps ? `<span style="color:#A9691B"> · 今日 +${c.todayOps}</span>` : ""}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span></td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span><div style="font-size:11.5px;color:#7C8896">自查 ${c.rv}${c.todayRv ? ` · 今日 ${c.todayRv}` : ""}</div><div style="font-size:11.5px;color:#7C8896">沉淀 ${c.dp}${c.todayDp ? ` · 今日 ${c.todayDp}` : ""}</div></td>
     </tr>`;}).join("");
+  const todayDetailHtml = newbies.filter(u => (todayDetail[u.id] || []).length).map(u =>
+    `<div style="margin-top:8px"><b style="color:#2C3E50">${h(u.name)}</b> 今日打卡 ${todayDetail[u.id].length} 个节点：<ul style="margin:4px 0 0 18px;padding:0;font-size:12.5px;color:#4A5568">${todayDetail[u.id].map(x => `<li>${h(x.module)}${x.total > 0 ? ` · 小测 ${x.correct}/${x.total}` : ""}${x.note ? ` · ${h(x.note.slice(0, 40))}` : ""}</li>`).join("")}</ul></div>`
+  ).join("");
+  const carrierHtml = carrierLines.length ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">载体</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">待办/总</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td></tr>`).join("")}</table>` : "<p style=\"color:#7C8896;font-size:12.5px\">暂无载体记录</p>";
+  const wrongHtml = topWrong.length ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">错题</th><th style="padding:6px 8px">答错次数</th></tr>${topWrong.map(([q, n]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(q)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:#B03A2E">${n}</td></tr>`).join("")}</table>` : "<p style=\"color:#7C8896;font-size:12.5px\">暂无错题记录</p>";
   return { today, card, needAtt, html:
     `<p style="margin:0 0 10px"><b>${today}</b> 工作日整体进度${newbies.length ? "" : "（暂无新人账号）"}</p>
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
          <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日登录</th>
-         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">待办(超期)</th>
-         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">双周演练</th><th style="padding:8px 9px">互助分</th></tr>
+         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率</th><th style="padding:8px 9px">载体待办</th>
+         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">双周演练</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
      ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
        <b style="color:#8C2B1F">需要关注</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>` : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">今日各项无明显阻塞。</p>`}
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：打卡=已登记节点数；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。</p>` };
+     <div style="margin-top:14px;background:#F0F7FF;border:1px solid #CFE2F3;border-radius:8px;padding:10px 12px">
+       <b style="color:#1A5276">今日打卡节点明细</b>${todayDetailHtml || "<p style=\"color:#7C8896;font-size:12.5px;margin:6px 0 0\">今日暂无打卡</p>"}</div>
+     <div style="margin-top:14px;background:#F5FFF0;border:1px solid #CFEBD0;border-radius:8px;padding:10px 12px">
+       <b style="color:#3C6B1A">客户载体跟进</b>${carrierHtml}</div>
+     <div style="margin-top:14px;background:#FFFBF0;border:1px solid #F3E7C9;border-radius:8px;padding:10px 12px">
+       <b style="color:#8A6D1A">高频错题（全员）</b>${wrongHtml}</div>
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：打卡=已登记节点数；小测正确率=答对题数/总题数（累计）；待办=载体下未闭环行动；演练=近 14 天；自查=展开自查要点次数；沉淀=知识沉淀条数；互助分由导师+主管双评认定。</p>` };
 }
 
 function sendDailyReport(day) {
