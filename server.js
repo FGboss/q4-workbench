@@ -1002,7 +1002,9 @@ app.post("/api/mail_test", async (req, res) => {
 });
 app.post("/api/mail_report", async (req, res) => {
   if (!requireStaff(req, res)) return;
-  const r = await sendDailyReport(bjKey(Date.now()));
+  /* 可选 ?day=YYYY-MM-DD：补发/重发指定某天的日报；不传则发当天 */
+  const day = String(req.query.day || "");
+  const r = await sendDailyReport(/^\d{4}-\d{2}-\d{2}$/.test(day) ? day : bjKey(Date.now()));
   res.status(r.ok ? 200 : 400).json(r);
 });
 /* GitHub Actions 定时任务用它拉取日报内容（备用；主链路是下面的 daily_ping 让服务端自己触发） */
