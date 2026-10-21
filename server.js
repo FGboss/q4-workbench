@@ -81,10 +81,9 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "true") !== "false";
 const SMTP_ON = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
 
 const MAIL_FROM = process.env.MAIL_FROM || (SMTP_USER ? `Q4 工作台 <${SMTP_USER}>` : BREVO_KEY ? "Q4 工作台 <916941476@qq.com>" : "Q4 工作台 <onboarding@resend.dev>");
-/* 回复地址：邮件转发给领导后，领导直接点「回复」即回到这个邮箱。
-   默认用 ALERT_TO 的第一个地址；可显式配置 MAIL_REPLY_TO 覆盖。 */
-const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || "";
 const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@novastar.tech")).split(/[,;\s]+/).filter(Boolean);
+/* 回复地址：邮件转发给领导后，领导点「回复」即回到这个邮箱（默认取第一个收件人） */
+const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || MAIL_TO[0] || "";
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
 const MAIL_ON = !!(SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
 const MAIL_CHANNEL = SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
