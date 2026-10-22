@@ -115,8 +115,8 @@ const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", 
 // · 其余：初始密码在首次启动时随机生成、只打印在服务日志里，由超管分发给本人；仓库中不预置任何可用密码
 const DEFAULT_USERS = [
   { id: "admin",  username: "admin",  name: "超级管理员", role: "admin",  pass: "admin123", mustReset: true },
-  { id: "lead",   username: "lead",   name: "主管",       role: "lead",   random: true },
-  { id: "mentor", username: "mentor", name: "导师",       role: "mentor", random: true },
+  { id: "lead",   username: "lead",   name: "彭灿",       role: "lead",   random: true },
+  { id: "mentor", username: "mentor", name: "李雯锋",     role: "mentor", random: true },
   { id: "zhan",   username: "zhan",   name: "詹祥雨",     role: "newbie", random: true },
   { id: "tong",   username: "tong",   name: "童伟桀",     role: "newbie", random: true },
 ];
@@ -126,6 +126,58 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const newSalt = () => crypto.randomBytes(8).toString("hex");
 const newInvite = () => crypto.randomBytes(12).toString("hex");
 const hashPass = (p, salt) => sha("p|" + salt + "|" + p + "|" + APP_SECRET);
+
+/* ---------- 邮件订阅（账号自带，随账号一起持久化） ----------
+   导师/主管：整体日报 + 周报 + 个人汇总 + 风险预警 + 登录/问题即时提醒
+   新人：个人日报 + 个人周报（范围固定为本人）
+   后续新增导师/新人时，账号建好即带默认订阅，管理员在「账号管理」里可随时改。 */
+const STAFF_MAIL_TYPES = ["daily", "weekly", "personal", "risk", "login", "issue"];
+const NEWBIE_MAIL_TYPES = ["personal", "weekly"];
+const defaultMailTypes = role => (role === "newbie" ? NEWBIE_MAIL_TYPES : STAFF_MAIL_TYPES).slice();
+let MAIL_SEED_DIRTY = false;
+/* 首次升级时把已知的四位成员一次性配置好；只跑一次，之后管理员的手动修改不会被覆盖 */
+const MAIL_SEED = [
+  { keys: ["李雯锋", "liwf"], role: "mentor", name: "李雯锋", email: "liwf@novastar.tech" },
+  { keys: ["彭灿", "pengcan"], role: "lead", name: "彭灿", email: "pengcan@novastar.tech" },
+  { keys: ["詹祥雨", "zhan"], role: "newbie", name: "詹祥雨", email: "zhanxy1@novastar.tech" },
+  { keys: ["童伟桀", "tong"], role: "newbie", name: "童伟桀", email: "tongwj@novastar.tech" },
+];
+function pickSeedUser(seed) {
+  const us = (USERS.users || []).filter(u => u.role === seed.role && u.active !== false);
+  const hit = us.find(u => seed.keys.some(k =>
+    String(u.name || "").indexOf(k) >= 0 || String(u.username || "").toLowerCase().indexOf(String(k).toLowerCase()) >= 0));
+  /* 只有一个导师/主管（或只有一个新人）时直接视为本人，避免默认账号没改名时配置不生效 */
+  return hit || (us.length === 1 ? us[0] : null);
+}
+function applyMailSeed() {
+  const found = {};
+  MAIL_SEED.forEach(seed => { const u = pickSeedUser(seed); if (u) found[seed.role + ":" + seed.keys[0]] = u; });
+  const mentor = found["mentor:李雯锋"], lead = found["lead:彭灿"];
+  MAIL_SEED.forEach(seed => {
+    const u = found[seed.role + ":" + seed.keys[0]];
+    if (!u) return;
+    /* 旧库里默认账号名还是「导师 / 主管」时，顺手改成真实姓名，避免邮件里称呼混乱 */
+    if (seed.name && ((seed.role === "mentor" && u.name === "导师") || (seed.role === "lead" && u.name === "主管"))) u.name = seed.name;
+    if (!String(u.email || "").trim()) u.email = seed.email;
+    if (seed.role === "newbie") {
+      u.mailTypes = (u.mailTypes && u.mailTypes.length) ? u.mailTypes : NEWBIE_MAIL_TYPES.slice();
+      u.mailScope = [u.id];
+      if (!u.mentorId && mentor) u.mentorId = mentor.id;
+      if (!u.leadId && lead) u.leadId = lead.id;
+    } else {
+      u.mailTypes = (u.mailTypes && u.mailTypes.length) ? u.mailTypes : STAFF_MAIL_TYPES.slice();
+      u.mailScope = u.mailScope === "all" || (Array.isArray(u.mailScope) && u.mailScope.length) ? u.mailScope : "all";
+    }
+    if (typeof u.mailAuto !== "boolean") u.mailAuto = true;
+  });
+  USERS.mailSeedV = 3;
+  /* 兜底收件人默认就是导师 + 主管，保证未绑定关系的新人提醒不漏人 */
+  const cur = USERS.mailCfg || {};
+  if (!Array.isArray(cur.fallbackTo) || !cur.fallbackTo.length) {
+    USERS.mailCfg = Object.assign({}, cur, { fallbackTo: MAIL_SEED.filter(s => s.role !== "newbie").map(s => s.email) });
+  }
+  MAIL_SEED_DIRTY = true;
+}
 
 /* ---------- 文件读写 ---------- */
 function ensureDir() { try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) {} }
@@ -162,7 +214,17 @@ function ensureUsers() {
     if (!("invite" in u)) u.invite = null;
     if (!("wecom" in u)) u.wecom = "";
     if (!("pwless" in u)) u.pwless = false;
+    if (!("email" in u)) u.email = "";
+    /* 邮件订阅：旧账号没有配置时按角色补默认值，已有配置一律保留 */
+    if (!Array.isArray(u.mailTypes)) u.mailTypes = defaultMailTypes(u.role);
+    if (u.role === "newbie") u.mailTypes = u.mailTypes.filter(t => NEWBIE_MAIL_TYPES.indexOf(t) >= 0);
+    if (!u.mailTypes.length) u.mailTypes = defaultMailTypes(u.role);
+    if (u.mailScope === undefined) u.mailScope = u.role === "newbie" ? [u.id] : "all";
+    if (u.role === "newbie") u.mailScope = [u.id];
+    /* 推送方式：自动=按设定时间自动发；手动=只在账号管理里手动发送（默认自动） */
+    if (typeof u.mailAuto !== "boolean") u.mailAuto = true;
   });
+  if (!USERS.mailSeedV || USERS.mailSeedV < 3) applyMailSeed();
   writeJson(USERS_FILE, USERS);
 }
 /* 账号变更：本地落盘 +（若配了 GitHub）同步到仓库，避免重启丢账号 */
@@ -216,7 +278,7 @@ function emptyDoc() {
     carriers: { t: 0, list: [] }, issues: { t: 0, list: [] }, drills: { t: 0, list: [] },
     map: { t: 0, checks: [] }, kit: { t: 0, list: [] }, cards: { t: 0, list: [] }, quotes: { t: 0, list: [] },
     triggers: { t: 0, list: [] }, fae: { t: 0, map: {} }, reviews: { t: 0, map: {} }, checkins: { t: 0, list: [] },
-    deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] } };
+    quiz: { t: 0, list: [] }, deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] } };
 }
 function mergeList(L, R) {
   const m = {};
@@ -245,7 +307,7 @@ function mergeDoc(A, B) {
   const a = A || emptyDoc(), b = B || emptyDoc();
   const o = { v: 5, t: Math.max(a.t || 0, b.t || 0) };
   ["sec", "meta", "people", "plan"].forEach(k => o[k] = mergePlain(a[k], b[k]));
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits", "reveals"].forEach(k => o[k] = mergeList(a[k], b[k]));
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals"].forEach(k => o[k] = mergeList(a[k], b[k]));
   o.map = mergeChecks(a.map, b.map);
   o.fae = mergeMap(a.fae, b.fae);
   o.reviews = mergeMap(a.reviews, b.reviews);
@@ -257,7 +319,7 @@ function normDoc(r) {
   const o = { v: 5, t: r.t || 0 };
   o.sec = (r.sec && r.sec.h) ? r.sec : e.sec;
   ["meta", "people", "plan"].forEach(k => o[k] = (r[k] && typeof r[k] === "object" && !Array.isArray(r[k])) ? r[k] : e[k]);
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "deposits", "reveals"].forEach(k =>
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals"].forEach(k =>
     o[k] = (r[k] && Array.isArray(r[k].list)) ? r[k] : { t: (r[k] && r[k].t) || 0, list: [] });
   o.map = (r.map && Array.isArray(r.map.checks)) ? r.map : { t: 0, checks: [] };
   o.fae = (r.fae && r.fae.map && typeof r.fae.map === "object" && !Array.isArray(r.fae.map)) ? r.fae : { t: 0, map: {} };
@@ -322,14 +384,19 @@ async function getWecomToken() {
   wecomToken = { token: j.access_token, expire: now + (j.expires_in || 7200) * 1000 - 300000 };
   return j.access_token;
 }
-/* 按人分邮：新人相关提醒只发给他的直属导师 + 直属主管 + 兜底收件人。
-   账号上没配 mentorId/leadId 时，退化为「全部导师与主管」，保证不漏人。 */
-function staffEmailsFor(newbieId) {
-  const set = new Set(fallbackEmails());
+/* 按人分邮：新人相关提醒只发给他的直属导师 + 直属主管。
+   账号上没绑定时，退化为「全部导师与主管」；都没配邮箱时才用兜底收件人。 */
+function staffEmailsFor(newbieId, type) {
   const nb = findUser(newbieId);
-  const direct = [nb && nb.mentorId, nb && nb.leadId].filter(Boolean).map(findUser).filter(u => u && u.active && u.email);
-  if (direct.length) direct.forEach(u => set.add(u.email));
-  else (USERS.users || []).forEach(u => { if (u.email && u.active && (u.role === "mentor" || u.role === "lead" || u.role === "admin")) set.add(u.email); });
+  const ok = u => u && u.active && u.email && u.mailAuto !== false &&
+    (!type || (Array.isArray(u.mailTypes) && u.mailTypes.indexOf(type) >= 0));
+  const direct = [nb && nb.mentorId, nb && nb.leadId].filter(Boolean).map(findUser).filter(ok);
+  /* 已绑定直属导师/主管：只发给这两位，避免「手动」账号被兜底收件人绕过 */
+  if (direct.length) return [...new Set(direct.map(u => u.email))];
+  const set = new Set();
+  (USERS.users || []).forEach(u => { if (ok(u) && (u.role === "mentor" || u.role === "lead")) set.add(u.email); });
+  /* 一个导师/主管都没配邮箱时，才用兜底收件人，保证不漏人 */
+  if (!set.size) fallbackEmails().forEach(e => set.add(e));
   return [...set];
 }
 
@@ -387,13 +454,35 @@ function saveMailCfg(patch) {
   USERS.mailCfg = next; USERS.changed = true; saveUsers();
   return next;
 }
-/* 命中某类邮件、且关注范围包含该新人的规则（newbieId 为空时只按类型匹配，用于整体邮件） */
-function rulesFor(type, newbieId) {
-  return getMailCfg().rules.filter(r => r.enabled !== false && r.types.indexOf(type) >= 0 &&
-    (!newbieId || r.scope === "all" || (Array.isArray(r.scope) && r.scope.indexOf(newbieId) >= 0)));
+/* 命中某类邮件、且关注范围包含该新人的规则。
+   规则来源 = 账号自带的订阅（推荐，账号管理里维护） + 旧版邮件中心的规则（兼容保留）。
+   新人的订阅范围永远是本人，避免把别人的数据发给他。 */
+function userMailRules(type, newbieId, opts) {
+  const autoOnly = !!(opts && opts.autoOnly);
+  const out = [];
+  (USERS.users || []).forEach(u => {
+    if (!u.active || !validEmail(u.email)) return;
+    if (!Array.isArray(u.mailTypes) || u.mailTypes.indexOf(type) < 0) return;
+    if (autoOnly && u.mailAuto === false) return;      /* 仅手动：不参与定时推送 */
+    const scope = u.role === "newbie" ? [u.id]
+      : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope : []));
+    if (scope !== "all" && newbieId && scope.indexOf(newbieId) < 0) return;
+    out.push({ id: "u:" + u.id, name: u.name || "", email: u.email, types: u.mailTypes.slice(), scope, enabled: true });
+  });
+  return out;
 }
-function ruleEmails(type, newbieId) {
-  return [...new Set(rulesFor(type, newbieId).map(r => r.email).filter(validEmail))];
+function rulesFor(type, newbieId, opts) {
+  const legacy = getMailCfg().rules.filter(r => r.enabled !== false && r.types.indexOf(type) >= 0 &&
+    (!newbieId || r.scope === "all" || (Array.isArray(r.scope) && r.scope.indexOf(newbieId) >= 0)));
+  return userMailRules(type, newbieId, opts).concat(legacy);
+}
+function ruleEmails(type, newbieId, opts) {
+  return [...new Set(rulesFor(type, newbieId, opts).map(r => r.email).filter(validEmail))];
+}
+/* 定时推送是否仍有「自动订阅」的收件人：账号级配置优先，旧版邮件中心规则兼容 */
+function autoSubscribed(type) {
+  if (userMailRules(type, null, { autoOnly: true }).length) return true;
+  return getMailCfg().rules.some(r => r.enabled !== false && r.types.indexOf(type) >= 0);
 }
 /* 发送记录持久化到账号库：免费实例重启后不会把「今日已发」清空，避免重复发日报 */
 function mailState() { if (!USERS.mailState || typeof USERS.mailState !== "object") USERS.mailState = {}; return USERS.mailState; }
@@ -528,7 +617,7 @@ function recordLogin(u) {
     `<p><b>${h(u.name)}</b>（新人）刚登录了工作台。</p>
      <p>时间：${bjTime(now)} ${wk}</p>
      <p style="color:#5C6772;font-size:13px">若长时间无进展，可主动在「协助」或「把控」里看一眼他的问题与待办。</p>`,
-    "登录提醒 · 自动发送", { to: [...new Set(staffEmailsFor(u.id).concat(ruleEmails("login", u.id)))] });
+    "登录提醒 · 自动发送", { to: [...new Set(staffEmailsFor(u.id, "login").concat(ruleEmails("login", u.id, { autoOnly: true })))] });
 }
 
 /* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
@@ -551,7 +640,7 @@ function notifyNewIssues(items) {
        <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
        ${rws}</table>${m}`,
-      "问题协助提醒 · 自动发送", { to: [...new Set(staffEmailsFor(who).concat(ruleEmails("issue", who)))] });
+      "问题协助提醒 · 自动发送", { to: [...new Set(staffEmailsFor(who, "issue").concat(ruleEmails("issue", who, { autoOnly: true })))] });
   });
 }
 
@@ -583,9 +672,9 @@ function dueOf(L) {
   const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
   return y + "-" + String(mo).padStart(2, "0") + "-" + String(last).padStart(2, "0");
 }
-function mapPaceServer(who, checks, today) {
+function mapPaceServer(who, checks, quiz, today) {
   if (!BANK || !BANK.levels) return [];
-  const done = new Set(checks.filter(x => x.who === who && x.nodeId).map(x => x.nodeId));
+  const done = completedNodes(who, checks, quiz);
   return BANK.levels.map(L => {
     const d = (L.nodes || []).filter(n => done.has(n.id)).length;
     const remain = Math.max(0, (L.goal || (L.nodes || []).length) - d);
@@ -610,6 +699,12 @@ function buildActivityMap(D) {
     add(x.who, x.createdAt, "通关节点");
     const c = toMs(x.createdAt), u = toMs(x.updatedAt);
     if (u && u > c) add(x.who, x.updatedAt, "重做小测");
+  });
+  /* 小测作答实时留痕：每答一题都算一次业务动作，退出未交卷也保留 */
+  ((D.quiz || {}).list || []).filter(x => !x.del).forEach(x => {
+    add(x.who, x.createdAt, "小测作答");
+    (x.answerAt || []).forEach(t => add(x.who, t, "小测作答"));
+    if (x.status === "done") add(x.who, x.finishedAt || x.updatedAt, "小测交卷");
   });
   /* 只在「确实是后续更新」时记一次更新动作，避免创建当刻 createdAt=updatedAt 被算成两次动作 */
   const upd = (who, c, u, kind) => { if (toMs(u) > toMs(c)) add(who, u, kind); };
@@ -639,6 +734,7 @@ function snapshot() {
   return {
     D,
     checkins: (D.checkins.list || []).filter(x => !x.del),
+    quiz: ((D.quiz || {}).list || []).filter(x => !x.del),
     carriers: (D.carriers.list || []).filter(x => !x.del),
     issues: (D.issues.list || []).filter(x => !x.del),
     drills: (D.drills.list || []).filter(x => !x.del),
@@ -647,24 +743,43 @@ function snapshot() {
     activity: buildActivityMap(D),
   };
 }
-function latestQuizPerNode(list) {
-  const m = {};
-  list.filter(x => (+x.total) > 0).forEach(x => {
-    const k = x.nodeId || x.id;
-    const t = toMs(x.updatedAt || x.createdAt);
-    const p = m[k];
-    if (!p || t >= toMs(p.updatedAt || p.createdAt)) m[k] = x;
+/* 每个节点的「官方小测成绩」：独立小测记录优先；旧版打卡里自带成绩的节点作为兜底。
+   只看交卷记录，避免做了一半的答案把正确率算进去。
+   同一节点重做多次时，取「最早一次交卷」作为首次成绩计入口径；
+   重做记录完整保留、单独展示，但不会抬高正确率，避免刷题刷分。 */
+function firstQuizPerNode(list, quizList) {
+  const legacy = {}, qz = {};
+  (list || []).filter(x => (+x.total) > 0 && x.nodeId).forEach(x => {
+    const k = x.nodeId, t = toMs(x.updatedAt || x.createdAt), p = legacy[k];
+    if (!p || t < toMs(p.updatedAt || p.createdAt)) legacy[k] = x;
   });
-  return Object.values(m);
+  (quizList || []).filter(x => x.status === "done" && (+x.total) > 0 && x.nodeId).forEach(x => {
+    const k = x.nodeId, t = toMs(x.finishedAt || x.updatedAt || x.createdAt), p = qz[k];
+    if (!p || t < toMs(p.finishedAt || p.updatedAt || p.createdAt)) qz[k] = x;
+  });
+  return Object.values(Object.assign({}, legacy, qz));
 }
 function quizSum(list) {
   let correct = 0, total = 0;
   list.forEach(x => { correct += Math.max(0, +x.correct || 0); total += Math.max(0, +x.total || 0); });
   return { correct, total, acc: total > 0 ? Math.round(correct * 100 / total) : null };
 }
-function goalProgress(who, checks) {
+/* 已完成小测的节点：独立小测交卷 或 旧版打卡记录里带小测成绩 */
+function quizDoneNodes(who, checks, quiz) {
+  const s = new Set();
+  (checks || []).filter(x => x.who === who && x.nodeId && (+x.total) > 0).forEach(x => s.add(x.nodeId));
+  (quiz || []).filter(x => x.who === who && x.nodeId && x.status === "done").forEach(x => s.add(x.nodeId));
+  return s;
+}
+/* 节点通关 = 小测已交卷 + 学/用笔记已打卡；两者分开记录，但都完成才算通关 */
+function completedNodes(who, checks, quiz) {
+  const qz = quizDoneNodes(who, checks, quiz);
+  const note = new Set((checks || []).filter(x => x.who === who && x.nodeId && (x.note || x.use)).map(x => x.nodeId));
+  return new Set([...note].filter(id => qz.has(id)));
+}
+function goalProgress(who, checks, quiz) {
   if (!BANK || !BANK.levels) return null;
-  const done = new Set(checks.filter(x => x.who === who && x.nodeId).map(x => x.nodeId));
+  const done = completedNodes(who, checks, quiz);
   let got = 0, total = 0;
   BANK.levels.forEach(L => {
     const nodes = L.nodes || [];
@@ -690,11 +805,16 @@ function userStats(u, days, S) {
 
   const ci = snap.checkins.filter(x => x.who === u.id);
   const newRecs = ci.filter(x => inRange(x.createdAt));
-  const quizRecs = ci.filter(x => (+x.total) > 0 && inRange(x.updatedAt || x.createdAt));
-  const quizLatest = latestQuizPerNode(quizRecs);
-  const q = quizSum(quizLatest);
-  const cum = quizSum(latestQuizPerNode(ci));
-  const retryRecs = quizRecs.filter(x => !inRange(x.createdAt));
+  const quizAll = snap.quiz.filter(x => x.who === u.id);
+  const quizDone = quizAll.filter(x => x.status === "done" && (+x.total) > 0);
+  /* 官方成绩：每节点首次交卷；旧版打卡里带成绩的记录作为兼容兜底 */
+  const official = firstQuizPerNode(ci, quizAll);
+  const officialToday = official.filter(x => inRange(x.finishedAt || x.updatedAt || x.createdAt));
+  const q = quizSum(officialToday);
+  const cum = quizSum(official);
+  const officialIds = new Set(official.map(x => x.id));
+  const retryRecs = quizDone.filter(x => !officialIds.has(x.id) && inRange(x.finishedAt || x.updatedAt || x.createdAt))
+    .concat(ci.filter(x => (+x.total) > 0 && toMs(x.updatedAt) > toMs(x.createdAt) && inRange(x.updatedAt)));
 
   const cars = snap.carriers.filter(x => x.who === u.id);
   const acts = [];
@@ -736,13 +856,14 @@ function userStats(u, days, S) {
   if (u.lastLoginAt && inRange(u.lastLoginAt)) { loginAt = Math.max(loginAt, toMs(u.lastLoginAt)); loginDays.add(bjKey(u.lastLoginAt)); }
 
   const inviteDay = u.createdAt ? bjKey(u.createdAt) : "";
+  const doneAll = completedNodes(u.id, ci, quizAll);
   return {
     u, days, end, joinsDays: inviteDay ? daysBetween(inviteDay, end) : 999,
-    nodesDone: new Set(ci.filter(x => x.nodeId).map(x => x.nodeId)).size,
-    /* 只统计真正关联到产品地图节点的记录，避免「自定义学习记录」被当成通关节点虚增 */
-    nodesNew: new Set(newRecs.filter(x => x.nodeId).map(x => x.nodeId)).size,
+    nodesDone: doneAll.size,
+    /* 只统计真正关联到产品地图节点、且已同时完成小测与学/用笔记的记录 */
+    nodesNew: new Set(newRecs.filter(x => x.nodeId && doneAll.has(x.nodeId)).map(x => x.nodeId)).size,
     newRecs, retryRecs,
-    quizNodes: quizLatest.length, quizCorrect: q.correct, quizTotal: q.total, quizAcc: q.acc,
+    quizNodes: officialToday.length, quizCorrect: q.correct, quizTotal: q.total, quizAcc: q.acc,
     cumCorrect: cum.correct, cumTotal: cum.total, cumAcc: cum.acc,
     cars: cars.length, carsIn: cars.filter(x => inRange(x.createdAt || x.updatedAt)).length,
     open: open.length, overdue: overdue.length,
@@ -752,8 +873,8 @@ function userStats(u, days, S) {
     deposits: deposits.length, depositsIn: deposits.filter(x => inRange(x.createdAt)).length,
     activityAt, lastKind: lastAct ? lastAct.kind : "", lastActiveAt: lastAt, lastActiveDay: lastAt ? bjKey(lastAt) : "",
     loginAt, activeAt: Math.max(activityAt, loginAt), activeDays: new Set([...actsOn.map(a => bjKey(a.at)), ...loginDays]).size, kinds,
-    paces: mapPaceServer(u.id, snap.checkins, end),
-    goal: goalProgress(u.id, snap.checkins),
+    paces: mapPaceServer(u.id, snap.checkins, quizAll, end),
+    goal: goalProgress(u.id, snap.checkins, quizAll),
   };
 }
 /* 风险预警：所有报表共用；文案带日期/数字，避免“看起来像模板” */
@@ -827,8 +948,12 @@ function buildDailyReport(day, opts) {
     ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">载体</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">待办/总</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td></tr>`).join("")}</table>`
     : "<p style=\"color:#7C8896;font-size:12.5px\">暂无载体记录</p>";
 
+  /* 高频错题只统计每节点首次交卷的错题；重做仅作练习，不重复累计 */
   const wrongCount = {};
-  S.checkins.filter(x => scopeIds.has(x.who)).forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
+  newbies.forEach(u => {
+    const mine = firstQuizPerNode(S.checkins.filter(x => x.who === u.id), S.quiz.filter(x => x.who === u.id));
+    mine.forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
+  });
   const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const wrongHtml = topWrong.length
     ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">错题</th><th style="padding:6px 8px">答错次数</th></tr>${topWrong.map(([q, n]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(q)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:#B03A2E">${n}</td></tr>`).join("")}</table>`
@@ -851,7 +976,7 @@ function buildDailyReport(day, opts) {
        <b style="color:#3C6B1A">客户载体跟进</b>${carrierHtml}</div>
      <div style="margin-top:14px;background:#FFFBF0;border:1px solid #F3E7C9;border-radius:8px;padding:10px 12px">
        <b style="color:#8A6D1A">高频错题（本次统计范围）</b>${wrongHtml}</div>
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/载体/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率累计值按每节点最新一次作答计算，同一节点重做不重复累计；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/载体/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率按每节点「首次交卷」成绩计算（重做记录完整留痕、单独展示，但不会抬高正确率）；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
   return { today, card, needAtt, html };
 }
 
@@ -939,11 +1064,10 @@ function mergeRuleScopes(rules) {
 }
 async function sendDailyAll(day) {
   const cfg = getMailCfg();
-  if (!cfg.daily) return { ok: false, msg: "日报已在邮件中心关闭", skipped: true };
   const theDay = day || bjKey(Date.now());
   /* 只保留「范围内仍有在职新人」的规则；勾选的人被删/停用后不再发空表 */
   const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
-  const rawGroups = mergeRuleScopes(rulesFor("daily"));
+  const rawGroups = mergeRuleScopes(rulesFor("daily", null, { autoOnly: true }));
   const groups = rawGroups.map(g => ({
     email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
   })).filter(g => g.ids === null || g.ids.length);
@@ -966,10 +1090,9 @@ async function sendDailyAll(day) {
 }
 async function sendWeeklyAll(day) {
   const cfg = getMailCfg();
-  if (!cfg.weekly) return { ok: false, msg: "周报已在邮件中心关闭", skipped: true };
   const theDay = day || bjKey(Date.now());
   const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
-  const rawGroups = mergeRuleScopes(rulesFor("weekly"));
+  const rawGroups = mergeRuleScopes(rulesFor("weekly", null, { autoOnly: true }));
   const groups = rawGroups.map(g => ({
     email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
   })).filter(g => g.ids === null || g.ids.length);
@@ -995,9 +1118,16 @@ async function sendPersonalAll(day) {
   const theDay = day || bjKey(Date.now());
   const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const targets = {};
-  const add = (email, id) => { if (!validEmail(email)) return; (targets[email] = targets[email] || []).push(id); };
-  if (cfg.personalSelf) newbies.forEach(u => { if (validEmail(u.email)) add(u.email, u.id); });
-  rulesFor("personal").forEach(r => {
+  const add = (email, id) => {
+    if (!validEmail(email)) return;
+    const arr = targets[email] = targets[email] || [];
+    if (arr.indexOf(id) < 0) arr.push(id);   /* 同一人既勾「本人收」又命中规则时，避免重复出现在汇总里 */
+  };
+  /* 新人是否收自己的个人日报，完全由账号里的订阅决定（默认已勾选），不再受全局开关影响 */
+  newbies.forEach(u => {
+    if (validEmail(u.email) && u.mailAuto !== false && u.mailTypes && u.mailTypes.indexOf("personal") >= 0) add(u.email, u.id);
+  });
+  rulesFor("personal", null, { autoOnly: true }).forEach(r => {
     const ids = r.scope === "all" ? newbies.map(u => u.id) : r.scope;
     ids.forEach(id => add(r.email, id));
   });
@@ -1028,7 +1158,7 @@ function buildRiskReport(users, day) {
 }
 async function sendRiskAll(day) {
   const theDay = day || bjKey(Date.now());
-  const groups = mergeRuleScopes(rulesFor("risk"));
+  const groups = mergeRuleScopes(rulesFor("risk", null, { autoOnly: true }));
   if (!groups.length) return { ok: true, to: [], msg: "未配置风险预警收件人", skipped: true };
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const results = [];
@@ -1055,20 +1185,20 @@ async function runScheduled(day) {
     const theDay = day || bjKey(Date.now());
     const st = mailState();
     const out = {};
-    if (cfg.daily && st.lastDaily !== theDay) {
+    if (autoSubscribed("daily") && st.lastDaily !== theDay) {
       out.daily = await sendDailyAll(theDay);
       if (out.daily.ok) markMailSent("lastDaily", theDay);
     }
-    if (cfg.personal && st.lastPersonal !== theDay) {
+    if (autoSubscribed("personal") && st.lastPersonal !== theDay) {
       out.personal = await sendPersonalAll(theDay);
       if (out.personal.ok) markMailSent("lastPersonal", theDay);
     }
-    if (cfg.risk && st.lastRisk !== theDay) {
+    if (autoSubscribed("risk") && st.lastRisk !== theDay) {
       out.risk = await sendRiskAll(theDay);
       if (out.risk.ok) markMailSent("lastRisk", theDay);
     }
     const wd = bj(theDay).getUTCDay();
-    if (wd === 1 && cfg.weekly && st.lastWeekly !== theDay) {
+    if (wd === 1 && autoSubscribed("weekly") && st.lastWeekly !== theDay) {
       out.weekly = await sendWeeklyAll(theDay);
       if (out.weekly.ok) markMailSent("lastWeekly", theDay);
     }
@@ -1122,8 +1252,8 @@ function startDailyReportTimer() {
     if (hour < cfg.reportHour) return;
     const key = bjKey(Date.now());
     const st = mailState();
-    if (!(cfg.daily && st.lastDaily !== key) && !(cfg.personal && st.lastPersonal !== key) &&
-      !(cfg.risk && st.lastRisk !== key) && !(wd === 1 && cfg.weekly && st.lastWeekly !== key)) return;
+    if (!(autoSubscribed("daily") && st.lastDaily !== key) && !(autoSubscribed("personal") && st.lastPersonal !== key) &&
+      !(autoSubscribed("risk") && st.lastRisk !== key) && !(wd === 1 && autoSubscribed("weekly") && st.lastWeekly !== key)) return;
     if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;
     MS.lastTry = Date.now(); saveMS();
     runScheduled(key).then(r => {
@@ -1363,7 +1493,11 @@ function requireAdmin(req, res) {
 app.get("/api/users", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ ok: true, teamPasscode: USERS.teamPasscode || "",
-    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", mentorId: u.mentorId || "", leadId: u.leadId || "", inviteUrl: u.invite ? inviteUrl(u) : "" })) });
+    users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", mentorId: u.mentorId || "", leadId: u.leadId || "",
+      mailTypes: Array.isArray(u.mailTypes) ? u.mailTypes.slice() : defaultMailTypes(u.role),
+      mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : "all")),
+      mailAuto: u.mailAuto !== false,
+      inviteUrl: u.invite ? inviteUrl(u) : "" })) });
 });
 
 /* 团队口令（可选）：全组共用一个，开启后「选名字进入」需带上它；留空=完全免口令 */
@@ -1387,13 +1521,18 @@ app.post("/api/users", (req, res) => {
   if (ROLES.indexOf(role) < 0) return res.status(400).json({ ok: false, msg: "角色无效" });
   if (findByUsername(username)) return res.status(409).json({ ok: false, msg: "登录名已存在" });
   const salt = newSalt();
+  const id = uid();
+  const email = String(b.email || "").trim();
+  if (email && !validEmail(email)) return res.status(400).json({ ok: false, msg: "邮箱格式不正确" });
+  /* 新账号自带默认邮件订阅：新人只收自己的个人日报/周报；导师/主管收整体汇总 */
+  const subs = { email, mailTypes: defaultMailTypes(role), mailScope: role === "newbie" ? [id] : "all", mailAuto: true };
   let u;
   if (password) {
     if (password.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
-    u = { id: uid(), username, name, role, salt, pass: hashPass(password, salt), active: true, activated: true, invite: null, mustReset: true, wecom: "", pwless: false, createdAt: Date.now() };
+    u = Object.assign({ id, username, name, role, salt, pass: hashPass(password, salt), active: true, activated: true, invite: null, mustReset: true, wecom: "", pwless: false, createdAt: Date.now() }, subs);
   } else {
     // 不设密码 → 生成邀请链接，由本人自己设密码（管理员无需记录任何口令）
-    u = { id: uid(), username, name, role, salt, pass: "", active: true, activated: false, invite: newInvite(), mustReset: false, wecom: "", pwless: false, createdAt: Date.now() };
+    u = Object.assign({ id, username, name, role, salt, pass: "", active: true, activated: false, invite: newInvite(), mustReset: false, wecom: "", pwless: false, createdAt: Date.now() }, subs);
   }
   USERS.users.push(u); USERS.changed = true; saveUsers();
   res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "" }) });
@@ -1415,10 +1554,29 @@ app.post("/api/user_update", (req, res) => {
     u.active = !!b.active;
   }
   if (b.wecom != null) u.wecom = String(b.wecom).trim();
-  if (b.email != null) u.email = String(b.email).trim();
+  if (b.email != null) {
+    const em = String(b.email).trim();
+    if (em && !validEmail(em)) return res.status(400).json({ ok: false, msg: "邮箱格式不正确" });
+    u.email = em;
+  }
+  /* 邮件订阅：类型可多选；关注新人 all=全部，或新人 id 数组。新人固定为本人、且只允许个人日报/周报。 */
+  if (b.mailTypes != null) {
+    let types = (Array.isArray(b.mailTypes) ? b.mailTypes : []).map(String).filter(t => MAIL_TYPE_NAME[t]);
+    u.mailTypes = u.role === "newbie" ? types.filter(t => NEWBIE_MAIL_TYPES.indexOf(t) >= 0) : types;
+  }
+  if (b.mailAuto != null) u.mailAuto = !!b.mailAuto;
+  if (b.mailScope != null) {
+    if (u.role === "newbie") u.mailScope = [u.id];
+    else if (b.mailScope === "all") u.mailScope = "all";
+    else u.mailScope = (Array.isArray(b.mailScope) ? b.mailScope : []).map(String).filter(id => findUser(id));
+  }
   /* 直属导师 / 直属主管：只影响「提醒邮件发给谁」，不改变任何业务数据 */
   if (b.mentorId != null) u.mentorId = String(b.mentorId).trim();
   if (b.leadId != null) u.leadId = String(b.leadId).trim();
+  /* 转岗后保持订阅合法：新人只看自己；不再是新人且范围只有自己时改为全部 */
+  if (u.role === "newbie") u.mailScope = [u.id];
+  else if (!Array.isArray(u.mailTypes)) u.mailTypes = defaultMailTypes(u.role);
+  if (u.role !== "newbie" && Array.isArray(u.mailScope) && u.mailScope.length === 1 && u.mailScope[0] === u.id) u.mailScope = "all";
   if (b.password != null && String(b.password).length) {
     const np = String(b.password);
     if (np.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
@@ -1494,18 +1652,15 @@ app.post("/api/mail_report", async (req, res) => {
   res.status(r.ok ? 200 : 400).json(r);
 });
 
-/* ---------- 邮件中心（超管在网站内配置收件人 / 内容 / 关注新人） ---------- */
-function requireAdmin(req, res) {
-  const me = tokenFromReq(req);
-  if (!me) { res.status(401).json({ ok: false, msg: "未登录或会话失效" }); return null; }
-  if (me.role !== "admin") { res.status(403).json({ ok: false, msg: "仅超级管理员可配置邮件中心" }); return null; }
-  return me;
-}
+/* ---------- 邮件基础配置 / 订阅查询（配置入口统一在「账号管理」） ---------- */
 function mailCfgPayload() {
   const cfg = getMailCfg();
   const users = (USERS.users || []).map(u => ({ id: u.id, name: u.name, username: u.username,
     role: u.role, roleName: ROLE_NAME[u.role], email: u.email || "", active: !!u.active,
-    mentorId: u.mentorId || "", leadId: u.leadId || "" }));
+    mentorId: u.mentorId || "", leadId: u.leadId || "",
+    mailTypes: Array.isArray(u.mailTypes) ? u.mailTypes.slice() : defaultMailTypes(u.role),
+    mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : "all")),
+    mailAuto: u.mailAuto !== false }));
   return {
     ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL,
     types: MAIL_TYPES.map(x => ({ key: x[0], name: x[1] })),
@@ -1553,6 +1708,30 @@ app.post("/api/mail_send", async (req, res) => {
   const x = await sendMail(r.subject, r.html, r.note + " · 邮件中心手动发送。", { to });
   res.status(x.ok ? 200 : 400).json(Object.assign({ to, subject: r.subject, day, type }, x));
 });
+/* 账号管理里「手动发送」：按该账号已保存的订阅内容，把指定日期的邮件发到其邮箱。
+   · 自动订阅控制的是定时推送；手动发送始终可用，不受 mailAuto 影响。 */
+app.post("/api/mail_send_user", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const b = req.body || {};
+  const u = findUser(String(b.userId || ""));
+  if (!u) return res.status(404).json({ ok: false, msg: "账号不存在" });
+  if (!validEmail(u.email)) return res.status(400).json({ ok: false, msg: "该账号还没有填写有效邮箱" });
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : bjKey(Date.now());
+  const types = (Array.isArray(b.types) && b.types.length ? b.types : (u.mailTypes || []))
+    .map(String).filter(t => MAIL_TYPE_NAME[t]);
+  if (!types.length) return res.status(400).json({ ok: false, msg: "该账号未勾选任何邮件内容" });
+  const ids = u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? [] : (u.mailScope || []));
+  const results = [];
+  for (const type of types) {
+    const r = reportOf(type, day, ids);
+    if (!r) { results.push({ type, skipped: true, msg: "当日无符合条件的内容" }); continue; }
+    const x = await sendMail(r.subject, r.html, `手动发送 · ${MAIL_TYPE_NAME[type]} · ${day}。`, { to: [u.email] });
+    results.push(Object.assign({ type, typeName: MAIL_TYPE_NAME[type], subject: r.subject }, x));
+  }
+  const ok = results.some(x => x.ok);
+  res.status(ok ? 200 : 400).json({ ok, to: [u.email], day, results,
+    msg: ok ? "" : ((results.find(x => x.msg) || {}).msg || "没有可发送的内容") });
+});
 /* GitHub Actions 定时任务用它拉取日报内容（备用；主链路是下面的 daily_ping 让服务端自己触发） */
 app.get("/api/report_payload", (req, res) => {
   const t = String(req.query.token || "");
@@ -1571,8 +1750,8 @@ app.get("/api/daily_ping", async (req, res) => {
   if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
   if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00" });
   const st = mailState();
-  const pending = (cfg.daily && st.lastDaily !== key) || (cfg.personal && st.lastPersonal !== key) ||
-    (cfg.risk && st.lastRisk !== key) || (wd === 1 && cfg.weekly && st.lastWeekly !== key);
+  const pending = (autoSubscribed("daily") && st.lastDaily !== key) || (autoSubscribed("personal") && st.lastPersonal !== key) ||
+    (autoSubscribed("risk") && st.lastRisk !== key) || (wd === 1 && autoSubscribed("weekly") && st.lastWeekly !== key);
   if (!pending) return res.json({ ok: true, skipped: "今日已发" });
   const r = await runScheduled(key);
   MS.lastReport = key; saveMS();
@@ -1630,6 +1809,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
   if (SB_ON) usersLoaded = await sbPullUsers();
   if (!usersLoaded) await ghPullUsers();
   ensureUsers();                // 本地文件兜底；都没有则建默认账号
+  if (MAIL_SEED_DIRTY) { MAIL_SEED_DIRTY = false; saveUsers(); console.log("[邮件] 已按初始名单配置邮件订阅（李雯锋/彭灿/詹祥雨/童伟桀）"); }
   loadBank();                   // 产品地图档位/截止日（日报进度判定用）
   rotateLegacyWeakPasswords();  // 历史弱默认密码 → 随机密码（防冒用）
   if (SB_ON) { await sbPullDoc(); if (!DOC) console.log("[boot] Supabase 中尚无业务数据，等待前端首次写入"); }

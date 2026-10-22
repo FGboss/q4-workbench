@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Q4 新人培养 · 协作工作台 v6.8 · 在线版</title>
+<title>Q4 新人培养 · 协作工作台 v7.0 · 在线版</title>
 <style>
   :root{
     --blue:#17558F; --blue-d:#0B3A63; --blue-l:#EDF4FA; --blue-m:#3B7CB0;
@@ -320,7 +320,7 @@
   <div class="wrap">
     <div class="hrow">
       <div>
-        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v6.8</span></div>
+        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v7.0</span></div>
         <div class="sub">嗨动视觉 · 深圳服务点 · 2026 Q4（10–12 月）· 第二阶段</div>
         <div class="oneline">规划 → 协助 → 帮扶 → 把控 → 复盘　·　标准当尺、脑图当节奏、日常工作当载体</div>
       </div>
@@ -438,7 +438,7 @@
       <div class="grid2" id="dutyBlk"></div>
     </section>
     <section id="mailSec">
-      <h2>通知与提醒 <span class="h">新人登录、求助发问即时提醒对应导师/主管；工作日 18:00 自动推送整体进度日报。超管可在「邮件中心」配置谁收什么邮件、关注哪些新人</span></h2>
+      <h2>通知与提醒 <span class="h">新人登录、求助发问即时提醒对应导师/主管；工作日 18:00 自动推送整体进度日报。超管可在「账号管理」里按人统一配置谁收什么邮件、关注哪些新人、自动还是手动</span></h2>
       <div class="card pad" id="mailBox"></div>
     </section>
     <section>
@@ -478,7 +478,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v6.8 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件提醒与日报（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v7.0 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -583,7 +583,7 @@ const FSTAT=["○","△","✔"];
 function emptyDoc(){return {v:5,t:0,
  meta:{t:0}, people:{t:0}, plan:{t:0},
  carriers:{t:0,list:[]}, issues:{t:0,list:[]}, drills:{t:0,list:[]},
- checkins:{t:0,list:[]}, kit:{t:0,list:[]}, cards:{t:0,list:[]}, quotes:{t:0,list:[]},
+ checkins:{t:0,list:[]}, quiz:{t:0,list:[]}, kit:{t:0,list:[]}, cards:{t:0,list:[]}, quotes:{t:0,list:[]},
  triggers:{t:0,list:[]}, fae:{t:0,map:{}}, reviews:{t:0,map:{}}, deposits:{t:0,list:[]},
  reveals:{t:0,list:[]}};}
 function seedDoc(){const t=nowT();return {v:5,t,
@@ -597,7 +597,7 @@ function seedDoc(){const t=nowT();return {v:5,t,
    tong:{nm:"童伟桀",rl:"FAE / 业务拓展 · 偏客户业务",short:["产品原理深度（原理不熟→讲解照本宣科）","独立闭环","客户讲解表达"],express:"在真实客户场景做产品讲解。"}},
  plan:{t,wants:{zhan:"",tong:""},confirm:{zhan:false,tong:false}},
  carriers:{t,list:[]}, issues:{t,list:[]}, drills:{t,list:[]},
- checkins:{t,list:[]},
+ checkins:{t,list:[]}, quiz:{t,list:[]},
  kit:{t,list:[
    {id:uid(),name:"售前模拟话术库",note:"常见场景应答话术，随真实客户补充",link:"",updatedAt:t},
    {id:uid(),name:"典型客户问题应答 SOP",note:"高频问题标准处理步骤",link:"",updatedAt:t},
@@ -643,12 +643,12 @@ function mergeMap(L,R){const map={};
 function mergePlain(L,R){return (L&&L.t||0)>=(R&&R.t||0)?(L||{}):(R||{});}
 function mergeDoc(A,B){const a=A||emptyDoc(),b=B||emptyDoc();const o={v:5,t:Math.max(a.t||0,b.t||0)};
  ["meta","people","plan"].forEach(k=>o[k]=mergePlain(a[k],b[k]));
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=mergeList(a[k],b[k]));
+ ["carriers","issues","drills","checkins","quiz","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=mergeList(a[k],b[k]));
  o.fae=mergeMap(a.fae,b.fae);o.reviews=mergeMap(a.reviews,b.reviews);return o;}
 function norm(r){const e=emptyDoc();if(!r||typeof r!=="object"||Array.isArray(r))return e;
  const o={v:5,t:r.t||0};
  ["meta","people","plan"].forEach(k=>o[k]=(r[k]&&typeof r[k]==="object"&&!Array.isArray(r[k]))?r[k]:e[k]);
- ["carriers","issues","drills","checkins","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
+ ["carriers","issues","drills","checkins","quiz","kit","cards","quotes","triggers","deposits","reveals"].forEach(k=>o[k]=(r[k]&&Array.isArray(r[k].list))?r[k]:{t:(r[k]&&r[k].t)||0,list:[]});
  o.fae=(r.fae&&r.fae.map&&typeof r.fae.map==="object"&&!Array.isArray(r.fae.map))?r.fae:{t:(r.fae&&r.fae.t)||0,map:{}};
  o.reviews=(r.reviews&&r.reviews.map&&typeof r.reviews.map==="object"&&!Array.isArray(r.reviews.map))?r.reviews:{t:(r.reviews&&r.reviews.t)||0,map:{}};
  return o;}
@@ -883,35 +883,70 @@ async function openInfo(){
  };
 }
 
-/* 超级管理员：账号管理（建号 / 分配角色 / 启停 / 重置 / 邀请链接 / 绑定企业微信 / 删除） */
+/* 超级管理员：账号管理（建号 / 分配角色 / 启停 / 重置 / 邀请链接 / 绑定企业微信 / 删除 / 邮件订阅） */
 async function openAccounts(){
- let r={};
+ let r={},mc={};
  try{r=await apiGet("/api/users");}catch(e){}
  if(!r.data||!r.data.ok){alert((r.data&&r.data.msg)||"读取账号失败，请确认你是超级管理员并已连上服务器。");return;}
+ try{mc=await apiGet("/api/mail_cfg");}catch(e){}
+ const mcfg=(mc.data&&mc.data.ok)?(mc.data.cfg||{}):{};
  const users=r.data.users||[];
+ const newbieList=users.filter(x=>x.role==="newbie"&&x.active);
+ const MAIL_TYPE_DEF=[["daily","整体日报"],["weekly","周报"],["personal","个人日报 / 汇总"],["risk","风险预警"],["login","登录提醒"],["issue","问题 / 诉求提醒"]];
+ const mtypeName=k=>(MAIL_TYPE_DEF.find(t=>t[0]===k)||[k,k])[1];
+ const mailTypeKeys=role=>role==="newbie"?["personal","weekly"]:MAIL_TYPE_DEF.map(t=>t[0]);
  const roleOpts=sel=>["admin","lead","mentor","newbie"].map(k=>`<option value="${k}" ${sel===k?"selected":""}>${ROLE_NAME[k]}</option>`).join("");
  const peopleOpts=(role,sel)=>`<option value="">— 未指定 —</option>`+users.filter(x=>x.role===role).map(x=>`<option value="${x.id}" ${sel===x.id?"selected":""}>${esc(x.name)}</option>`).join("");
- let html=`<div class="mh"><b>账号管理</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
- html+=`<div class="muted" style="margin-bottom:10px">在这里给人建账号、分配角色：加完后，他打开网址用<b>这个用户名和密码登录</b>即可。</div>
-  <div class="card pad" style="margin-bottom:14px">
-   <div class="grid2">
-    <input id="nuUser" placeholder="登录名（3–20 位小写字母/数字/_）">
-    <input id="nuName" placeholder="姓名（如 张三）">
-   </div>
-   <div class="row" style="margin-top:8px;flex-wrap:wrap">
-    <select id="nuRole">${roleOpts("newbie")}</select>
-    <input id="nuPass" placeholder="密码（至少 4 位）" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px">
-    <button class="btn" id="nuAdd">＋ 添加成员</button>
-   </div>
-  </div>`;
+ const readSub=u=>{
+  const types=[...document.querySelectorAll(`[data-umtype="${u.id}"]`)].filter(x=>x.checked).map(x=>x.value);
+  const sel=document.querySelector(`[data-umscope="${u.id}"]`);
+  const scope=u.role==="newbie"?"self":(sel?sel.value:"all");
+  const ids=scope==="pick"?[...document.querySelectorAll(`[data-umnb="${u.id}"]`)].filter(x=>x.checked).map(x=>x.value):[];
+  const am=document.querySelector(`[data-umauto="${u.id}"]:checked`);
+  return {types,scope,ids,auto:am?am.value!=="manual":true};
+ };
+ let html=`<div class="mh"><b>账号管理 · 成员与邮件订阅</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
+ html+=`<div class="muted" style="margin-bottom:10px">在这里给人建账号、分配角色，并<b>统一维护每人的邮件订阅</b>：收什么内容、关注哪些新人、自动还是手动推送、发给哪个邮箱。
+ 新增导师/新人时，账号建好即带默认订阅，后续只需按需勾选。</div>
+ <div class="card pad" style="margin-bottom:14px">
+  <h3>邮件基础设置</h3>
+  <div class="muted" style="margin-top:4px">所有日报 / 周报 / 个人汇总 / 风险预警统一按<b>北京时间</b>统计；自动推送只作用于勾选“自动”的账号。</div>
+  <div class="row" style="margin-top:9px;flex-wrap:wrap;align-items:center">
+   <span class="mcbx">工作日推送时间 <input type="number" id="mgHour" min="0" max="23" value="${Number(mcfg.reportHour)||18}" style="width:64px;border:1px solid var(--line);border-radius:7px;padding:4px 6px"> 点（北京时间）</span>
+   <button class="btn sm" id="mgSave">保存基础设置</button><span class="muted" id="mgMsg"></span>
+  </div>
+  <div class="muted" style="margin-top:6px">新人本人是否接收自己的个人日报，直接看下方该新人账号里的「个人日报 / 汇总」勾选，避免重复开关互相覆盖。</div>
+  <div style="margin-top:9px"><div class="muted" style="margin-bottom:4px">兜底收件人（新人未绑定直属导师/主管时使用；多个用逗号分隔）</div>
+   <input id="mgFallback" value="${esc((mcfg.fallbackTo||[]).join(","))}" placeholder="liwf@novastar.tech" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px"></div>
+ </div>
+ <div class="card pad" style="margin-bottom:14px">
+  <h3>新增成员</h3>
+  <div class="grid2" style="margin-top:8px">
+   <input id="nuUser" placeholder="登录名（3–20 位小写字母/数字/_）">
+   <input id="nuName" placeholder="姓名（如 张三）">
+  </div>
+  <div class="row" style="margin-top:8px;flex-wrap:wrap">
+   <select id="nuRole">${roleOpts("newbie")}</select>
+   <input id="nuPass" placeholder="密码（至少 4 位）" style="flex:1;min-width:180px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px">
+   <button class="btn" id="nuAdd">＋ 添加成员</button>
+  </div>
+  <div class="muted" style="margin-top:6px">不填密码则生成邀请链接，由本人自己设密码；新账号默认带角色对应的邮件订阅。</div>
+ </div>`;
  html+=users.map(u=>{
   const inv=u.inviteUrl?`<div class="linkrow" style="margin-top:7px"><code>${esc(u.inviteUrl)}</code><button class="btn sm gh" data-copy="${esc(u.inviteUrl)}">复制邀请链接</button></div>
     <div class="muted" style="margin-top:2px">发给本人 → 打开后设置自己的密码即可进入。</div>`:"";
+  const allowed=mailTypeKeys(u.role);
+  const mt=(Array.isArray(u.mailTypes)&&u.mailTypes.length?u.mailTypes:allowed).filter(t=>allowed.indexOf(t)>=0);
+  const isNb=u.role==="newbie";
+  const sc=isNb?"self":(u.mailScope==="all"?"all":"pick");
+  const scIds=isNb?[]:(Array.isArray(u.mailScope)?u.mailScope:[]);
+  const typeBoxes=allowed.map(k=>`<label class="mcbx"><input type="checkbox" data-umtype="${u.id}" value="${k}" ${mt.indexOf(k)>=0?"checked":""}> ${mtypeName(k)}</label>`).join("");
+  const nbBoxes=newbieList.map(n=>`<label class="mcbx"><input type="checkbox" data-umnb="${u.id}" value="${n.id}" ${scIds.indexOf(n.id)>=0?"checked":""}> ${esc(n.name)}</label>`).join("")||`<span class="muted">暂无新人账号</span>`;
   return `<div class="card pad" style="margin-bottom:10px">
    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
     <div><b>${esc(u.name)}</b> <span class="muted">@${esc(u.username)}</span>
       <span class="tag ${u.active?"ok":"no"}" style="margin-left:6px">${u.active?"启用":"已停用"}</span>
-      <span class="tag gy" style="margin-left:4px">账号密码登录</span></div>
+      <span class="tag gy" style="margin-left:4px">${ROLE_NAME[u.role]||u.role}</span></div>
     <div class="row" style="gap:6px">
      <select data-urole="${u.id}">${roleOpts(u.role)}</select>
      <button class="btn sm gh" data-utoggle="${u.id}">${u.active?"停用":"启用"}</button>
@@ -920,23 +955,64 @@ async function openAccounts(){
     </div>
    </div>
    <div class="grid2" style="margin-top:8px">
-    <input data-uemail="${u.id}" value="${esc(u.email||"")}" placeholder="邮箱（收提醒用，选填）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+    <input data-uemail="${u.id}" value="${esc(u.email||"")}" placeholder="邮箱（接收邮件用）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
     <input data-uwecom="${u.id}" value="${esc(u.wecom||"")}" placeholder="企业微信 userid（选填）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
    </div>
    <div class="row" style="margin-top:8px;flex-wrap:wrap">
     <select data-umentor="${u.id}" title="直属导师：该新人的登录/问题提醒只发给这位导师">${peopleOpts("mentor",u.mentorId)}</select>
     <select data-ulead="${u.id}" title="直属主管：该新人的登录/问题提醒只发给这位主管">${peopleOpts("lead",u.leadId)}</select>
-    <button class="btn sm gh" data-usave="${u.id}">保存</button>
+   </div>
+   <details style="margin-top:10px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 11px">
+    <summary style="cursor:pointer;font-size:12.7px;font-weight:700;color:var(--ink2)">邮件订阅与推送
+      <span class="muted" style="font-weight:400">· ${esc(u.email||"未填邮箱")} · ${mt.length?mt.map(mtypeName).join(" / "):"未选内容"} · ${u.mailAuto!==false?"自动":"手动"}</span></summary>
+    <div style="margin-top:10px">
+     <div class="muted" style="font-weight:700">接收内容（可多选）</div>
+     <div style="margin-top:4px;line-height:2">${typeBoxes||`<span class="muted">该角色暂无可用邮件类型</span>`}</div>
+     <div class="muted" style="margin-top:8px;font-weight:700">关注新人</div>
+     ${isNb?`<div class="muted" style="margin-top:3px">仅本人（固定）：只统计并发送 ${esc(u.name)} 自己的数据，不会收到其他新人的信息。</div>`:
+       `<div class="row" style="margin-top:4px;gap:8px;flex-wrap:wrap">
+         <select data-umscope="${u.id}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+          <option value="all" ${sc==="all"?"selected":""}>全部新人</option>
+          <option value="pick" ${sc==="pick"?"selected":""}>仅指定新人</option></select>
+         <span class="muted">日报 / 周报 / 个人汇总 / 风险预警都只统计勾选的新人</span></div>
+        <div data-umnbbox="${u.id}" class="${sc==="all"?"hide":""}" style="margin-top:6px;line-height:2">${nbBoxes}</div>`}
+     <div class="muted" style="margin-top:8px;font-weight:700">推送方式</div>
+     <div class="row" style="margin-top:3px;flex-wrap:wrap">
+      <label class="mcbx"><input type="radio" name="umauto_${u.id}" data-umauto="${u.id}" value="auto" ${u.mailAuto!==false?"checked":""}> 自动（每工作日按基础设置时间推送）</label>
+      <label class="mcbx"><input type="radio" name="umauto_${u.id}" data-umauto="${u.id}" value="manual" ${u.mailAuto===false?"checked":""}> 手动（只在下面点按钮发送）</label>
+     </div>
+     <div class="row" style="margin-top:9px;flex-wrap:wrap;align-items:center">
+      <span class="muted">补发 / 手动发送日期</span>
+      <input type="date" data-umday="${u.id}" value="${esc((mc.data&&mc.data.today)||"")}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+      <button class="btn sm gh" data-umsend="${u.id}">按当前订阅手动发送</button>
+      <span class="muted">手动发送不受“自动/手动”限制</span>
+     </div>
+    </div>
+   </details>
+   <div class="row" style="margin-top:9px;align-items:center;flex-wrap:wrap">
+    <button class="btn sm" data-usave="${u.id}">保存该账号（含邮件订阅）</button>
+    <span class="muted">邮箱、导师/主管、角色、订阅内容、关注范围、推送方式一次保存。</span>
    </div>
    ${inv}
   </div>`;}).join("");
  html+=`<div class="muted" style="margin-top:12px">· 角色说明：超级管理员可管理账号；主管可做终评、看责任看板；导师可回复、复评、评分；新人只有自己的记录。<br>
-  · 精准提醒：给导师/主管填好<b>邮箱</b>，再给新人的账号选上<b>直属导师/直属主管</b>后，该新人的登录与问题提醒只发给这两位（+兜底收件人），不会打扰其他人；不选则发给全体导师与主管。<br>
-  · 企业微信扫码登录：在服务器配置 4 个环境变量后自动启用，并在上面为每个人填好 userid 即可绑定。</div>`;
+  · 精准提醒：给导师/主管填好<b>邮箱</b>，再给新人的账号选上<b>直属导师/直属主管</b>后，该新人的登录与问题提醒只发给这两位，不会打扰其他人；未绑定时才发给全体导师与主管。<br>
+  · 邮件订阅随账号保存：后续新增导师/新人，只要建好账号、填邮箱、按角色勾选内容即可，无需再改代码。</div>`;
  if(ONLINE&&WHO)html+=`<div class="row" style="margin-top:12px"><button class="btn gh sm" id="exitBtn">退出登录</button></div>`;
  html+=`</div>`;
- paintModal(html);
+ paintModal(html,true);
  const eb=document.getElementById("exitBtn");if(eb)eb.onclick=logout;
+ const mmsg=m=>{const x=document.getElementById("mgMsg");if(x)x.innerHTML=m;};
+ const mgs=document.getElementById("mgSave");if(mgs)mgs.onclick=async()=>{
+  const hour=Math.max(0,Math.min(23,Math.floor(+document.getElementById("mgHour").value||18)));
+  const fallback=(document.getElementById("mgFallback").value||"").split(/[,，;；\s]+/).filter(Boolean);
+  const bad=fallback.filter(x=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x));
+  if(bad.length){alert("兜底收件人邮箱格式不正确："+bad.join("、"));return;}
+  mgs.disabled=true;
+  const rr=await apiPost("/api/mail_cfg",{reportHour:hour,fallbackTo:fallback});
+  mgs.disabled=false;
+  if(rr.data&&rr.data.ok)mmsg('<span class="tag ok">已保存</span>');else mmsg('<span class="tag no">'+(esc((rr.data&&rr.data.msg)||"保存失败"))+'</span>');
+ };
  const add=document.getElementById("nuAdd");if(add)add.onclick=async()=>{
   const username=document.getElementById("nuUser").value.trim().toLowerCase();
   const name=document.getElementById("nuName").value.trim();
@@ -945,7 +1021,7 @@ async function openAccounts(){
   if(!username||!name){alert("请填写登录名与姓名");return;}
   const rr=await apiPost("/api/users",{username,name,role,password});
   if(rr.data&&rr.data.ok){
-   alert("已添加："+name+"（"+ROLE_NAME[role]+"）。\n他打开网址，用账号「"+username+"」和自己的密码登录即可。");
+   alert("已添加："+name+"（"+ROLE_NAME[role]+"）。\n打开账号卡片即可填邮箱、选导师/主管并调整邮件订阅。");
    openAccounts();
   } else alert((rr.data&&rr.data.msg)||"添加失败");
  };
@@ -959,15 +1035,45 @@ async function openAccounts(){
   const rr=await apiPost("/api/user_update",{id:u.id,active:!u.active});
   if(rr.data&&rr.data.ok)openAccounts();else alert((rr.data&&rr.data.msg)||"操作失败");
  });
+ document.querySelectorAll("[data-umscope]").forEach(sel=>sel.onchange=()=>{
+  const box=document.querySelector(`[data-umnbbox="${sel.dataset.umscope}"]`);if(box)box.classList.toggle("hide",sel.value==="all");
+ });
  document.querySelectorAll("[data-usave]").forEach(b=>b.onclick=async()=>{
-  const id=b.dataset.usave;
-  const em=document.querySelector(`[data-uemail="${id}"]`);
-  const wc=document.querySelector(`[data-uwecom="${id}"]`);
+  const id=b.dataset.usave,u=users.find(x=>x.id===id);if(!u)return;
+  const em=(document.querySelector(`[data-uemail="${id}"]`).value||"").trim();
+  const wc=(document.querySelector(`[data-uwecom="${id}"]`).value||"").trim();
   const mt=document.querySelector(`[data-umentor="${id}"]`);
   const ld=document.querySelector(`[data-ulead="${id}"]`);
-  const rr=await apiPost("/api/user_update",{id,email:(em.value||"").trim(),wecom:(wc.value||"").trim(),
-    mentorId:(mt.value||""),leadId:(ld.value||"")});
-  if(rr.data&&rr.data.ok)alert("已保存：邮箱/导师/主管绑定成功");else alert((rr.data&&rr.data.msg)||"保存失败");
+  const ms=readSub(u);
+  if(em&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){alert("邮箱格式不正确");return;}
+  if(em&&!ms.types.length){alert("该账号已填邮箱，但没有勾选任何接收内容。\n请至少勾选一项；如不想接收邮件，请清空邮箱。");return;}
+  if(ms.scope==="pick"&&!ms.ids.length){alert("关注新人选择了“仅指定新人”，请至少勾选一位新人。");return;}
+  b.disabled=true;
+  const rr=await apiPost("/api/user_update",{id,email:em,wecom:wc,
+    mentorId:(mt.value||""),leadId:(ld.value||""),
+    mailTypes:ms.types,mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
+  b.disabled=false;
+  if(rr.data&&rr.data.ok){alert("已保存：账号信息与邮件订阅均已生效。");openAccounts();}
+  else alert((rr.data&&rr.data.msg)||"保存失败");
+ });
+ document.querySelectorAll("[data-umsend]").forEach(b=>b.onclick=async()=>{
+  const id=b.dataset.umsend,u=users.find(x=>x.id===id);if(!u)return;
+  const em=(document.querySelector(`[data-uemail="${id}"]`).value||"").trim();
+  const day=(document.querySelector(`[data-umday="${id}"]`)||{}).value||"";
+  const ms=readSub(u);
+  if(!em||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){alert("请先填写有效的接收邮箱");return;}
+  if(!ms.types.length){alert("请先勾选要发送的邮件内容");return;}
+  if(ms.scope==="pick"&&!ms.ids.length){alert("关注新人选择了“仅指定新人”，请至少勾选一位新人。");return;}
+  if(!confirm("按当前订阅手动发送？\n账号："+u.name+"\n邮箱："+em+"\n日期："+day+"\n内容："+ms.types.map(mtypeName).join("、")+"\n关注："+(ms.scope==="all"?"全部新人":(ms.scope==="self"?"仅本人":ms.ids.length+" 位新人"))))return;
+  b.disabled=true;
+  const sv=await apiPost("/api/user_update",{id,email:em,mailTypes:ms.types,mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
+  if(!sv.data||!sv.data.ok){b.disabled=false;alert((sv.data&&sv.data.msg)||"订阅保存失败，未发送");return;}
+  const rr=await apiPost("/api/mail_send_user",{userId:id,day,types:ms.types});
+  b.disabled=false;
+  if(rr.data&&rr.data.ok){
+   const rows=(rr.data.results||[]).map(x=>`${x.typeName||x.type}：${x.ok?("已发送 → "+(x.to||[]).join("、")):(x.skipped?"跳过（"+x.msg+"）":"失败 "+x.msg)}`).join("\n");
+   alert("发送结果：\n"+(rows||"已处理"));
+  }else alert((rr.data&&rr.data.msg)||"发送失败：没有可发送内容或邮件通道未配置");
  });
  document.querySelectorAll("[data-uinvite]").forEach(b=>b.onclick=async()=>{
   if(!confirm("生成新的邀请链接？本人需重新设一次密码（原密码立即失效）。"))return;
@@ -1636,21 +1742,43 @@ function prevDayKey(k){const d=new Date(k+"T00:00:00Z");d.setUTCDate(d.getUTCDat
 function ciDayCount(who){const m={};ciList(who).forEach(x=>{const k=dayKeyOf(x.createdAt);m[k]=(m[k]||0)+1;});return m;}
 function ciStreak(who){const m=ciDayCount(who);let k=dayKeyOf(Date.now());if(!m[k])k=prevDayKey(k);let n=0;
  while(m[k]){n++;k=prevDayKey(k);}return n;}
-function ciDone(who){const s=new Set();ciList(who).forEach(x=>{if(x.nodeId)s.add(x.nodeId);});return s;}
+function ciDone(who){const q=qzDoneNodes(who),c=new Set();ciList(who).forEach(x=>{if(x.nodeId)c.add(x.nodeId);});
+ return new Set([...c].filter(n=>q.has(n)));}
 function ciRec(who,nid){return ciList(who).filter(x=>x.nodeId===nid).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))[0];}
+/* ---------- 小测记录（与学/用打卡分离） ----------
+   每答一题实时写入 quiz 列表；退出重进继续本次作答（已答题目锁定，不能改）。
+   五题答完自动交卷，立即成为该次成绩并留痕。
+   想重做必须点「重新做题」→ 旧记录完整保留；正确率只认每节点首次交卷，重做不刷分。 */
+function qzList(who){return ((DOC.quiz&&DOC.quiz.list)||[]).filter(x=>!x.del&&(!who||x.who===who));}
+function qzAttempts(who,nid){return qzList(who).filter(x=>x.nodeId===nid)
+ .sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));}
+function qzLatestDone(who,nid){return qzAttempts(who,nid).filter(x=>x.status==="done"&&(+x.total)>0)[0]||null;}
+function qzFirstDone(who,nid){const l=qzAttempts(who,nid).filter(x=>x.status==="done"&&(+x.total)>0);
+ return l.length?l.reduce((a,x)=>{const ta=x.finishedAt||x.updatedAt||x.createdAt||0,pa=a.finishedAt||a.updatedAt||a.createdAt||0;return ta<pa?x:a;}):null;}
+function qzOpenAttempt(who,nid){return qzAttempts(who,nid).filter(x=>x.status==="doing")[0]||null;}
+function qzAttemptById(id){return qzList().filter(x=>x.id===id)[0]||null;}
+/* 每节点首次交卷成绩（官方口径）；旧版打卡记录里的小测成绩作为兼容兜底 */
+function qzFirstPerNode(who){
+ const out={};
+ const put=(x)=>{if(!x||!x.nodeId||!(+x.total>0))return;
+  const p=out[x.nodeId];const tx=x.finishedAt||x.updatedAt||x.createdAt||0,tp=p?(p.finishedAt||p.updatedAt||p.createdAt||0):0;
+  if(!p||tx<tp)out[x.nodeId]=x;};
+ qzList(who).filter(x=>x.status==="done").forEach(put);
+ ciList(who).filter(x=>(+x.total)>0).forEach(put);
+ return out;
+}
+function qzDoneNodes(who){const s=new Set();Object.keys(qzFirstPerNode(who)).forEach(k=>s.add(k));
+ qzList(who).filter(x=>x.status==="done"&&x.nodeId).forEach(x=>s.add(x.nodeId));return s;}
+function qzRetryCount(who,nid){return Math.max(0,qzAttempts(who,nid).filter(x=>x.status==="done").length-1);}
 function ciStats(who){
  const done=ciDone(who),lv={};LEVELS.forEach(L=>lv[L.k]=0);
  NODES.forEach(n=>{if(done.has(n.id))lv[n.level]=(lv[n.level]||0)+1;});
- const recs=ciList(who),gd=recs.filter(x=>x.total);
- /* 与日报/周报一致：同一节点只取最新一次作答，避免重做反复累计把正确率算偏 */
- const latest={};
- gd.forEach(x=>{const k=x.nodeId||x.id;const t=+x.updatedAt||+x.createdAt||0;
-   const p=latest[k];if(!p||t>=(+p.updatedAt||+p.createdAt||0))latest[k]=x;});
- const lq=Object.values(latest);
+ const recs=ciList(who);
+ const lq=Object.values(qzFirstPerNode(who));
  const acc=lq.length?Math.round(lq.reduce((a,x)=>a+(x.correct||0),0)/lq.reduce((a,x)=>a+x.total,0)*100):null;
  const mon=[...done].filter(nid=>{const r=ciRec(who,nid);if(!r)return false;
    return dayKeyOf(r.createdAt).slice(0,7)===dayKeyOf(Date.now()).slice(0,7);}).length;
- return {done,lv,acc,mon,streak:ciStreak(who),recs};
+ return {done,lv,acc,mon,streak:ciStreak(who),recs,lq};
 }
 /* 产品地图 · 按实时日历把控（提前完成不拦，晚于目标时间就预警） */
 function fmtDay(t){const d=new Date(t);return (d.getMonth()+1)+" 月 "+d.getDate()+" 日";}
@@ -1681,7 +1809,7 @@ function mapAlerts(){
   if(p.remain>0&&(p.over||p.risk))out.push({who:id,lv:L,p});}));
  return out;
 }
-let CI_LV=null,CI_NODE=null,CI_ANS=[];
+let CI_LV=null,CI_NODE=null,CI_ANS=[],CI_ATT=null,CI_NEW=false;
 /* 学习行为监测：新人点开节点里的「展开自查要点」（含答案）逐次留痕，随 DOC 自动同步到看板/产品地图。 */
 let RV_GUARD={};
 function rvList(who){const L=(DOC.reveals&&DOC.reveals.list)||[];return L.filter(x=>!x.del&&(!who||x.who===who));}
@@ -1758,11 +1886,17 @@ function renderCheckins(ids){
   <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：先看引导去 IMA 学原文 → 做 5 题小测（自动判卷）→ 写笔记打卡</b>":"　<b>点节点可查看引导与小测、以及两人的完成情况</b>"}</div>
   <div class="nodegrid">${nodes.map(nd=>{
    if(mine){
-     const r=ciRec(WHO,nd.id);
-     return `<button class="nodechip ${r?"ok":""}" data-cinode="${nd.id}">
+     const r=ciRec(WHO,nd.id),f=qzFirstDone(WHO,nd.id),op=qzOpenAttempt(WHO,nd.id),done=st.done.has(nd.id);
+     const tries=f?qzAttempts(WHO,nd.id).filter(x=>x.status==="done").length:0;
+     let ns;
+     if(done)ns="✔ 已完成 · "+fmt(r.createdAt)+(tries>1?" · 重做 "+tries+" 次":"");
+     else if(op)ns=`小测进行中 ${(op.answers||[]).filter(a=>a>=0).length}/${nd.qz.length} · 已实时记录`;
+     else if(f)ns=`小测已完成 ${f.correct||0}/${f.total||0} · 待写学/用笔记打卡`;
+     else ns=lp.over?`<span style="color:var(--red-d)">已超期 ${-lp.left} 天 · 待补</span>`:"待学习 · "+nd.qz.length+" 题小测";
+     return `<button class="nodechip ${done?"ok":f?"part":""}" data-cinode="${nd.id}">
        <span class="nt">${esc(nd.t)}</span>
-       <span class="ns">${r?"✔ 已完成 · "+fmt(r.createdAt):(lp.over?`<span style="color:var(--red-d)">已超期 ${-lp.left} 天 · 待补</span>`:"待学习 · "+nd.qz.length+" 题小测")}</span></button>`;}
-   const by=ids.filter(id=>ciRec(id,nd.id)).map(id=>WHO_NAME[id].slice(0,1)).join(" ");
+       <span class="ns">${ns}</span></button>`;}
+   const by=ids.filter(id=>ciDone(id).has(nd.id)).map(id=>WHO_NAME[id].slice(0,1)).join(" ");
    return `<button class="nodechip ${by?"ok":""}" data-cinode="${nd.id}">
      <span class="nt">${esc(nd.t)}</span>
      <span class="ns">${by?"已完成："+by:"两人均未完成"}</span></button>`;}).join("")}
@@ -1770,7 +1904,7 @@ function renderCheckins(ids){
 
  if(isStaff()){
   const wc={};
-  (DOC.checkins.list||[]).filter(x=>!x.del).forEach(x=>(x.wrong||[]).forEach(w=>{wc[w]=(wc[w]||0)+1;}));
+  ids.forEach(id=>Object.values(qzFirstPerNode(id)).forEach(x=>(x.wrong||[]).forEach(w=>{wc[w]=(wc[w]||0)+1;})));
   const arr=Object.entries(wc).sort((a,b)=>b[1]-a[1]).slice(0,8);
   html+=`<div class="muted" style="margin-top:16px;font-weight:700;color:var(--ink2)">错题分布（按错人次排序 · 双周抽检重点）</div>`
    +(arr.length?arr.map(([q,n],i)=>`<div class="item" style="margin-top:8px"><div class="hd">
@@ -1781,16 +1915,17 @@ function renderCheckins(ids){
  const recent=(DOC.checkins.list||[]).filter(x=>!x.del&&ids.indexOf(x.who)>=0)
    .sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,10);
  html+=`<div class="muted" style="margin-top:16px;font-weight:700;color:var(--ink2)">最近打卡</div>`
-  +(recent.length?recent.map(x=>`<div class="item" style="margin-top:8px">
+  +(recent.length?recent.map(x=>{const f=qzFirstPerNode(x.who)[x.nodeId];return `<div class="item" style="margin-top:8px">
      <div class="hd"><span class="tt">${esc((NODE_BY_ID[x.nodeId]||{}).t||x.module||"—")}</span>
        <span><span class="tag gy">${(LEVELS.find(lv=>lv.k===x.level)||{}).n||""}</span>
-       <span class="tag ${x.total&&x.correct===x.total?"ok":"wt"}">小测 ${x.correct||0}/${x.total||0}</span>
+       <span class="tag ${f&&f.correct===f.total?"ok":"wt"}">小测 ${f?`${f.correct||0}/${f.total||0}`:"—"}</span>
        <span class="meta">${WHO_NAME[x.who]||""} · ${fmt(x.createdAt)}</span></span></div>
      <div class="body"><b>学：</b>${esc(x.note||"—")}　<b>用：</b>${esc(x.use||"—")}</div>
-     ${(x.wrong||[]).length?`<div class="meta" style="color:var(--red-d)">答错：${esc((x.wrong||[]).join("；"))}</div>`:""}
-   </div>`).join(""):`<div class="empty">还没有打卡记录 —— 点上面的节点开始</div>`);
+     ${f&&(f.wrong||[]).length?`<div class="meta" style="color:var(--red-d)">首次答错：${esc((f.wrong||[]).join("；"))}</div>`:""}
+   </div>`;}).join(""):`<div class="empty">还没有打卡记录 —— 点上面的节点开始</div>`);
 
- html+=`<div class="muted" style="margin-top:12px">打卡规则：每个节点 5 题随堂小测（系统自动判卷、立即出对错与解析，答完 5 题即可打卡）→ 写 ≤50 字笔记 + 1 个场景联想；
+ html+=`<div class="muted" style="margin-top:12px">打卡规则：每个节点 5 题随堂小测（每选一题<b>立即记录并判卷</b>，5 题答完自动交卷）与学/用笔记打卡<b>分开记录</b>；
+   两者都完成才算节点通关。想重做小测请点节点里的「重新做题」，旧记录完整留痕；正确率只认每节点首次交卷，重做不刷分。
    自由节奏、按期完成整级即可；连续天数与整级解锁徽章自动统计，同时实时同步到「④ 把控」看板与导师端。</div>`;
 
  document.getElementById("ciForm").innerHTML=html;
@@ -1798,18 +1933,65 @@ function renderCheckins(ids){
  document.querySelectorAll("[data-cinode]").forEach(b=>b.onclick=()=>openCiNode(b.dataset.cinode));
 }
 
+function qzPad(arr,n){
+ const a=(Array.isArray(arr)?arr:[]).slice(0,n).map(v=>(+v>=0?+v:-1));
+ while(a.length<n)a.push(-1);
+ return a;
+}
+/* 答题即落库：第一题选中就生成一条 quiz 记录；之后每题实时更新答案；
+   5 题答完自动交卷（status=done），全程与小测记录绑定，退出重进答案已锁定不能改。 */
+function qzSaveAnswer(nd,qi,oi){
+ DOC.quiz=DOC.quiz||{t:0,list:[]};DOC.quiz.list=DOC.quiz.list||[];
+ const now=nowT();
+ let x=CI_ATT?(DOC.quiz.list.find(y=>y.id===CI_ATT&&!y.del)||null):null;
+ if(!x){
+  x={id:uid(),who:WHO,nodeId:nd.id,level:nd.level,module:nd.t,line:nd.levelName,
+     answers:nd.qz.map(()=>-1),status:"doing",startedAt:now,createdAt:now,updatedAt:now};
+  DOC.quiz.list.push(x);CI_ATT=x.id;
+ }
+ if(x.status!=="doing")return x;                    /* 已交卷 = 锁定，必须点「重新做题」 */
+ const ans=qzPad(x.answers,nd.qz.length);
+ if(ans[qi]>=0)return x;
+ ans[qi]=oi;
+ x.answers=ans;
+ /* 记录每一题的作答时间：日报/周报按「当天是否有业务动作」统计时更准确 */
+ x.answerAt=Array.isArray(x.answerAt)?x.answerAt:[];
+ x.answerAt[qi]=now;
+ x.updatedAt=now;
+ if(ans.every(v=>v>=0)){
+  const wrong=nd.qz.map((q,i)=>ans[i]!==q.a?q.q:null).filter(Boolean);
+  x.status="done";x.correct=nd.qz.length-wrong.length;x.total=nd.qz.length;x.wrong=wrong;x.finishedAt=now;
+ }
+ DOC.quiz.t=now;
+ touch();push();                                    /* 立即同步，不等退出打卡 */
+ return x;
+}
 function openCiNode(nid){
  const nd=NODE_BY_ID[nid];if(!nd)return;
- CI_NODE=nid;CI_ANS=nd.qz.map(()=>-1);
+ CI_NODE=nid;CI_ATT=null;CI_NEW=false;
+ if(isNew()){
+  const op=qzOpenAttempt(WHO,nid);
+  if(op){CI_ATT=op.id;CI_ANS=qzPad(op.answers,nd.qz.length);}
+  else{
+   const last=qzLatestDone(WHO,nid);
+   if(last){CI_ATT=last.id;CI_ANS=qzPad(last.answers,nd.qz.length);}
+   else{CI_ANS=nd.qz.map(()=>-1);CI_NEW=true;}
+  }
+ }else CI_ANS=nd.qz.map(()=>-1);
  paintCiNode();
  document.getElementById("ovl").classList.remove("hide");
 }
 function paintCiNode(){
  const nd=NODE_BY_ID[CI_NODE];if(!nd)return;
  const mine=isNew();
- const rec=mine?ciRec(WHO,CI_NODE):null;
- const answered=CI_ANS.every(a=>a>=0);
+ const att=CI_ATT?qzAttemptById(CI_ATT):null;
+ const editable=mine&&(CI_NEW||!!(att&&att.status==="doing"));
+ const doneAtt=mine?qzLatestDone(WHO,CI_NODE):null;
+ const firstAtt=mine?qzFirstDone(WHO,CI_NODE):null;
+ const answered=CI_ANS.length===nd.qz.length&&CI_ANS.every(a=>a>=0);
  const score=nd.qz.filter((q,i)=>CI_ANS[i]===q.a).length;
+ const tries=mine?qzAttempts(WHO,CI_NODE).filter(x=>x.status==="done").length:0;
+ const rec=mine?ciRec(WHO,CI_NODE):null;
  let H=`<div class="mh"><b>${esc(nd.t)}</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
   <div class="pad">
    <div class="row" style="gap:8px;flex-wrap:wrap"><span class="tag gy">${esc(nd.levelName)} · ${esc(nd.period)}</span>
@@ -1824,17 +2006,18 @@ function paintCiNode(){
      <ul class="ptlist" style="margin-top:7px">${(nd.pt||[]).map(p=>`<li>${esc(p)}</li>`).join("")}</ul>
    </details>
    <div class="muted" style="margin-top:5px;font-size:12px">${mine?`自查要点展开：<b id="ciRvCnt">${rvNodeCount(WHO,nd.id)}</b> 次 · 每次展开都会记录，供导师了解学习习惯`
-     :`该节点自查要点展开：${NEWCOMERS.map(id=>`${WHO_NAME[id]} <b>${rvNodeCount(id,nd.id)}</b> 次`).join("　·　")}`}</div>
+     :`该节点自查要点展开：${NEWCOMERS.map(id=>WHO_NAME[id]+" <b>"+rvNodeCount(id,nd.id)+"</b> 次").join("　·　")}`}</div>
    <div class="muted" style="margin-top:13px;font-weight:700;color:var(--ink2)">② 测 · 随堂小测（${nd.qz.length} 题 · 系统自动判卷，选完立即出对错与解析）</div>
+   ${mine?('<div class="muted" style="margin-top:3px;font-size:12.2px">'+(editable?(CI_NEW?"新一次作答：每选一题立即记录，5 题答完自动交卷。":"继续本次作答：已答题目已锁定，退出重进仍从本题继续。"):("本次已交卷，答案已锁定。"+(tries>1?"已重做 "+(tries-1)+" 次，":"")+"正确率只认每节点首次交卷，重做不刷分。"))+'</div>'):""}
    ${nd.qz.map((q,qi)=>{
      const a=CI_ANS[qi],revealed=(a>=0)||!mine;
      return `<div class="qz">
      <div class="q">${qi+1}. ${esc(q.q)}</div>
      ${q.o.map((o,oi)=>{
        let cls="";if(revealed){if(oi===q.a)cls="ok";else if(mine&&oi===a)cls="no";}
-       return `<div class="opt ${cls}" data-ciopt="${qi}.${oi}" style="${mine&&!revealed?'cursor:pointer':'cursor:default'}"><b>${"ABCD".charAt(oi)}</b><span>${esc(o)}</span></div>`;}).join("")}
+       return `<div class="opt ${cls}" data-ciopt="${qi}.${oi}" style="${editable&&a<0?'cursor:pointer':'cursor:default'}"><b>${"ABCD".charAt(oi)}</b><span>${esc(o)}</span></div>`;}).join("")}
      ${revealed?`<div class="muted" style="margin-top:3px;color:${(!mine||a===q.a)?"var(--green-d)":"var(--red-d)"}">
-        ${mine?(a===q.a?"✔ 答对了":"✘ 答错了")+"　：":"正确答案见上。："}解析：${esc(q.w)}</div>`:`<div class="muted" style="margin-top:3px">（选一个选项，系统立即判卷；每题的第一次作答即为本次成绩）</div>`}
+        ${mine?(a===q.a?"✔ 答对了":"✘ 答错了")+"　：":"正确答案见上。："}解析：${esc(q.w)}</div>`:`<div class="muted" style="margin-top:3px">（选一个选项，系统立即判卷并实时记录；每题的第一次作答即为本次成绩）</div>`}
     </div>`;}).join("")}`;
 
  if(mine){
@@ -1842,16 +2025,20 @@ function paintCiNode(){
    <input id="ciNote" maxlength="50" value="${esc(rec?(rec.note||""):"")}" placeholder="这个节点，我一句话记住什么？" style="width:100%;margin-top:7px;border:1px solid var(--line);border-radius:9px;padding:9px;font-size:12.7px">
    <input id="ciUse" value="${esc(rec?(rec.use||""):"")}" placeholder="我打算把它用在哪个客户 / 项目场景？" style="width:100%;margin-top:7px;border:1px solid var(--line);border-radius:9px;padding:9px;font-size:12.7px">
    <div class="row" style="margin-top:12px;align-items:center;flex-wrap:wrap">
-     <button class="btn" id="ciSubmit" ${answered?"":'disabled style="opacity:.5;cursor:not-allowed"'}>${rec?"更新打卡":"完成打卡"}</button>
-     <span class="muted">${answered?`本次小测 <b>${score}/${nd.qz.length}</b> · 可以打卡`:`还有 ${CI_ANS.filter(a=>a<0).length} 题未作答`}</span></div>
-   ${rec?`<div class="muted" style="margin-top:9px">上次完成 ${fmt(rec.createdAt)} · 小测 ${rec.correct||0}/${rec.total||0}${(rec.wrong||[]).length?` · 答错 ${(rec.wrong||[]).length} 题`:""}</div>`:""}`;
+     <button class="btn" id="ciSubmit" ${doneAtt?"":'disabled style="opacity:.5;cursor:not-allowed"'}>${rec?"更新打卡":"完成打卡"}</button>
+     ${editable&&!answered?`<span class="muted">还有 ${CI_ANS.filter(a=>a<0).length} 题未作答</span>`:
+       (doneAtt?`<span class="muted">小测已交卷 <b>${doneAtt.correct||0}/${doneAtt.total||0}</b> · 填写笔记后可打卡</span>`:`<span class="muted">请先完成 5 题小测，答完自动交卷</span>`)}
+     ${(!editable&&(doneAtt||firstAtt))?`<button class="btn gh" id="ciRetry">重新做题</button>`:""}
+   </div>
+   ${firstAtt?`<div class="muted" style="margin-top:9px">官方成绩（每节点首次交卷）：<b>${firstAtt.correct||0}/${firstAtt.total||0}</b>${(firstAtt.wrong||[]).length?` · 首次答错 ${(firstAtt.wrong||[]).length} 题`:""}${tries>1?`　·　后续重做 ${tries-1} 次已单独留痕`:""}</div>`:""}
+   ${rec?`<div class="muted" style="margin-top:9px">上次打卡 ${fmt(rec.createdAt)}</div>`:""}`;
  }else{
   H+=`<div class="muted" style="margin-top:14px;font-weight:700;color:var(--ink2)">③ 用 · 两人的打卡记录</div>`
-   +NEWCOMERS.map(id=>{const r=ciRec(id,CI_NODE);
+   +NEWCOMERS.map(id=>{const r=ciRec(id,CI_NODE),f=qzFirstPerNode(id)[CI_NODE];
      return `<div class="item" style="margin-top:8px"><div class="hd"><span class="tt">${WHO_NAME[id]}</span>
        <span class="tag ${r?"ok":"gy"}">${r?"已完成 · "+fmt(r.createdAt):"未完成"}</span></div>
-       ${r?`<div class="body"><b>学：</b>${esc(r.note||"—")}　<b>用：</b>${esc(r.use||"—")}</div>
-         <div class="meta">小测 ${r.correct||0}/${r.total||0}${(r.wrong||[]).length?` · 首次答错 ${(r.wrong||[]).length} 题`:""}</div>`:""}</div>`;}).join("");
+       ${r?`<div class="body"><b>学：</b>${esc(r.note||"—")}　<b>用：</b>${esc(r.use||"—")}</div>`:""}
+       <div class="meta">小测 ${f?`${f.correct||0}/${f.total||0}`:"—"}${f&&(f.wrong||[]).length?` · 首次答错 ${f.wrong.length} 题`:""}</div></div>`;}).join("");
  }
 
  document.getElementById("ovlBox").innerHTML=H+`</div>`;
@@ -1863,18 +2050,27 @@ function paintCiNode(){
    copyText(b.dataset.copyima).then(()=>{b.textContent="已复制，去 IMA 粘贴搜索";setTimeout(()=>b.textContent=o,1500);})
     .catch(()=>{b.textContent="请手动复制";setTimeout(()=>b.textContent=o,1600);});});
  if(!mine)return;
- document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=()=>{
+ if(editable)document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=()=>{
   const [qi,oi]=el.dataset.ciopt.split(".").map(Number);
   if(CI_ANS[qi]>=0)return;
-  CI_ANS[qi]=oi;paintCiNode();});
+  const x=qzSaveAnswer(nd,qi,oi);
+  if(!x)return;
+  CI_NEW=false;CI_ATT=x.id;CI_ANS=qzPad(x.answers,nd.qz.length);
+  paintCiNode();});
+ const rb=document.getElementById("ciRetry");
+ if(rb)rb.onclick=()=>{
+  if(!confirm("重新做本节点小测？\n· 本次会另存一条新的作答记录；\n· 正确率只认每节点首次交卷，重做不会抬高成绩；\n· 旧记录完整保留，导师端可见。"))return;
+  CI_NEW=true;CI_ATT=null;CI_ANS=nd.qz.map(()=>-1);paintCiNode();};
  const sb=document.getElementById("ciSubmit");
  if(sb)sb.onclick=()=>{
   const note=document.getElementById("ciNote").value.trim().slice(0,50);
   const use=document.getElementById("ciUse").value.trim();
   if(!note){document.getElementById("ciNote").focus();return;}
-  const wrong=nd.qz.map((q,i)=>CI_ANS[i]!==q.a?q.q:null).filter(Boolean);
+  const f=qzFirstDone(WHO,nd.id);
+  if(!f){alert("请先完成本节点 5 题小测，答完自动交卷后再填写学/用笔记打卡。");return;}
+  /* 学/用笔记打卡与小测记录分离：这里只保存笔记，不再把成绩写进打卡记录 */
   const patch={who:WHO,nodeId:nd.id,level:nd.level,module:nd.t,line:nd.levelName,
-   note,use,correct:nd.qz.length-wrong.length,total:nd.qz.length,wrong,updatedAt:nowT()};
+   note,use,quizId:f.id,updatedAt:nowT()};
   DOC.checkins.list=DOC.checkins.list||[];
   const ex=ciRec(WHO,nd.id);
   if(ex){Object.assign(ex,patch);ex.createdAt=ex.createdAt||nowT();}
@@ -2018,10 +2214,10 @@ async function renderMailBox(){
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>${s.replyTo?`　·　回复地址：<b>${esc(s.replyTo)}</b>`:""}　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">自动触发：登录提醒（30 分钟内不重复）· 问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 日报 · 周一发上周周报 · 个人汇总 · 风险预警（收件人与内容由「邮件中心」规则决定）</div>
+     <div class="muted" style="margin-top:3px">自动触发：登录提醒（30 分钟内不重复）· 问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 日报 · 周一发上周周报 · 个人汇总 · 风险预警（收件人与内容统一在「账号管理」里按人配置）</div>
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px">
-     ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件中心</button>':""}
+     ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件设置（账号管理）</button>':""}
      <button class="btn sm gh" id="mailTestBtn">发测试邮件</button>
      <button class="btn sm" id="mailRepBtn">立即发今日日报</button></div>
  </div>
@@ -2033,10 +2229,11 @@ async function renderMailBox(){
  const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{rb.disabled=true;msg("汇总并发送中…");
   try{const r=await apiPost("/api/mail_report",{});msg(r.ok?`<span class="tag ok">今日日报已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);}
   catch(e){msg('<span class="tag no">请求失败</span>');}rb.disabled=false;};
- const cb=document.getElementById("mailCfgBtn");if(cb)cb.onclick=()=>openMailCenter();
+ const cb=document.getElementById("mailCfgBtn");if(cb)cb.onclick=()=>openAccounts();
 }
 
-/* 超级管理员：邮件中心（邮箱 / 订阅内容 / 关注新人 / 预览与手动发送） */
+/* [已下线] 旧版邮件中心面板：所有邮件配置已统一收敛到「账号管理」，本函数不再有任何入口。
+   仅保留代码防止浏览器缓存旧页面时调用报错，后续版本删除。 */
 async function openMailCenter(){
  let d={};
  try{d=(await apiGet("/api/mail_cfg")).data||{};}catch(e){}
