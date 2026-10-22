@@ -13,6 +13,7 @@
      SMTP_PASS      QQ 邮箱「授权码」（不是登录密码）
    ===================================================================== */
 const nodemailer = require("nodemailer");
+const zlib = require("zlib");
 
 const SMTP_HOST = process.env.SMTP_HOST || "smtp.qq.com";
 const SMTP_PORT = +(process.env.SMTP_PORT || 465);
@@ -22,7 +23,12 @@ const SMTP_PASS = process.env.SMTP_PASS || "";
 function loadMail() {
   const b64 = process.env.PAYLOAD_B64 || "";
   if (!b64 || b64 === "null") throw new Error("没有收到邮件载荷（payload 为空）");
-  return JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+  const buf = Buffer.from(b64, "base64");
+  /* 服务端合并多类内容后邮件变大，会先 gzip 再 base64（payload.gz）。
+     这里用 gzip 魔数 1F 8B 自动识别，新旧载荷都能正确解析。 */
+  const gz = buf.length > 1 && buf[0] === 0x1f && buf[1] === 0x8b;
+  const json = (gz ? zlib.gunzipSync(buf) : buf).toString("utf8");
+  return JSON.parse(json);
 }
 
 async function main() {
