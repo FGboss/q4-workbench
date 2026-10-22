@@ -345,7 +345,7 @@ const MAIL_TYPES = [
 const MAIL_TYPE_NAME = MAIL_TYPES.reduce((o, x) => (o[x[0]] = x[1], o), {});
 const validEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 function defaultMailCfg() {
-  return { daily: true, weekly: true, personalSelf: true, reportHour: REPORT_HOUR, fallbackTo: MAIL_TO, rules: [] };
+  return { daily: true, weekly: true, personal: true, personalSelf: true, risk: true, reportHour: REPORT_HOUR, fallbackTo: MAIL_TO, rules: [] };
 }
 function normMailRule(r) {
   const x = r || {};
@@ -364,7 +364,9 @@ function getMailCfg() {
   return {
     daily: raw.daily !== false,
     weekly: raw.weekly !== false,
+    personal: raw.personal !== false,
     personalSelf: raw.personalSelf !== false,
+    risk: raw.risk !== false,
     reportHour: Number.isFinite(h) ? Math.max(0, Math.min(23, Math.floor(h))) : d.reportHour,
     fallbackTo: fb.length ? fb : d.fallbackTo,
     rules: (Array.isArray(raw.rules) ? raw.rules : []).map(normMailRule).filter(r => validEmail(r.email)),
@@ -375,7 +377,9 @@ function saveMailCfg(patch) {
   const next = {
     daily: patch.daily !== undefined ? !!patch.daily : cur.daily,
     weekly: patch.weekly !== undefined ? !!patch.weekly : cur.weekly,
+    personal: patch.personal !== undefined ? !!patch.personal : cur.personal,
     personalSelf: patch.personalSelf !== undefined ? !!patch.personalSelf : cur.personalSelf,
+    risk: patch.risk !== undefined ? !!patch.risk : cur.risk,
     reportHour: patch.reportHour !== undefined ? Math.max(0, Math.min(23, Math.floor(Number(patch.reportHour) || 0))) : cur.reportHour,
     fallbackTo: Array.isArray(patch.fallbackTo) ? patch.fallbackTo.map(x => String(x).trim()).filter(validEmail) : cur.fallbackTo,
     rules: Array.isArray(patch.rules) ? patch.rules.map(normMailRule).filter(r => validEmail(r.email)) : cur.rules,
@@ -723,8 +727,13 @@ function userStats(u, days, S) {
   actsOn.forEach(a => { kinds[a.kind] = (kinds[a.kind] || 0) + 1; });
 
   let loginAt = 0;
-  (MS.logins || []).forEach(l => { if (l.id === u.id && inRange(l.at)) loginAt = Math.max(loginAt, toMs(l.at)); });
-  if (u.lastLoginAt && inRange(u.lastLoginAt)) loginAt = Math.max(loginAt, toMs(u.lastLoginAt));
+  const loginDays = new Set();
+  (MS.logins || []).forEach(l => {
+    if (l.id !== u.id || !inRange(l.at)) return;
+    loginAt = Math.max(loginAt, toMs(l.at));
+    loginDays.add(bjKey(l.at));
+  });
+  if (u.lastLoginAt && inRange(u.lastLoginAt)) { loginAt = Math.max(loginAt, toMs(u.lastLoginAt)); loginDays.add(bjKey(u.lastLoginAt)); }
 
   const inviteDay = u.createdAt ? bjKey(u.createdAt) : "";
   return {
@@ -742,16 +751,16 @@ function userStats(u, days, S) {
     reveals: reveals.length, revealsIn: reveals.filter(x => inRange(x.at || x.updatedAt)).length,
     deposits: deposits.length, depositsIn: deposits.filter(x => inRange(x.createdAt)).length,
     activityAt, lastKind: lastAct ? lastAct.kind : "", lastActiveAt: lastAt, lastActiveDay: lastAt ? bjKey(lastAt) : "",
-    loginAt, activeAt: Math.max(activityAt, loginAt), activeDays: new Set(actsOn.map(a => bjKey(a.at))).size, kinds,
+    loginAt, activeAt: Math.max(activityAt, loginAt), activeDays: new Set([...actsOn.map(a => bjKey(a.at)), ...loginDays]).size, kinds,
     paces: mapPaceServer(u.id, snap.checkins, end),
     goal: goalProgress(u.id, snap.checkins),
   };
 }
 /* 风险预警：所有报表共用；文案带日期/数字，避免“看起来像模板” */
-function riskItems(s) {
+function riskItems(s, spanLabel) {
   const out = [];
   const nm = s.u.name;
-  const span = s.days.length > 1 ? "本周" : "今日";
+  const span = spanLabel || (s.days.length > 1 ? "本周" : "今日");
   /* 账号当天新建的，当天还没动作属于正常，不算风险（避免刚拉进群就被报「未登录」） */
   if (!s.activeAt && s.joinsDays >= 1) {
     out.push(`${nm} ${span}无任何活动（未登录、未打卡、未做题、未更新记录）`);
@@ -794,7 +803,7 @@ function buildDailyReport(day, opts) {
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${live}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesDone}<span style="color:#7C8896">（今日 +${c.nodesNew}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.cumAcc != null ? c.cumAcc + "%" : "—"}${c.quizTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.quizCorrect}/${c.quizTotal}</span>` : `<span style="color:#7C8896"> · 今日无小测</span>`}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.cumAcc != null ? `累计 ${c.cumAcc}%` : "—"}${c.quizTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.quizAcc}%（${c.quizCorrect}/${c.quizTotal}）</span>` : `<span style="color:#7C8896"> · 今日无小测</span>`}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">载体 ${c.cars}${c.carsIn ? ` · 今日动 ${c.carsIn}` : ""}</div></td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.opsNew ? `<span style="color:#A9691B"> · 今日 +${c.opsNew}</span>` : ""}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
@@ -864,7 +873,7 @@ function buildWeeklyReport(day, opts) {
   const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
   const card = newbies.map(u => userStats(u, range.days, S));
   const needAtt = [];
-  card.forEach(c => riskItems(c).forEach(t => needAtt.push(t)));
+  card.forEach(c => riskItems(c, "上周").forEach(t => needAtt.push(t)));
   const rows = card.map(c => `<tr>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.activeDays} 天<div style="font-size:11.5px;color:#7C8896">${h(kindText(c.kinds)) || "—"}</div></td>
@@ -878,15 +887,15 @@ function buildWeeklyReport(day, opts) {
   const html = `<p style="margin:0 0 10px"><b>${range.start} ～ ${range.end}</b> 新人培养周报</p>
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
-         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">本周通关</th>
-         <th style="padding:8px 9px">本周小测</th><th style="padding:8px 9px">近 14 天演练</th><th style="padding:8px 9px">载体</th>
+         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">上周通关</th>
+         <th style="padding:8px 9px">上周小测</th><th style="padding:8px 9px">演练（截至上周日）</th><th style="padding:8px 9px">载体</th>
          <th style="padding:8px 9px">新问题</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
      ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8C2B1F">需要关注（${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
-      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">本周各项无明显阻塞。</p>`}
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=本周有登录或任何业务动作的天数；通关=本周首次通关节点；小测正确率按每节点本周最后一次作答汇总。</p>`;
+       <b style="color:#8C2B1F">需要关注（按上周数据，${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
+      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">上周各项无明显阻塞。</p>`}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=上周一至周日有登录或任何业务动作的天数；通关=上周首次通关节点；小测正确率按每节点上周最后一次作答汇总。</p>`;
   return { range, card, needAtt, html };
 }
 
@@ -1050,11 +1059,11 @@ async function runScheduled(day) {
       out.daily = await sendDailyAll(theDay);
       if (out.daily.ok) markMailSent("lastDaily", theDay);
     }
-    if (cfg.daily && st.lastPersonal !== theDay) {
+    if (cfg.personal && st.lastPersonal !== theDay) {
       out.personal = await sendPersonalAll(theDay);
       if (out.personal.ok) markMailSent("lastPersonal", theDay);
     }
-    if (cfg.daily && st.lastRisk !== theDay) {
+    if (cfg.risk && st.lastRisk !== theDay) {
       out.risk = await sendRiskAll(theDay);
       if (out.risk.ok) markMailSent("lastRisk", theDay);
     }
@@ -1113,7 +1122,8 @@ function startDailyReportTimer() {
     if (hour < cfg.reportHour) return;
     const key = bjKey(Date.now());
     const st = mailState();
-    if (!(cfg.daily && st.lastDaily !== key) && !(wd === 1 && cfg.weekly && st.lastWeekly !== key)) return;
+    if (!(cfg.daily && st.lastDaily !== key) && !(cfg.personal && st.lastPersonal !== key) &&
+      !(cfg.risk && st.lastRisk !== key) && !(wd === 1 && cfg.weekly && st.lastWeekly !== key)) return;
     if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;
     MS.lastTry = Date.now(); saveMS();
     runScheduled(key).then(r => {
@@ -1561,7 +1571,8 @@ app.get("/api/daily_ping", async (req, res) => {
   if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
   if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00" });
   const st = mailState();
-  const pending = (cfg.daily && st.lastDaily !== key) || (wd === 1 && cfg.weekly && st.lastWeekly !== key);
+  const pending = (cfg.daily && st.lastDaily !== key) || (cfg.personal && st.lastPersonal !== key) ||
+    (cfg.risk && st.lastRisk !== key) || (wd === 1 && cfg.weekly && st.lastWeekly !== key);
   if (!pending) return res.json({ ok: true, skipped: "今日已发" });
   const r = await runScheduled(key);
   MS.lastReport = key; saveMS();

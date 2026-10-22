@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Q4 新人培养 · 协作工作台 v6.7 · 在线版</title>
+<title>Q4 新人培养 · 协作工作台 v6.8 · 在线版</title>
 <style>
   :root{
     --blue:#17558F; --blue-d:#0B3A63; --blue-l:#EDF4FA; --blue-m:#3B7CB0;
@@ -320,7 +320,7 @@
   <div class="wrap">
     <div class="hrow">
       <div>
-        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v6.7</span></div>
+        <div class="ttl">Q4 新人培养 · 协作工作台 <span style="font-size:12px;font-weight:400;opacity:.75;border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:2px 9px;vertical-align:3px">v6.8</span></div>
         <div class="sub">嗨动视觉 · 深圳服务点 · 2026 Q4（10–12 月）· 第二阶段</div>
         <div class="oneline">规划 → 协助 → 帮扶 → 把控 → 复盘　·　标准当尺、脑图当节奏、日常工作当载体</div>
       </div>
@@ -478,7 +478,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v6.7 · 2026.10.21　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件提醒与日报（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v6.8 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件提醒与日报（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -1630,21 +1630,26 @@ function renderCoach(){
 
 /* ---------- ③ 帮扶 · 学习打卡（学—测—用）体 ：热力图 + 连续天数 + 三级进度 ---------- */
 function ciList(who){return (DOC.checkins.list||[]).filter(x=>!x.del&&x.who===who);}
-function dayKeyOf(t){const d=new Date(t);const p=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());}
+/* 日期口径与邮件/日报一致：一律按北京时间（UTC+8）自然日 */
+function dayKeyOf(t){const n=(t instanceof Date?t.getTime():(typeof t==="number"?t:Date.parse(t)))||Date.now();const d=new Date(n+8*3600000);const p=x=>String(x).padStart(2,"0");return d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate());}
+function prevDayKey(k){const d=new Date(k+"T00:00:00Z");d.setUTCDate(d.getUTCDate()-1);return d.toISOString().slice(0,10);}
 function ciDayCount(who){const m={};ciList(who).forEach(x=>{const k=dayKeyOf(x.createdAt);m[k]=(m[k]||0)+1;});return m;}
-function ciStreak(who){const m=ciDayCount(who);let n=0;const cur=new Date();
- if(!m[dayKeyOf(cur)])cur.setDate(cur.getDate()-1);
- while(m[dayKeyOf(cur)]){n++;cur.setDate(cur.getDate()-1);}return n;}
+function ciStreak(who){const m=ciDayCount(who);let k=dayKeyOf(Date.now());if(!m[k])k=prevDayKey(k);let n=0;
+ while(m[k]){n++;k=prevDayKey(k);}return n;}
 function ciDone(who){const s=new Set();ciList(who).forEach(x=>{if(x.nodeId)s.add(x.nodeId);});return s;}
 function ciRec(who,nid){return ciList(who).filter(x=>x.nodeId===nid).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))[0];}
 function ciStats(who){
  const done=ciDone(who),lv={};LEVELS.forEach(L=>lv[L.k]=0);
  NODES.forEach(n=>{if(done.has(n.id))lv[n.level]=(lv[n.level]||0)+1;});
  const recs=ciList(who),gd=recs.filter(x=>x.total);
- const acc=gd.length?Math.round(gd.reduce((a,x)=>a+(x.correct||0),0)/gd.reduce((a,x)=>a+x.total,0)*100):null;
- const cur=new Date();
- const mon=[...done].filter(nid=>{const r=ciRec(who,nid);if(!r)return false;const d=new Date(r.createdAt);
-   return d.getMonth()===cur.getMonth()&&d.getFullYear()===cur.getFullYear();}).length;
+ /* 与日报/周报一致：同一节点只取最新一次作答，避免重做反复累计把正确率算偏 */
+ const latest={};
+ gd.forEach(x=>{const k=x.nodeId||x.id;const t=+x.updatedAt||+x.createdAt||0;
+   const p=latest[k];if(!p||t>=(+p.updatedAt||+p.createdAt||0))latest[k]=x;});
+ const lq=Object.values(latest);
+ const acc=lq.length?Math.round(lq.reduce((a,x)=>a+(x.correct||0),0)/lq.reduce((a,x)=>a+x.total,0)*100):null;
+ const mon=[...done].filter(nid=>{const r=ciRec(who,nid);if(!r)return false;
+   return dayKeyOf(r.createdAt).slice(0,7)===dayKeyOf(Date.now()).slice(0,7);}).length;
  return {done,lv,acc,mon,streak:ciStreak(who),recs};
 }
 /* 产品地图 · 按实时日历把控（提前完成不拦，晚于目标时间就预警） */
@@ -2054,7 +2059,9 @@ async function openMailCenter(){
   return {
    daily:document.getElementById("mcDaily").checked,
    weekly:document.getElementById("mcWeekly").checked,
+   personal:document.getElementById("mcPersonal").checked,
    personalSelf:document.getElementById("mcSelf").checked,
+   risk:document.getElementById("mcRisk").checked,
    reportHour:+document.getElementById("mcHour").value,
    fallbackTo:document.getElementById("mcFallback").value.split(/[,，;；\s]+/).filter(Boolean),
    rules };
@@ -2097,6 +2104,8 @@ async function openMailCenter(){
      <div class="row" style="flex-wrap:wrap">
       <label class="mcbx"><input type="checkbox" id="mcDaily" ${state.daily!==false?"checked":""}> 工作日整体日报</label>
       <label class="mcbx"><input type="checkbox" id="mcWeekly" ${state.weekly!==false?"checked":""}> 周一发送上周周报</label>
+      <label class="mcbx"><input type="checkbox" id="mcPersonal" ${state.personal!==false?"checked":""}> 个人汇总</label>
+      <label class="mcbx"><input type="checkbox" id="mcRisk" ${state.risk!==false?"checked":""}> 风险预警</label>
       <label class="mcbx"><input type="checkbox" id="mcSelf" ${state.personalSelf!==false?"checked":""}> 新人本人也收个人汇总</label>
       <span class="mcbx">发送时间 <input type="number" id="mcHour" min="0" max="23" value="${Number(state.reportHour)||18}" style="width:64px;border:1px solid var(--line);border-radius:7px;padding:4px 6px"> 点（北京时间）</span>
      </div>
