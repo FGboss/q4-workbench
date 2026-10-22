@@ -694,10 +694,11 @@ function mapPaceServer(who, checks, quiz, today) {
 /* =====================================================================
    统一统计引擎：日报 / 周报 / 个人汇总 / 风险预警 全部走同一套口径
    口径（北京时间自然日）：
-     · 活跃：当日有登录，或有任何业务动作（打卡/小测/载体/行动/问题/回复/演练/自查/沉淀）
+     · 活跃：当日有登录，或有任何业务动作（打卡/小测/客户档案/任务/进展/问题/回复/演练/自查/沉淀）
      · 通关节点：以 createdAt 为准（首次完成该节点）
      · 小测正确率：同一节点取当天最后一次作答（重做不重复累计）；累计正确率按每节点最新一次
-     · 演练：近 14 天；超期：载体行动 due < 统计截止日
+     · 演练：近 14 天；超期：任务/项目 due < 统计截止日且未闭环
+     · 客户档案本身不闭环；闭环只统计档案下经导师确认验收的任务/项目
    ===================================================================== */
 function buildActivityMap(D) {
   const map = {};
@@ -716,10 +717,14 @@ function buildActivityMap(D) {
   /* 只在「确实是后续更新」时记一次更新动作，避免创建当刻 createdAt=updatedAt 被算成两次动作 */
   const upd = (who, c, u, kind) => { if (toMs(u) > toMs(c)) add(who, u, kind); };
   ((D.carriers || {}).list || []).filter(x => !x.del).forEach(c => {
-    add(c.who, c.createdAt, "新增载体"); upd(c.who, c.createdAt, c.updatedAt, "更新载体");
+    add(c.who, c.createdAt, "新增客户档案"); upd(c.who, c.createdAt, c.updatedAt, "更新档案/任务");
     (c.actions || []).filter(v => !v.del).forEach(v => {
-      add(c.who, v.createdAt, "新增行动"); upd(c.who, v.createdAt, v.updatedAt, "更新行动");
-      (v.log || []).forEach(l => add(l.by || c.who, l.at, "行动记录"));
+      add(c.who, v.createdAt, v.kind === "项目" ? "新增项目" : "新增任务");
+      upd(c.who, v.createdAt, v.updatedAt, "更新任务/项目");
+      /* 删除的进展不计入活跃；导师确认验收单独作为一次关键动作留痕 */
+      (v.log || []).filter(l => !l.del).forEach(l => add(l.by || c.who, l.at, "进展记录"));
+      if (v.cfm === 1 && v.cfmAt) add(v.cfmBy || c.who, v.cfmAt,
+        (v.kind === "项目" ? "项目" : "任务") + "验收闭环");
     });
   });
   ((D.issues || {}).list || []).filter(x => !x.del).forEach(x => {
@@ -826,8 +831,11 @@ function userStats(u, days, S) {
   const cars = snap.carriers.filter(x => x.who === u.id);
   const acts = [];
   cars.forEach(c => (c.actions || []).filter(v => !v.del).forEach(v => acts.push(v)));
-  const open = acts.filter(v => (v.st || 0) !== 2);
-  const overdue = open.filter(v => { const due = String(v.due || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(due) && due < end; });
+  /* 客户档案不闭环：open/overdue 均只针对档案下的任务/项目 */
+  const doneActs = acts.filter(v => (v.st || 0) === 2);
+  const openActs = acts.filter(v => (v.st || 0) !== 2);
+  const reviewActs = openActs.filter(v => v.cfm === 3);
+  const overdue = openActs.filter(v => { const due = String(v.due || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(due) && due < end; });
 
   const ops = snap.issues.filter(x => x.who === u.id && (x.status || 0) < 2);
   const opsNew = snap.issues.filter(x => x.who === u.id && inRange(x.createdAt));
@@ -873,7 +881,11 @@ function userStats(u, days, S) {
     quizNodes: officialToday.length, quizCorrect: q.correct, quizTotal: q.total, quizAcc: q.acc,
     cumCorrect: cum.correct, cumTotal: cum.total, cumAcc: cum.acc,
     cars: cars.length, carsIn: cars.filter(x => inRange(x.createdAt || x.updatedAt)).length,
-    open: open.length, overdue: overdue.length,
+    tasks: acts.length, tasksDone: doneActs.length, tasksReview: reviewActs.length,
+    tasksTodo: openActs.filter(v => (v.st || 0) === 0).length,
+    tasksDoing: openActs.filter(v => (v.st || 0) === 1).length,
+    tasksIn: acts.filter(v => inRange(v.createdAt)).length,
+    open: openActs.length, overdue: overdue.length, review: reviewActs.length, done: doneActs.length,
     ops: ops.length, opsNew: opsNew.length,
     dr14: drills14.length, drTotal: drills.length, avg, hs, hn,
     reveals: reveals.length, revealsIn: reveals.filter(x => inRange(x.at || x.updatedAt)).length,
@@ -895,7 +907,8 @@ function riskItems(s, spanLabel) {
   } else if (s.loginAt && !s.activityAt) {
     out.push(`${nm} ${span}仅登录，未打卡/做题/更新记录`);
   }
-  if (s.overdue) out.push(`${nm} 有 ${s.overdue} 条行动已超期`);
+  if (s.overdue) out.push(`${nm} 有 ${s.overdue} 项任务/项目已超期`);
+  if (s.review >= 3) out.push(`${nm} 有 ${s.review} 项任务/项目待导师验收（验收积压会影响新人推进节奏）`);
   if (s.ops >= 3) out.push(`${nm} 未闭环问题 ${s.ops} 条`);
   if (s.quizTotal > 0 && s.quizAcc != null && s.quizAcc < 70) out.push(`${nm} ${span}小测正确率 ${s.quizAcc}%（${s.quizCorrect}/${s.quizTotal}，建议回顾 IMA 原文）`);
   if (s.dr14 === 0 && s.joinsDays >= 14) out.push(`${nm} 近 14 天无演讲演练 / 客户现场培训记录`);
@@ -932,7 +945,7 @@ function buildDailyReport(day, opts) {
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${live}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesDone}<span style="color:#7C8896">（今日 +${c.nodesNew}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.cumAcc != null ? `累计 ${c.cumAcc}%` : "—"}${c.quizTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.quizAcc}%（${c.quizCorrect}/${c.quizTotal}）</span>` : `<span style="color:#7C8896"> · 今日无小测</span>`}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">载体 ${c.cars}${c.carsIn ? ` · 今日动 ${c.carsIn}` : ""}</div></td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open} 项未闭环${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}${c.review ? `<span style="color:#A9691B"> · 待验收 ${c.review}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">档案 ${c.cars}${c.carsIn ? ` · 今日动 ${c.carsIn}` : ""} · 已闭环 ${c.done}</div></td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.opsNew ? `<span style="color:#A9691B"> · 今日 +${c.opsNew}</span>` : ""}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
       <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span><div style="font-size:11.5px;color:#7C8896">自查 ${c.reveals}${c.revealsIn ? ` · 今日 ${c.revealsIn}` : ""}</div><div style="font-size:11.5px;color:#7C8896">沉淀 ${c.deposits}${c.depositsIn ? ` · 今日 ${c.depositsIn}` : ""}</div></td>
@@ -949,11 +962,16 @@ function buildDailyReport(day, opts) {
   S.carriers.filter(c => scopeIds.has(c.who)).forEach(c => {
     const acts = (c.actions || []).filter(v => !v.del);
     const open = acts.filter(v => (v.st || 0) !== 2);
-    carrierLines.push({ who: c.who, name: c.name, partner: c.partner || "—", next: c.nextDate || "—", open: open.length, total: acts.length });
+    carrierLines.push({
+      who: c.who, name: c.name, partner: c.partner || "—",
+      next: c.nextAt || c.nextDate || "—",
+      open: open.length, review: open.filter(v => v.cfm === 3).length,
+      done: acts.filter(v => (v.st || 0) === 2).length, total: acts.length
+    });
   });
   const carrierHtml = carrierLines.length
-    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">载体</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">待办/总</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td></tr>`).join("")}</table>`
-    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无载体记录</p>";
+    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">客户档案</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">任务/项目（未闭环/总）</th><th style="padding:6px 8px">待验收</th><th style="padding:6px 8px">已闭环</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.review}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.done}</td></tr>`).join("")}</table>`
+    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无客户档案</p>";
 
   /* 高频错题只统计每节点首次交卷的错题；重做仅作练习，不重复累计 */
   const wrongCount = {};
@@ -970,7 +988,7 @@ function buildDailyReport(day, opts) {
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
          <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日活跃（最近动作）</th>
-         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率（累计/今日）</th><th style="padding:8px 9px">载体待办</th>
+         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率（累计/今日）</th><th style="padding:8px 9px">任务/项目</th>
          <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">近 14 天演练</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
@@ -980,10 +998,10 @@ function buildDailyReport(day, opts) {
      <div style="margin-top:14px;background:#F0F7FF;border:1px solid #CFE2F3;border-radius:8px;padding:10px 12px">
        <b style="color:#1A5276">今日学习记录（通关节点 / 重做小测）</b>${todayDetailHtml || "<p style=\"color:#7C8896;font-size:12.5px;margin:6px 0 0\">今日暂无打卡或小测</p>"}</div>
      <div style="margin-top:14px;background:#F5FFF0;border:1px solid #CFEBD0;border-radius:8px;padding:10px 12px">
-       <b style="color:#3C6B1A">客户载体跟进</b>${carrierHtml}</div>
+       <b style="color:#3C6B1A">客户档案与任务推进</b>${carrierHtml}</div>
      <div style="margin-top:14px;background:#FFFBF0;border:1px solid #F3E7C9;border-radius:8px;padding:10px 12px">
        <b style="color:#8A6D1A">高频错题（本次统计范围）</b>${wrongHtml}</div>
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/载体/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率按每节点「首次交卷」成绩计算（重做记录完整留痕、单独展示，但不会抬高正确率）；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/客户档案/任务/进展/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率按每节点「首次交卷」成绩计算（重做记录完整留痕、单独展示，但不会抬高正确率）；客户档案只做登记、不闭环，待办/超期/已闭环均只统计档案下的任务/项目（已闭环=导师确认验收通过，历史已完成记录兼容）；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
   return { today, card, needAtt, html };
 }
 
@@ -1012,7 +1030,7 @@ function buildWeeklyReport(day, opts) {
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesNew} 个<div style="font-size:11.5px;color:#7C8896">累计 ${c.nodesDone}${c.goal ? ` · 目标 ${c.goal.pct}%` : ""}</div></td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.quizCorrect}/${c.quizTotal}${c.quizAcc != null ? ` · ${c.quizAcc}%` : ""}</td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.carsIn} 个<div style="font-size:11.5px;color:#7C8896">待办 ${c.open}${c.overdue ? ` · 超期 ${c.overdue}` : ""}</div></td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">档案 ${c.cars} 份（本周动 ${c.carsIn}）<div style="font-size:11.5px;color:#7C8896">新增任务 ${c.tasksIn} · 未闭环 ${c.open} · 待验收 ${c.review} · 已闭环 ${c.done}${c.overdue ? ` · 超期 ${c.overdue}` : ""}</div></td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.opsNew} 条<div style="font-size:11.5px;color:#7C8896">未闭环 ${c.ops}</div></td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs} 分/${c.hn} 条<div style="font-size:11.5px;color:#7C8896">自查 ${c.revealsIn} · 沉淀 ${c.depositsIn}</div></td>
    </tr>`).join("");
@@ -1020,14 +1038,14 @@ function buildWeeklyReport(day, opts) {
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
          <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">上周通关</th>
-         <th style="padding:8px 9px">上周小测</th><th style="padding:8px 9px">演练（截至上周日）</th><th style="padding:8px 9px">载体</th>
+         <th style="padding:8px 9px">上周小测</th><th style="padding:8px 9px">演练（截至上周日）</th><th style="padding:8px 9px">客户档案 / 任务</th>
          <th style="padding:8px 9px">新问题</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
      ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
        <b style="color:#8C2B1F">需要关注（按上周数据，${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
       : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">上周各项无明显阻塞。</p>`}
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=上周一至周日有登录或任何业务动作的天数；通关=上周首次通关节点；小测正确率按每节点上周最后一次作答汇总。</p>`;
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=上周一至周日有登录或任何业务动作的天数；通关=上周首次通关节点；小测正确率按每节点上周最后一次作答汇总；客户档案只登记不闭环，闭环=上周经导师确认验收的任务/项目。</p>`;
   return { range, card, needAtt, html };
 }
 
@@ -1043,7 +1061,7 @@ function personalSection(c) {
       <tr><td style="padding:5px 8px;color:#5C6772">今日学习</td><td style="padding:5px 8px">通关 ${c.nodesNew} 个节点；小测 ${c.quizTotal > 0 ? c.quizCorrect + "/" + c.quizTotal + "（" + c.quizAcc + "%）" : "无"}</td></tr>
       <tr><td style="padding:5px 8px;color:#5C6772">累计进度</td><td style="padding:5px 8px">地图 ${c.nodesDone}/${g ? g.total : "—"} 个节点${g ? `（目标达成 ${g.pct}%）` : ""}；累计正确率 ${c.cumAcc != null ? c.cumAcc + "%" : "—"}</td></tr>
       <tr><td style="padding:5px 8px;color:#5C6772">业务动作</td><td style="padding:5px 8px">${h(kinds)}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">待办 / 问题</td><td style="padding:5px 8px">载体待办 ${c.open}${c.overdue ? `（超期 ${c.overdue}）` : ""}；未闭环问题 ${c.ops}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">待办 / 问题</td><td style="padding:5px 8px">任务/项目：未闭环 ${c.open}（待验收 ${c.review} · 超期 ${c.overdue}）· 已闭环 ${c.done}；未闭环问题 ${c.ops}</td></tr>
       <tr><td style="padding:5px 8px;color:#5C6772">演练 / 互助</td><td style="padding:5px 8px">近 14 天演练 ${c.dr14} 次${c.avg != null ? `（均分 ${c.avg}）` : ""}；互助 ${c.hs} 分/${c.hn} 条</td></tr>
     </table>
     ${risks.length ? `<div style="margin-top:8px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:8px 10px;color:#8C2B1F;font-size:12.5px"><b>风险提示</b><ul style="margin:4px 0 0 18px;padding:0">${risks.map(x => `<li>${h(x)}</li>`).join("")}</ul></div>`

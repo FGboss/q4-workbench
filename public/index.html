@@ -70,6 +70,9 @@
   .btn.danger{background:#fff;color:var(--red);border-color:#E7C7C2}
   .btn.danger:hover{background:var(--red-l)}
   .btn:disabled{opacity:.45;cursor:not-allowed}
+  .mini{background:none;border:none;color:var(--ink3);font-size:12.2px;padding:0 3px;cursor:pointer}
+  .mini:hover{color:var(--red)}
+  .mini.b{color:var(--blue-d)}
 
   .tag{font-size:12.6px;padding:3px 11px;border-radius:999px;display:inline-block;background:var(--grey-l);color:var(--grey)}
   .tag.pri{background:var(--blue);color:#fff}.tag.base{background:var(--amber-l);color:var(--amber-d)}
@@ -366,7 +369,7 @@
       <div class="grid2" id="planPeople"></div>
     </section>
     <section>
-      <h2>真实载体与客户维护行动计划 <span class="h">客户/项目随销售档位产生 → 新人登记；每个载体挂「下一步动作」</span></h2>
+      <h2>客户档案与任务 / 项目 <span class="h">客户档案只做登记、不闭环；档案下加任务 / 项目，新人更新进展 → 导师确认验收 → 任务闭环</span></h2>
       <div class="card pad">
         <div class="row" id="carrierTop" style="margin-bottom:11px"></div>
         <div class="grid2" id="carrierBlk"></div>
@@ -442,7 +445,7 @@
       <div class="card pad" id="mailBox"></div>
     </section>
     <section>
-      <h2>每人进度 <span class="h">真实载体 / 问题 / 演练 / 产品地图</span></h2>
+      <h2>每人进度 <span class="h">客户档案 / 任务闭环 / 问题 / 演练 / 产品地图</span></h2>
       <div class="grid2" id="mPeople"></div>
     </section>
     <section>
@@ -478,7 +481,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v7.0 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 载体行动闭环 + 双维评分 + 互助支招 + 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v7.0 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -1138,7 +1141,8 @@ function renderPassport(){
  const lvPct=cur?Math.min(100,Math.round(lvDone/cur.goal*100)):100;
  const myDrills=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===who);
  const best=myDrills.some(x=>x.score==="优秀");
- const closedC=(DOC.carriers.list||[]).filter(x=>!x.del&&x.who===who&&x.st===2).length;
+ const closedT=(DOC.carriers.list||[]).filter(x=>!x.del&&x.who===who)
+  .reduce((n,x)=>n+(x.actions||[]).filter(v=>!v.del&&(v.st||0)===2).length,0);
  const perfect=ciList(who).some(x=>x.total&&x.correct===x.total);
  const badges=[
   {ic:"🚀",n:"启航",on:st.streak>=7,note:"连续 7 天打卡"},
@@ -1147,7 +1151,7 @@ function renderPassport(){
   {ic:"🥇",n:"黄金领航",on:(st.lv.gold||0)>=12,note:"完成黄金整级 12 节点"},
   {ic:"💯",n:"准星",on:perfect,note:"任一次小测 3 题全对"},
   {ic:"🎤",n:"开讲",on:best,note:"演练评分「优秀」"},
-  {ic:"🔒",n:"闭环",on:closedC>=1,note:"跟完 1 个真实客户/项目"}];
+  {ic:"🔒",n:"闭环",on:closedT>=1,note:"跟完 1 个任务/项目并经导师验收"}];
  const onCnt=badges.filter(b=>b.on).length;
  const fb=[];
  (DOC.issues.list||[]).filter(x=>!x.del&&x.who===who).forEach(x=>{(x.replies||[]).forEach(r=>{if(r.by!==who)fb.push({t:r.at||0,who:r.by,tx:r.text});});});
@@ -1225,139 +1229,249 @@ function renderPlan(){
 
  renderCarriers();
 }
-/* 客户维护行动 · 闭环派生判断（旧数据缺字段也能正常显示，不需要迁移） */
+/* 客户档案 → 任务/项目 → 进展
+   档案本身不设闭环；闭环只发生在任务/项目上：
+   新人更新进展 → 提交验收(cfm=3) → 导师确认(st=2,cfm=1) → 闭环；导师退回(cfm=2) 后继续完善
+   旧数据：已完成(st=2) 但没有 cfm 的，按「历史已闭环」兼容展示，不要求重新验收 */
 function actEnd(v){if(!v||!v.due)return 0;const d=new Date(v.due);if(isNaN(d.getTime()))return 0;d.setHours(23,59,59,999);return d.getTime();}
 function actOver(v){return (v.st||0)!==2&&actEnd(v)>0&&nowT()>actEnd(v);}
 function actStale(v){return (v.st||0)!==2&&(nowT()-(v.updatedAt||0))>7*86400000;}
 function actAge(v){const e=actEnd(v);if(!e||(v.st||0)===2)return 0;return Math.max(0,Math.ceil((nowT()-e)/86400000));}
 function carHealth(x){const a=(x.actions||[]).filter(v=>!v.del);
  return {open:a.filter(v=>(v.st||0)!==2).length,done:a.filter(v=>(v.st||0)===2).length,
+  review:a.filter(v=>(v.st||0)!==2&&v.cfm===3).length,
   over:a.filter(actOver).length,stale:a.filter(actStale).length};}
+function actState(v){if((v.st||0)===2)return "done";if(v.cfm===3)return "review";if((v.st||0)===1)return "doing";return "todo";}
+function actTag(v){
+ const s=actState(v);
+ return s==="done"?'<span class="tag ok">已闭环</span>':s==="review"?'<span class="tag wt">待验收</span>':s==="doing"?'<span class="tag pri">进行中</span>':'<span class="tag gy">待办</span>';
+}
+function actCfmTag(v){
+ if((v.st||0)===2&&v.cfm===1)return '<span class="tag ok">导师已确认</span>';
+ if(v.cfm===3)return '<span class="tag wt">等待导师验收</span>';
+ if(v.cfm===2)return '<span class="tag no">退回待改</span>';
+ return "";
+}
+/* 交互状态放在内存里：选择目标/负责人触发重绘时，展开状态与已填内容都不会丢 */
+const CUI={open:{},draft:{},block:{},editCar:{},editTask:{},editLog:{}};
+/* 权限：档案本人/导师主管可维护；任务本人、档案本人、导师主管可更新；进展仅作者本人或导师主管可改/删 */
+const canCar=x=>mineP(x.who)||isStaff();
+const canAct=(x,v)=>mineP(x.who)||isStaff()||v.owner===WHO;
+const canLog=y=>isStaff()||y.by===WHO;
+
 
 function renderCarriers(){
  const C=DOC.carriers||{list:[]};const list=(C.list||[]).filter(x=>!x.del);const ids=ppl();
  const g=id=>list.filter(x=>x.who===id);
- const sum=id=>g(id).reduce((a,x)=>{const h=carHealth(x);a.over+=h.over;a.stale+=h.stale;a.open+=h.open;a.done+=h.done;return a;},{over:0,stale:0,open:0,done:0});
- document.getElementById("carrierTop").innerHTML=ids.map(id=>{const a=g(id),h=sum(id);
-  return `<span class="chip b"><b>${WHO_NAME[id]}</b> 登记 ${a.length} · 闭环 ${a.filter(x=>x.st===2).length} · 未完成 ${h.open}${h.over?` · <span style="color:var(--red-d)">超期 ${h.over}</span>`:""}${h.stale?` · <span style="color:var(--amber-d)">停滞 ${h.stale}</span>`:""}</span>`;}).join("")
-  +`<span class="chip b">机会驱动 · 载体由各自销售档位决定，导师/主管不决策</span>`;
+ const sum=id=>g(id).reduce((a,x)=>{const h=carHealth(x);a.files++;a.total+=h.open+h.done;a.open+=h.open;a.done+=h.done;a.review+=h.review;a.over+=h.over;a.stale+=h.stale;return a;},{files:0,total:0,open:0,done:0,review:0,over:0,stale:0});
+ document.getElementById("carrierTop").innerHTML=ids.map(id=>{const h=sum(id);
+  return `<span class="chip b"><b>${WHO_NAME[id]}</b> 客户档案 ${h.files} · 任务 ${h.total}（未闭环 ${h.open}${h.review?` · <span style="color:var(--amber-d)">待验收 ${h.review}</span>`:""} · 已闭环 ${h.done}）${h.over?` · <span style="color:var(--red-d)">超期 ${h.over}</span>`:""}${h.stale?` · <span style="color:var(--amber-d)">停滞 ${h.stale}</span>`:""}</span>`;}).join("")
+  +`<span class="chip b">档案不设闭环；闭环只发生在档案下的任务 / 项目上</span>`;
  document.getElementById("carrierBlk").innerHTML=ids.map(id=>{
-  const a=g(id),mine=mineP(id);
-  const rows=a.length?a.map(x=>{const acts=(x.actions||[]).filter(v=>!v.del),h=carHealth(x);
+  const a=g(id),mine=mineP(id),allow=mine||isStaff();
+  const rows=a.length?a.map(x=>{const acts=(x.actions||[]).filter(v=>!v.del),h=carHealth(x),ed=CUI.editCar[x.id];
    return `<div class="item">
     <div class="hd"><span class="tt">${esc(x.name)}</span>
       <span class="chips">${h.over?`<span class="tag no">超期 ${h.over}</span>`:""}${h.stale?`<span class="tag wt">停滞 ${h.stale}</span>`:""}
-      ${mine?`<button class="btn sm danger" data-cdel="${x.id}">×</button>`:""}</span></div>
-    ${(x.src||x.partner||x.nextAt)?`<div class="meta">${x.src?`来源/档位：${esc(x.src)}`:""}${x.partner?`　·　销售搭档：${esc(x.partner)}`:""}${x.nextAt?`　·　下次跟进：${esc(x.nextAt)}`:""}</div>`:""}
-    <div class="chips" style="margin-top:6px">
-      <button class="chip k${x.st||0}" data-cst="${x.id}">${["待承接","跟进中","已闭环"][x.st||0]}</button>
-      ${x.note?`<span class="muted">${esc(x.note)}</span>`:""}</div>
-    <div class="muted" style="margin-top:9px;font-weight:700;color:var(--ink2)">客户维护行动计划（${acts.filter(v=>(v.st||0)!==2).length} 项未完成 · 已完成 ${acts.filter(v=>(v.st||0)===2).length}）</div>
+      ${canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:""}</span></div>
+    ${(x.src||x.partner||x.nextAt||x.nextDate)?`<div class="meta">${x.src?`来源/档位：${esc(x.src)}`:""}${x.partner?`　·　销售搭档：${esc(x.partner)}`:""}${(x.nextAt||x.nextDate)?`　·　下次跟进：${esc(x.nextAt||x.nextDate)}`:`　·　<span style="color:var(--red-d)">未设下次跟进</span>`}</div>`:`<div class="meta">未填来源 / 搭档 / 下次跟进</div>`}
+    ${x.note?`<div class="muted" style="margin-top:4px">${esc(x.note)}</div>`:""}
+    ${ed?`<div class="form" style="margin-top:9px;grid-template-columns:1fr 1fr;background:#F7F9FB;border:1px solid var(--line);border-radius:11px;padding:11px 12px">
+      <input data-cef="${x.id}.name" value="${esc(ed.name||"")}" placeholder="客户 / 项目名称（必填）" style="grid-column:1/-1">
+      <input data-cef="${x.id}.src" value="${esc(ed.src||"")}" placeholder="来源 / 销售档位">
+      <input data-cef="${x.id}.partner" value="${esc(ed.partner||"")}" placeholder="销售搭档">
+      <input type="date" data-cef="${x.id}.nextAt" value="${esc(ed.nextAt||"")}" title="下次跟进日">
+      <input data-cef="${x.id}.note" value="${esc(ed.note||"")}" placeholder="备注（负责环节 / 关键人）">
+      <div class="row" style="grid-column:1/-1"><button class="btn sm" data-cesave="${x.id}">保存档案</button><button class="btn sm gh" data-cecancel="${x.id}">取消</button></div>
+    </div>`:""}
+    <div class="muted" style="margin-top:11px;font-weight:700;color:var(--ink2)">任务 / 项目（${h.open} 项未闭环${h.review?` · 待验收 ${h.review}`:""} · 已闭环 ${h.done}）</div>
     ${acts.length?acts.map(v=>{
+      const key=x.id+"."+v.id;
       const over=actOver(v),age=actAge(v),lg=(v.log||[]).filter(y=>!y.del);
-      const linked=!!(v.links&&v.links.issueId);
-      return `<div style="margin-top:7px;padding-left:8px;border-left:3px solid ${over?"var(--red)":"var(--line)"}">
-       <div class="row" style="justify-content:space-between;font-size:12.5px;align-items:flex-start">
+      const linked=!!(v.links&&v.links.issueId),st=v.st||0,isOpen=!!CUI.open[key],te=CUI.editTask[key];
+      const canA=canAct(x,v),ops=[];
+      if(st===0&&canA)ops.push(`<button class="btn sm gh" data-astart="${key}">开始处理</button>`);
+      if(st===1&&v.cfm!==3&&canA)ops.push(`<button class="btn sm" data-asub="${key}">提交验收</button>`);
+      if(st===1&&v.cfm===3&&canA)ops.push(`<button class="btn sm gh" data-awd="${key}">撤回提交</button>`);
+      if(isStaff()&&st!==2)ops.push(`<button class="btn sm gh" data-acfm="${key}">${v.cfm===3?"确认验收":"确认闭环"}</button>`);
+      if(isStaff()&&st!==2)ops.push(`<button class="btn sm danger" data-arej="${key}">退回</button>`);
+      if(isStaff()&&st===2)ops.push(`<button class="btn sm gh" data-areopen="${key}">撤销验收</button>`);
+      return `<div style="margin-top:8px;padding:8px 0 8px 9px;border-left:3px solid ${(st===2)?"var(--green)":over?"var(--red)":"var(--line)"}">
+       <div class="row" style="justify-content:space-between;font-size:12.5px;align-items:flex-start;gap:8px">
         <span style="flex:1;min-width:0">
-          <button class="chip k${v.st===2?2:v.st===1?1:0}" data-ast="${x.id}.${v.id}">${["待办","进行中","已完成"][v.st||0]}</button>
+          <span class="tag gy">${esc(v.kind||"任务")}</span>
+          ${actTag(v)}
           ${esc(v.text)}
           ${v.pri?`<span class="tag ${v.pri==="P0"?"no":"gy"}" style="margin-left:4px">${esc(v.pri)}</span>`:""}
           ${v.due?`<span class="muted" style="margin-left:5px">截止 ${esc(v.due)}${over?` · <span style="color:var(--red-d)">超期 ${age} 天</span>`:""}</span>`:`<span class="tag gy" style="margin-left:4px">无截止日</span>`}
           ${v.owner?`<span class="muted" style="margin-left:5px">@${esc(WHO_NAME[v.owner]||v.owner)}</span>`:""}
-          ${v.cfm===1?`<span class="tag ok" style="margin-left:4px">导师已验收</span>`:v.cfm===2?`<span class="tag no" style="margin-left:4px">退回待改</span>`:""}
+          ${actCfmTag(v)}
           ${linked?`<span class="tag wt" style="margin-left:4px">已转求助</span>`:""}
-         </span>
-         ${mine?`<button class="btn sm danger" data-adel="${x.id}.${v.id}">×</button>`:""}
+        </span>
+        <span class="chips" style="flex:none">
+          ${ops.join("")}
+          <button class="btn sm gh" data-aopen="${key}">进展 ${lg.length}${isOpen?" ▴":" ▾"}</button>
+          ${canA?`<button class="btn sm gh" data-atedit="${key}">编辑</button>`:""}
+          ${canA?`<button class="btn sm danger" data-adel="${key}">删除</button>`:""}
+        </span>
        </div>
-       <details style="margin-top:4px">
-        <summary style="cursor:pointer;font-size:12.2px;color:var(--ink3)">进展 ${lg.length} 条${v.goal?` · 目标：${esc(String(v.goal).split("·")[1]||v.goal)}`:""}${v.blocked?` · 有卡点`:""}</summary>
-        ${v.blocked?`<div class="muted" style="margin-top:5px"><b>卡点：</b>${esc(v.blocked)}${v.need?`　<b>需要：</b>${esc(v.need)}`:""}</div>`:""}
-        ${lg.length?lg.map(y=>`<div class="bubble ${mineP(y.by)?"me":"co"}" style="max-width:100%"><div class="who">${esc(WHO_NAME[y.by]||y.by)} · ${fmt(y.at)}</div>${nl(y.text)}</div>`).join(""):`<div class="muted" style="margin-top:5px">还没有进展记录 —— 每次推进都留一句，导师/主管才看得见过程</div>`}
-        <div class="row" style="margin-top:6px">
-          <input data-alogin="${x.id}.${v.id}" placeholder="写一条进展（做了什么 / 结果）" style="flex:1;min-width:140px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
-          <button class="btn sm" data-alogadd="${x.id}.${v.id}">记录进展</button>
-        </div>
-        <div class="row" style="margin-top:6px;align-items:center">
-          <select data-agoal="${x.id}.${v.id}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
-            <option value="">关联目标维度…</option>
-            ${FAE_DEF.map(d=>`<option value="${esc(d.k)}" ${v.goal===d.k?"selected":""}>${esc(d.k.split("·")[1]||d.k)}</option>`).join("")}
-          </select>
-          ${!linked?`<button class="btn sm gh" data-areq="${x.id}.${v.id}">转求助 → ②协助</button>`:""}
-          ${isStaff()?`<select data-aown="${x.id}.${v.id}" title="负责人（支持新人互帮 / 导师介入）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
-            <option value="">负责人：未指派</option>
-            ${ppl().map(p=>`<option value="${p}" ${v.owner===p?"selected":""}>负责人：${esc(WHO_NAME[p]||p)}</option>`).join("")}
-          </select>`:""}
-        </div>
-        <input data-ablock="${x.id}.${v.id}" value="${esc(v.blocked||"")}" placeholder="卡点 / 需要谁支持（可留空，会随「转求助」一起带过去）"
-          style="width:100%;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
-        ${isStaff()&&v.st===2&&v.cfm!==1?`<div class="row" style="margin-top:6px">
-          <button class="btn sm" data-acfm="${x.id}.${v.id}">确认完成</button>
-          <button class="btn sm danger" data-arej="${x.id}.${v.id}">退回</button></div>`:""}
-       </details>
+       ${te?`<div class="row" style="margin-top:6px;gap:7px;background:#F7F9FB;border:1px solid var(--line);border-radius:9px;padding:8px 9px">
+         <select data-tekind="${key}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px"><option value="任务" ${te.kind!=="项目"?"selected":""}>任务</option><option value="项目" ${te.kind==="项目"?"selected":""}>项目</option></select>
+         <input data-tetext="${key}" value="${esc(te.text||"")}" placeholder="做什么 / 做到什么程度" style="flex:1;min-width:160px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+         <input type="date" data-tedue="${key}" value="${esc(te.due||"")}" title="截止日" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+         <button class="btn sm" data-tesave="${key}">保存</button><button class="btn sm gh" data-tecancel="${key}">取消</button></div>`:""}
+       ${isOpen?`<div style="margin-top:7px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:9px 11px">
+         ${v.blocked?`<div class="muted" style="margin-top:2px"><b>卡点：</b>${esc(v.blocked)}${v.need?`　<b>需要：</b>${esc(v.need)}`:""}</div>`:""}
+         ${lg.length?lg.map(y=>{const le=CUI.editLog[y.id];
+           return `<div class="bubble ${mineP(y.by)?"me":"co"}" style="max-width:100%">
+            <div class="who" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+             <span>${esc(WHO_NAME[y.by]||y.by)} · ${fmt(y.at)}${y.editedAt?" · 已编辑":""}</span>
+             ${canLog(y)&&le===undefined?`<span><button class="mini b" data-ledit="${key}.${y.id}">编辑</button><button class="mini" data-ldel="${y.id}">删除</button></span>`:""}
+            </div>
+            ${le!==undefined?`<textarea data-ltext="${y.id}" style="width:100%;min-height:52px;margin-top:5px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px">${esc(le)}</textarea>
+              <div class="row" style="margin-top:5px"><button class="btn sm" data-lsave="${y.id}">保存</button><button class="btn sm gh" data-lcancel="${y.id}">取消</button></div>`:nl(y.text)}
+           </div>`;}).join(""):`<div class="muted" style="margin-top:5px">还没有进展记录 —— 每次推进都留一句，导师/主管才看得见过程</div>`}
+         <div class="row" style="margin-top:7px">
+           <input data-alogin="${key}" value="${esc(CUI.draft[key]||"")}" placeholder="写一条进展（做了什么 / 结果）" style="flex:1;min-width:140px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+           <button class="btn sm" data-alogadd="${key}">记录进展</button>
+         </div>
+         <div class="row" style="margin-top:6px;align-items:center">
+           <select data-agoal="${key}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+             <option value="">关联目标维度…</option>
+             ${FAE_DEF.map(d=>`<option value="${esc(d.k)}" ${v.goal===d.k?"selected":""}>${esc(d.k.split("·")[1]||d.k)}</option>`).join("")}
+           </select>
+           ${!linked?`<button class="btn sm gh" data-areq="${key}">转求助 → ②协助</button>`:""}
+           ${isStaff()?`<select data-aown="${key}" title="负责人（支持新人互帮 / 导师介入）" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+             <option value="">负责人：未指派</option>
+             ${ppl().map(p=>`<option value="${p}" ${v.owner===p?"selected":""}>负责人：${esc(WHO_NAME[p]||p)}</option>`).join("")}
+           </select>`:""}
+         </div>
+         <input data-ablock="${key}" value="${esc(CUI.block[key]!==undefined?CUI.block[key]:(v.blocked||""))}" placeholder="卡点 / 需要谁支持（可留空，会随「转求助」一起带过去）"
+           style="width:100%;margin-top:6px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.3px">
+        </div>`:""}
       </div>`;}).join("")
-     :`<div class="muted" style="margin-top:6px">还没有行动 —— 加一条，写清「做什么 + 什么时候前」</div>`}
-    ${mine||isStaff()?`<div class="form" style="margin-top:9px">
-      <input data-anew="${x.id}" placeholder="下一步动作（如：下周三前出调试方案）">
-      <input type="date" data-adue="${x.id}" title="截止日">
-      ${isStaff()?`<select data-aown0="${x.id}" title="负责人（导师/主管可直接派任务）">
+     :`<div class="muted" style="margin-top:6px">还没有任务 —— 加一条，写清「做什么 + 什么时候前」</div>`}
+    ${allow?`<div class="row" style="margin-top:10px;gap:8px">
+      <select data-akind="${x.id}" title="任务 / 项目" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px"><option value="任务">任务</option><option value="项目">项目</option></select>
+      <input data-anew="${x.id}" placeholder="下一步动作（如：下周三前出调试方案）" style="flex:1;min-width:170px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px">
+      <input type="date" data-adue="${x.id}" title="截止日" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px">
+      ${isStaff()?`<select data-aown0="${x.id}" title="负责人（导师/主管可直接派任务）" style="border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12.8px">
         <option value="">负责人：${esc(WHO_NAME[x.who]||x.who)} 本人</option>
         ${ppl().map(p=>`<option value="${p}">指派给：${esc(WHO_NAME[p]||p)}</option>`).join("")}</select>`:""}
-      <button class="btn" data-aadd="${x.id}">${mine?"＋ 加行动":"＋ 派任务"}</button></div>`:""}
+      <button class="btn sm" data-aadd="${x.id}">${mine?"＋ 加任务":"＋ 派任务"}</button></div>`:""}
    </div>`;}).join("")
-   :`<div class="empty">还没有登记 —— 分到客户/项目后记下来</div>`;
+   :`<div class="empty">还没有客户档案 —— 分到客户/项目后先建一份档案，再往下加任务</div>`;
   return `<div class="card pad">
     <h3>${WHO_NAME[id]} <span class="muted" style="font-weight:400">· 随业务分配</span></h3>
     <div style="margin-top:9px">${rows}</div>
-    ${mine?`<div class="form" style="margin-top:9px">
-      <input id="cn_${id}" placeholder="客户 / 项目名称（必填）">
-      <input id="cs_${id}" placeholder="来源 / 销售档位（选填）">
-      <input id="cp_${id}" placeholder="销售搭档（选填）">
-      <input type="date" id="cd_${id}" title="下次跟进日（选填）">
-      <input id="cm_${id}" placeholder="备注（选填：负责环节 / 关键人）">
-      <button class="btn" data-cadd="${id}">＋ 登记载体</button></div>`:`<div class="muted" style="margin-top:8px">（由 ${WHO_NAME[id]} 本人登记）</div>`}
+    ${allow?`<div class="form" style="margin-top:10px;grid-template-columns:1fr 1fr">
+      <input data-cnew="${id}.name" placeholder="客户 / 项目名称（必填）" style="grid-column:1/-1">
+      <input data-cnew="${id}.src" placeholder="来源 / 销售档位（选填）">
+      <input data-cnew="${id}.partner" placeholder="销售搭档（选填）">
+      <input type="date" data-cnew="${id}.nextAt" title="下次跟进日（选填）">
+      <input data-cnew="${id}.note" placeholder="备注（选填：负责环节 / 关键人）" style="grid-column:1/-1">
+      <button class="btn" data-cadd="${id}" style="grid-column:1/-1">＋ 登记客户档案</button></div>`:`<div class="muted" style="margin-top:8px">（由 ${WHO_NAME[id]} 本人登记）</div>`}
    </div>`;}).join("");
- document.querySelectorAll("[data-cadd]").forEach(b=>b.onclick=()=>{const id=b.dataset.cadd;
-  const n=document.getElementById("cn_"+id).value.trim();if(!n){document.getElementById("cn_"+id).focus();return;}
+ /* ---- 客户档案：只登记 / 编辑 / 归档，不设闭环 ---- */
+ document.querySelectorAll("[data-cadd]").forEach(b=>b.onclick=()=>{
+  const id=b.dataset.cadd;
+  const q=k=>{const e=document.querySelector(`[data-cnew="${id}.${k}"]`);return e?e.value.trim():"";};
+  const n=q("name");if(!n){const e=document.querySelector(`[data-cnew="${id}.name"]`);if(e)e.focus();return;}
   DOC.carriers.list=DOC.carriers.list||[];
-  DOC.carriers.list.push({id:uid(),who:id,name:n,src:document.getElementById("cs_"+id).value.trim(),
-   partner:document.getElementById("cp_"+id).value.trim(),
-   nextAt:(document.getElementById("cd_"+id)||{}).value||"",
-   note:document.getElementById("cm_"+id).value.trim(),st:0,actions:[],updatedAt:nowT()});
+  DOC.carriers.list.push({id:uid(),who:id,name:n,src:q("src"),partner:q("partner"),
+   nextAt:q("nextAt"),note:q("note"),actions:[],createdAt:nowT(),updatedAt:nowT()});
   DOC.carriers.t=nowT();touch();render();});
- document.querySelectorAll("[data-cst]").forEach(b=>b.onclick=()=>{const it=DOC.carriers.list.find(x=>x.id===b.dataset.cst);if(!it)return;
-  it.st=((it.st||0)+1)%3;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
- document.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=()=>{const it=DOC.carriers.list.find(x=>x.id===b.dataset.cdel);if(!it)return;
+ document.querySelectorAll("[data-cedit]").forEach(b=>b.onclick=()=>{
+  const x=(DOC.carriers.list||[]).find(y=>y.id===b.dataset.cedit);if(!x)return;
+  CUI.editCar[x.id]={name:x.name||"",src:x.src||"",partner:x.partner||"",nextAt:x.nextAt||x.nextDate||"",note:x.note||""};
+  render();});
+ document.querySelectorAll("[data-cef]").forEach(i=>i.oninput=()=>{
+  const p=i.dataset.cef.split(".");const e=CUI.editCar[p[0]];if(e)e[p[1]]=i.value;});
+ document.querySelectorAll("[data-cesave]").forEach(b=>b.onclick=()=>{
+  const x=(DOC.carriers.list||[]).find(y=>y.id===b.dataset.cesave),e=CUI.editCar[b.dataset.cesave];
+  if(!x||!e)return;const n=(e.name||"").trim();if(!n){alert("客户 / 项目名称不能为空");return;}
+  x.name=n;x.src=(e.src||"").trim();x.partner=(e.partner||"").trim();x.nextAt=e.nextAt||"";x.note=(e.note||"").trim();
+  x.updatedAt=nowT();delete CUI.editCar[x.id];DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-cecancel]").forEach(b=>b.onclick=()=>{delete CUI.editCar[b.dataset.cecancel];render();});
+ document.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=()=>{
+  const it=(DOC.carriers.list||[]).find(x=>x.id===b.dataset.cdel);if(!it)return;
+  if(!confirm("归档后该客户档案及其任务将不再显示，确定？"))return;
   it.del=true;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
- document.querySelectorAll("[data-aadd]").forEach(b=>b.onclick=()=>{const cid=b.dataset.aadd;
-  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;
-  const inp=document.querySelector(`[data-anew="${cid}"]`);const t=inp.value.trim();if(!t)return;
+
+ /* ---- 任务 / 项目：闭环流程 = 开始处理 → 更新进展 → 提交验收 → 导师确认 ---- */
+ const getAct=k=>{const p=String(k).split(".");
+  const it=(DOC.carriers.list||[]).find(x=>x.id===p[0]);if(!it)return null;
+  const v=(it.actions||[]).find(x=>x.id===p[1]);return v?{it,v}:null;};
+ const findLog=lid=>{for(const c of (DOC.carriers.list||[])){for(const v of (c.actions||[])){
+  const y=(v.log||[]).find(z=>z.id===lid);if(y)return {c,v,y};}}return null;};
+ const saveAct=o=>{o.v.updatedAt=nowT();o.it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();};
+ const pushLog=(v,text)=>{v.log=v.log||[];v.log.push({id:uid(),by:WHO,at:nowT(),text});if((v.st||0)===0)v.st=1;};
+
+ document.querySelectorAll("[data-aadd]").forEach(b=>b.onclick=()=>{
+  const cid=b.dataset.aadd;const it=(DOC.carriers.list||[]).find(x=>x.id===cid);if(!it)return;
+  const inp=document.querySelector(`[data-anew="${cid}"]`);const t=((inp&&inp.value)||"").trim();if(!t){if(inp)inp.focus();return;}
   const due=(document.querySelector(`[data-adue="${cid}"]`)||{}).value||"";
   const owner=(document.querySelector(`[data-aown0="${cid}"]`)||{}).value||"";
-  it.actions=it.actions||[];it.actions.push({id:uid(),text:t,due,st:0,pri:"",owner,goal:"",cfm:0,log:[],by:WHO,createdAt:nowT(),updatedAt:nowT()});
-  it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
- document.querySelectorAll("[data-ast]").forEach(b=>b.onclick=()=>{const [cid,aid]=b.dataset.ast.split(".");
-  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;const v=(it.actions||[]).find(x=>x.id===aid);if(!v)return;
-  v.st=((v.st||0)+1)%3;v.updatedAt=nowT();it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
- document.querySelectorAll("[data-adel]").forEach(b=>b.onclick=()=>{const [cid,aid]=b.dataset.adel.split(".");
-  const it=DOC.carriers.list.find(x=>x.id===cid);if(!it)return;const v=(it.actions||[]).find(x=>x.id===aid);if(!v)return;
-  v.del=true;v.updatedAt=nowT();it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+  const kind=(document.querySelector(`[data-akind="${cid}"]`)||{}).value||"任务";
+  const v={id:uid(),kind,text:t,due,st:0,pri:"",owner,goal:"",cfm:0,log:[],by:WHO,createdAt:nowT(),updatedAt:nowT()};
+  it.actions=it.actions||[];it.actions.push(v);it.updatedAt=nowT();
+  CUI.open[cid+"."+v.id]=true;DOC.carriers.t=nowT();touch();render();});
 
- /* 闭环交互：进展 / 目标 / 转求助 / 指派 / 验收 / 退回 */
- const getAct=k=>{const [cid,aid]=String(k).split(".");
-  const it=(DOC.carriers.list||[]).find(x=>x.id===cid);if(!it)return null;
-  const v=(it.actions||[]).find(x=>x.id===aid);return v?{it,v}:null;};
- const saveAct=o=>{o.v.updatedAt=nowT();o.it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();};
+ document.querySelectorAll("[data-astart]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.astart);if(!o)return;
+  o.v.st=1;o.v.cfm=0;saveAct(o);});
+ document.querySelectorAll("[data-asub]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.asub);if(!o)return;
+  o.v.st=1;o.v.cfm=3;pushLog(o.v,"已提交验收，等待导师确认。");saveAct(o);});
+ document.querySelectorAll("[data-awd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.awd);if(!o)return;
+  o.v.cfm=0;pushLog(o.v,"撤回提交验收，继续完善。");saveAct(o);});
+ document.querySelectorAll("[data-acfm]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.acfm);if(!o||!isStaff())return;
+  o.v.cfm=1;o.v.st=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();
+  pushLog(o.v,"导师验收通过，"+(o.v.kind==="项目"?"项目":"任务")+"闭环。");saveAct(o);});
+ document.querySelectorAll("[data-arej]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.arej);if(!o||!isStaff())return;
+  const r=(window.prompt("退回原因（会写进进展记录，方便新人改进）","")||"").trim();
+  o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
+  pushLog(o.v,"导师退回："+(r||"请补充完成证据后再提交"));saveAct(o);});
+ document.querySelectorAll("[data-areopen]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.areopen);if(!o||!isStaff())return;
+  if(!confirm("撤销验收后该任务会重新打开，确定？"))return;
+  o.v.cfm=0;o.v.st=1;o.v.cfmBy="";o.v.cfmAt=0;
+  pushLog(o.v,"导师撤销验收，任务重新打开。");saveAct(o);});
 
+ /* 展开/收起：状态放内存，选择目标维度/负责人导致重绘时不会自动收起，已填内容也不丢 */
+ document.querySelectorAll("[data-aopen]").forEach(b=>b.onclick=()=>{
+  const k=b.dataset.aopen;CUI.open[k]=!CUI.open[k];render();});
+
+ document.querySelectorAll("[data-atedit]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.atedit);if(!o)return;
+  CUI.editTask[b.dataset.atedit]={kind:o.v.kind||"任务",text:o.v.text||"",due:o.v.due||""};render();});
+ document.querySelectorAll("[data-tekind],[data-tetext],[data-tedue]").forEach(i=>i.oninput=()=>{
+  const k=i.dataset.tekind||i.dataset.tetext||i.dataset.tedue;const e=CUI.editTask[k];if(!e)return;
+  if(i.dataset.tekind!==undefined)e.kind=i.value;
+  else if(i.dataset.tetext!==undefined)e.text=i.value;
+  else e.due=i.value;});
+ document.querySelectorAll("[data-tesave]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.tesave),e=CUI.editTask[b.dataset.tesave];
+  if(!o||!e)return;const t=(e.text||"").trim();if(!t){alert("任务内容不能为空");return;}
+  o.v.kind=e.kind||"任务";o.v.text=t;o.v.due=e.due||"";delete CUI.editTask[b.dataset.tesave];saveAct(o);});
+ document.querySelectorAll("[data-tecancel]").forEach(b=>b.onclick=()=>{delete CUI.editTask[b.dataset.tecancel];render();});
+ document.querySelectorAll("[data-adel]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.adel);if(!o)return;
+  if(!confirm("删除后该任务及其进展将不再显示，确定？"))return;
+  o.v.del=true;o.v.delBy=WHO;o.v.delAt=nowT();saveAct(o);});
+
+ document.querySelectorAll("[data-alogin]").forEach(i=>{
+  const k=i.dataset.alogin;
+  i.oninput=()=>{CUI.draft[k]=i.value;};
+  i.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();
+   const b=document.querySelector(`[data-alogadd="${k}"]`);if(b)b.click();}};});
  document.querySelectorAll("[data-alogadd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.alogadd);if(!o)return;
-  const inp=document.querySelector(`[data-alogin="${b.dataset.alogadd}"]`);
-  const t=((inp&&inp.value)||"").trim();if(!t){if(inp)inp.focus();return;}
-  o.v.log=o.v.log||[];o.v.log.push({id:uid(),by:WHO,at:nowT(),text:t});
-  saveAct(o);});
- document.querySelectorAll("[data-alogin]").forEach(i=>i.onkeydown=e=>{
-  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();const b=document.querySelector(`[data-alogadd="${i.dataset.alogin}"]`);if(b)b.click();}});
+  const k=b.dataset.alogadd;const inp=document.querySelector(`[data-alogin="${k}"]`);
+  const t=((CUI.draft[k]!==undefined?CUI.draft[k]:(inp&&inp.value)||"")||"").trim();if(!t){if(inp)inp.focus();return;}
+  pushLog(o.v,t);delete CUI.draft[k];saveAct(o);});
 
  document.querySelectorAll("[data-agoal]").forEach(s=>s.onchange=()=>{const o=getAct(s.dataset.agoal);if(!o)return;
   o.v.goal=s.value;saveAct(o);});
+ document.querySelectorAll("[data-aown]").forEach(s=>s.onchange=()=>{const o=getAct(s.dataset.aown);if(!o)return;
+  o.v.owner=s.value;saveAct(o);});
+ document.querySelectorAll("[data-ablock]").forEach(i=>{
+  const k=i.dataset.ablock;
+  i.oninput=()=>{CUI.block[k]=i.value;};
+  i.onchange=()=>{const o=getAct(k);if(!o)return;o.v.blocked=(CUI.block[k]||"").trim();delete CUI.block[k];saveAct(o);};});
 
  document.querySelectorAll("[data-areq]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.areq);if(!o)return;
   DOC.issues.list=DOC.issues.list||[];
@@ -1369,21 +1483,24 @@ function renderCarriers(){
   o.v.links=o.v.links||{};o.v.links.issueId=iid;
   DOC.issues.t=nowT();saveAct(o);});
 
- document.querySelectorAll("[data-aown]").forEach(s=>s.onchange=()=>{const o=getAct(s.dataset.aown);if(!o)return;
-  o.v.owner=s.value;saveAct(o);});
-
- document.querySelectorAll("[data-ablock]").forEach(i=>i.onchange=()=>{const o=getAct(i.dataset.ablock);if(!o)return;
-  o.v.blocked=(i.value||"").trim();saveAct(o);});
-
- document.querySelectorAll("[data-acfm]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.acfm);if(!o)return;
-  o.v.cfm=1;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=2;
-  o.v.log=o.v.log||[];o.v.log.push({id:uid(),by:WHO,at:nowT(),text:"导师验收通过，本项闭环。"});
-  saveAct(o);});
- document.querySelectorAll("[data-arej]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.arej);if(!o)return;
-  const r=(window.prompt("退回原因（会写进进展记录，方便新人改进）","")||"").trim();
-  o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
-  o.v.log=o.v.log||[];o.v.log.push({id:uid(),by:WHO,at:nowT(),text:"导师退回："+(r||"请补充完成证据后再提交")});
-  saveAct(o);});
+ /* 进展记录：作者本人可改/删自己的；导师/主管可改/删任意一条（更新错了也能纠错） */
+ document.querySelectorAll("[data-ledit]").forEach(b=>b.onclick=()=>{
+  const p=b.dataset.ledit.split(".");const o=getAct(p[0]+"."+p[1]);
+  if(!o)return;const y=(o.v.log||[]).find(z=>z.id===p[2]);if(!y||!canLog(y))return;
+  CUI.editLog[y.id]=y.text||"";render();});
+ document.querySelectorAll("[data-ltext]").forEach(t=>t.oninput=()=>{
+  const lid=t.dataset.ltext;if(CUI.editLog[lid]!==undefined)CUI.editLog[lid]=t.value;});
+ document.querySelectorAll("[data-lsave]").forEach(b=>b.onclick=()=>{
+  const lid=b.dataset.lsave;const text=(CUI.editLog[lid]||"").trim();if(!text)return;
+  const f=findLog(lid);if(!f||!canLog(f.y))return;
+  f.y.text=text;f.y.editedAt=nowT();f.y.editedBy=WHO;f.v.updatedAt=nowT();f.c.updatedAt=nowT();
+  delete CUI.editLog[lid];DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-lcancel]").forEach(b=>b.onclick=()=>{delete CUI.editLog[b.dataset.lcancel];render();});
+ document.querySelectorAll("[data-ldel]").forEach(b=>b.onclick=()=>{
+  const lid=b.dataset.ldel;const f=findLog(lid);if(!f||!canLog(f.y))return;
+  if(!confirm("删除这条进展记录？删除后不计入统计（保留操作留痕）。"))return;
+  f.y.del=true;f.y.delBy=WHO;f.y.delAt=nowT();f.v.updatedAt=nowT();f.c.updatedAt=nowT();
+  DOC.carriers.t=nowT();touch();render();});
 }
 
 /* ---------- ② 协助 ---------- */
@@ -1406,7 +1523,7 @@ function renderAssist(){
      <button data-qt="wish" class="${QTYPE==="wish"?"on":""}">想提升 / 吐槽</button>
    </div>
    ${isStaff()?`<select id="qWho">${NEWCOMERS.map(id=>`<option value="${id}">${WHO_NAME[id]}</option>`).join("")}</select>`:""}
-   ${QTYPE==="issue"?`<select id="qProj">${cs.length?cs.map(x=>`<option>${esc(x.name)}</option>`).join(""):`<option value="">（先在规划页登记载体）</option>`}</select>
+   ${QTYPE==="issue"?`<select id="qProj">${cs.length?cs.map(x=>`<option>${esc(x.name)}</option>`).join(""):`<option value="">（先在规划页登记客户档案）</option>`}</select>
      <select id="qCat">${CATS.map(c=>`<option>${c}</option>`).join("")}</select>`:""}
    <input class="q" id="qText" placeholder="${QTYPE==="issue"?"一句话说清：现象 / 卡在哪":"想练什么、吐槽什么、需要什么支持"}">
    <button class="btn" id="qSend">发布</button>
@@ -2125,9 +2242,13 @@ function stats(){
  const DP=(DOC.deposits.list||[]).filter(x=>!x.del);
  const per={};NEWCOMERS.forEach(id=>{
   const c=C.filter(x=>x.who===id),i=I.filter(x=>x.who===id),d=D.filter(x=>x.who===id),ck=CK.filter(x=>x.who===id),dp=DP.filter(x=>x.who===id);
-  per[id]={carrier:c.length,closed:c.filter(x=>x.st===2).length,
+  const acts=c.reduce((a,x)=>a.concat((x.actions||[]).filter(v=>!v.del)),[]);
+  const openActs=acts.filter(v=>(v.st||0)!==2);
+  per[id]={carrier:c.length,
+   tasks:acts.length,openTasks:openActs.length,doneTasks:acts.filter(v=>(v.st||0)===2).length,
+   reviewTasks:openActs.filter(v=>v.cfm===3).length,
+   overdueTasks:openActs.filter(actOver).length,
    issue:i.length,pending:i.filter(x=>(x.status||0)===0).length,issueClosed:i.filter(x=>(x.status||0)===2).length,
-   actions:(c.reduce((a,x)=>a+(x.actions||[]).filter(v=>!v.del&&v.st!==2).length,0)),
    drill:d.length,scored:d.filter(x=>x.score).length,
    drill14:d.filter(x=>nowT()-(x.createdAt||0)<=14*86400000).length,
    drillAvg:(()=>{const ss=d.map(drillTotal).filter(Boolean);return ss.length?Math.round(ss.reduce((a,t)=>a+t.total,0)/ss.length):null;})(),
@@ -2153,18 +2274,21 @@ function radarSVG(per){
 function renderMonitor(){
  const S=stats();const ids=ppl();
  const card=(DOC.cards.list||[]).filter(x=>!x.del).length,q=(DOC.quotes.list||[]).filter(x=>!x.del).length;
- const allCar=S.C.length,closed=S.C.filter(x=>x.st===2).length,pend=S.I.filter(x=>(x.status||0)===0).length;
+ const allCar=S.C.length,allTask=ids.reduce((n,id)=>n+S.per[id].tasks,0),
+  doneTask=ids.reduce((n,id)=>n+S.per[id].doneTasks,0),reviewTask=ids.reduce((n,id)=>n+S.per[id].reviewTasks,0),
+  overTask=ids.reduce((n,id)=>n+S.per[id].overdueTasks,0),
+  pend=S.I.filter(x=>(x.status||0)===0).length;
  document.getElementById("mStats").innerHTML=[
-  statCard(allCar,"载体登记"),statCard(closed,"已闭环载体"),statCard(S.I.length,"问题记录"),
+  statCard(allCar,"客户档案"),statCard(allTask,"任务/项目"),statCard(reviewTask,"待验收"),
+  statCard(doneTask,"已闭环任务"),statCard(overTask,"超期任务"),statCard(S.I.length,"问题记录"),
   statCard(pend,"待导师答复"),statCard(card,"知识卡片"),statCard(q,"带教金句"),
   statCard(new Set(S.CK.map(x=>x.nodeId).filter(Boolean)).size,"已完成节点"),statCard(S.D.filter(x=>x.score).length,"已评分演练"),
   statCard(S.DP.length,"知识沉淀"),statCard(S.DP.filter(x=>x.star).length,"沉淀加精")
  ].map(x=>x).join("");
  document.getElementById("mPeople").innerHTML=ids.map(id=>{const p=S.per[id];
   return `<div class="card pad"><h3>${WHO_NAME[id]}</h3>
-   <div class="muted" style="margin-top:6px">真实载体：登记 ${p.carrier} · 已闭环 ${p.closed}</div>
-   <div class="bar"><i style="width:${p.carrier?Math.round(p.closed/p.carrier*100):0}%"></i></div>
-   <div class="muted" style="margin-top:9px">客户维护行动：${p.actions} 项未完成</div>
+   <div class="muted" style="margin-top:6px">客户档案：登记 ${p.carrier} 份 · 任务/项目 ${p.tasks} 项（未闭环 ${p.openTasks} · 待验收 ${p.reviewTasks} · 已闭环 ${p.doneTasks}${p.overdueTasks?` · 超期 ${p.overdueTasks}`:""}）</div>
+   <div class="bar"><i style="width:${p.tasks?Math.round(p.doneTasks/p.tasks*100):0}%"></i></div>
    <div class="muted" style="margin-top:9px">问题记录：共 ${p.issue} · 待答复 ${p.pending} · 已闭环 ${p.issueClosed}</div>
    <div class="muted" style="margin-top:6px">演讲/现场演练：近 14 天 <b>${p.drill14}</b> 次 ${p.drill14?"✅":"<span style=\"color:var(--red-d)\">双周缺练</span>"} · 累计 ${p.drill} 次 · 已评分 ${p.scored}${p.drillAvg!=null?" · 均分 "+p.drillAvg:""}</div>
    <div class="muted" style="margin-top:6px">知识沉淀：沉淀 ${p.deposit} 篇 · 导师加精 ${p.depositStar} 篇</div>
@@ -2183,13 +2307,14 @@ function renderMonitor(){
  document.getElementById("mMilesSec").classList.toggle("hide",!isStaff());
  if(isStaff()){
   const miles=[
-   {k:"10 月末",d:"两人各接住 1 个载体并跟完；问题记录 ≥ 每周 1 条",ok:S.per.zhan.carrier>=1&&S.per.tong.carrier>=1},
-   {k:"11 月末",d:"完成复盘补强；≥1 个载体闭环；每周演练各 ≥ 2 次",ok:S.per.zhan.drill>=2&&S.per.tong.drill>=2},
+   {k:"10 月末",d:"两人各接住 1 个客户档案并开始跟进；问题记录 ≥ 每周 1 条",ok:S.per.zhan.carrier>=1&&S.per.tong.carrier>=1},
+   {k:"11 月末",d:"完成复盘补强；≥1 个任务/项目经导师验收闭环；每周演练各 ≥ 2 次",ok:(S.per.zhan.doneTasks+S.per.tong.doneTasks)>=1&&S.per.zhan.drill>=2&&S.per.tong.drill>=2},
    {k:"12 月上中旬",d:"对标准终评；产品基础+客户维护成体系",ok:(S.per.zhan.faeA1>=S.per.zhan.faeT1)&&(S.per.tong.faeA1>=S.per.tong.faeT1)}];
   const warn=[];
   if(pend>=3)warn.push("有 "+pend+" 条问题记录待导师答复");
+  if(reviewTask>=3)warn.push("有 "+reviewTask+" 项任务/项目待导师验收，验收积压会影响新人节奏");
   if(S.T.length>0)warn.push("已发生 "+S.T.length+" 次触发，需导师加练 + 主管介入");
-  if(closed===0)warn.push("尚无任何载体闭环，注意机会是否够、跟进是否实");
+  if(allCar>0&&doneTask===0)warn.push("尚无任何任务/项目闭环，注意机会是否够、跟进是否实");
   if(S.per.zhan.checkin+S.per.tong.checkin===0)warn.push("尚无产品地图打卡记录");
   document.getElementById("mMiles").innerHTML=
    `<div class="card pad"><h3>里程碑</h3>${miles.map(m=>`<div class="row" style="justify-content:space-between;margin-top:8px">
@@ -2514,7 +2639,7 @@ function renderReview(){
   return `<div class="card pad">
    <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]}</h3>
      <span class="tag ${st===3?"ok":st===0?"gy":"wt"}">${stNames[st]}</span></div>
-   <div class="muted" style="margin-top:8px;font-weight:700;color:var(--ink2)">① 新人自评（本月证据：载体 / 问题记录 / 演练 / 地图）</div>
+   <div class="muted" style="margin-top:8px;font-weight:700;color:var(--ink2)">① 新人自评（本月证据：客户档案 / 任务闭环 / 问题记录 / 演练 / 地图）</div>
    <textarea data-rvev="${id}.${RV_M}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isNewM?"":"readonly"} placeholder="本月证据">${esc(c.ev||"")}</textarea>
    <div class="muted" style="margin-top:7px;font-weight:700;color:var(--ink2)">② 导师复评（意见 + 下月 1–2 个改进点）</div>
    <textarea data-rvfb="${id}.${RV_M}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:12.4px" ${isMentor()||isLead()?"":"readonly"} placeholder="导师：本月表现 + 下月改进点">${esc(c.fb||"")}</textarea>
