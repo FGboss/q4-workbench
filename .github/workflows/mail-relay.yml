@@ -28,9 +28,16 @@ jobs:
         with:
           node-version: "20"
 
-      - name: 安装依赖
+      # 只装发信需要的 nodemailer（无依赖），不装整仓 express 等依赖：
+      # 避免镜像/网络波动导致 npm ci 卡住几分钟甚至超时，邮件发不出去。
+      - name: 安装发信依赖（仅 nodemailer）
         if: github.event_name == 'repository_dispatch'
-        run: npm ci
+        timeout-minutes: 3
+        run: |
+          mkdir -p .relay
+          cd .relay
+          npm init -y > /dev/null 2>&1
+          npm install nodemailer@10.1.7 --no-audit --no-fund --registry=https://registry.npmjs.org
 
       - name: 发送邮件（服务端已按人算好收件人）
         if: github.event_name == 'repository_dispatch'
@@ -38,6 +45,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           PAYLOAD_B64: ${{ github.event.client_payload.b64 }}
+          NODE_PATH: ${{ github.workspace }}/.relay/node_modules
         run: node mail-relay.js
 
       - name: 定时兜底：唤醒实例并补发当日日报
