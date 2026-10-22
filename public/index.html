@@ -182,6 +182,8 @@
     padding:20px;z-index:50}
   .modal{background:#fff;border-radius:16px;max-width:660px;width:100%;max-height:86vh;overflow:auto;
     box-shadow:0 30px 70px rgba(0,0,0,.3)}
+  .modal.wide{max-width:980px}
+  .mcbx{display:inline-flex;align-items:center;gap:5px;font-size:12.6px;color:var(--ink2);margin-right:12px;white-space:nowrap}
   .modal .mh{display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
   .linkrow{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin-bottom:10px}
   .linkrow code{flex:1;font-size:12.6px;color:var(--ink2);word-break:break-all;background:#F7F9FB;border-radius:7px;padding:7px 9px}
@@ -436,7 +438,7 @@
       <div class="grid2" id="dutyBlk"></div>
     </section>
     <section id="mailSec">
-      <h2>通知与提醒 <span class="h">新人登录、求助发问即时邮件提醒导师/主管；工作日 18:00 自动推送整体进度日报</span></h2>
+      <h2>通知与提醒 <span class="h">新人登录、求助发问即时提醒对应导师/主管；工作日 18:00 自动推送整体进度日报。超管可在「邮件中心」配置谁收什么邮件、关注哪些新人</span></h2>
       <div class="card pad" id="mailBox"></div>
     </section>
     <section>
@@ -980,8 +982,8 @@ async function openAccounts(){
  });
 }
 /* 弹出层通用渲染 + 复制按钮绑定 */
-function paintModal(html){
- const box=document.getElementById("ovlBox");box.innerHTML=html;
+function paintModal(html,wide){
+ const box=document.getElementById("ovlBox");box.className="modal"+(wide?" wide":"");box.innerHTML=html;
  document.getElementById("ovl").classList.remove("hide");
  const c=document.getElementById("ovlClose");if(c)c.onclick=closeOvl;
  document.querySelectorAll("[data-copy]").forEach(b=>b.onclick=()=>{const o=b.textContent;
@@ -2011,9 +2013,10 @@ async function renderMailBox(){
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>${s.replyTo?`　·　回复地址：<b>${esc(s.replyTo)}</b>`:""}　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">自动触发：新人登录提醒（30 分钟内不重复）· 新人发问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 整体进度日报</div>
+     <div class="muted" style="margin-top:3px">自动触发：登录提醒（30 分钟内不重复）· 问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 日报 · 周一发上周周报 · 个人汇总 · 风险预警（收件人与内容由「邮件中心」规则决定）</div>
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px">
+     ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件中心</button>':""}
      <button class="btn sm gh" id="mailTestBtn">发测试邮件</button>
      <button class="btn sm" id="mailRepBtn">立即发今日日报</button></div>
  </div>
@@ -2025,6 +2028,160 @@ async function renderMailBox(){
  const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{rb.disabled=true;msg("汇总并发送中…");
   try{const r=await apiPost("/api/mail_report",{});msg(r.ok?`<span class="tag ok">今日日报已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);}
   catch(e){msg('<span class="tag no">请求失败</span>');}rb.disabled=false;};
+ const cb=document.getElementById("mailCfgBtn");if(cb)cb.onclick=()=>openMailCenter();
+}
+
+/* 超级管理员：邮件中心（邮箱 / 订阅内容 / 关注新人 / 预览与手动发送） */
+async function openMailCenter(){
+ let d={};
+ try{d=(await apiGet("/api/mail_cfg")).data||{};}catch(e){}
+ if(!d.ok){alert(d.msg||"读取邮件配置失败，请确认你是超级管理员并已连上服务器。");return;}
+ const st={ types:d.types||[], newbies:d.newbies||[], users:d.users||[], today:d.today||"", enabled:d.enabled, channel:d.channel,
+   cfg:d.cfg||{} };
+ let state=Object.assign({},st.cfg,{rules:(st.cfg&&st.cfg.rules||[]).slice()});
+ if(!state.rules.length)state.rules=[];
+ function collect(){
+  const rules=[...document.querySelectorAll("[data-rule]")].map(box=>{
+   const g=k=>box.querySelector(`[data-rfield="${k}"]`);
+   return {id:box.dataset.rule,
+    name:(g("name")?g("name").value:"").trim(),
+    email:(g("email")?g("email").value:"").trim(),
+    enabled:!!(g("enabled")&&g("enabled").checked),
+    types:[...box.querySelectorAll("[data-rtype]")].filter(x=>x.checked).map(x=>x.dataset.rtype),
+    scope:(box.querySelector("[data-rscope]")||{}).value==="all"?"all":
+      [...box.querySelectorAll("[data-rnb]")].filter(x=>x.checked).map(x=>x.dataset.rnb)};
+  });
+  return {
+   daily:document.getElementById("mcDaily").checked,
+   weekly:document.getElementById("mcWeekly").checked,
+   personalSelf:document.getElementById("mcSelf").checked,
+   reportHour:+document.getElementById("mcHour").value,
+   fallbackTo:document.getElementById("mcFallback").value.split(/[,，;；\s]+/).filter(Boolean),
+   rules };
+ }
+ function ruleCard(r,i){
+  const types=(st.types||[]).map(t=>`<label class="mcbx"><input type="checkbox" data-rtype="${t.key}" ${(r.types||[]).indexOf(t.key)>=0?"checked":""}> ${esc(t.name)}</label>`).join("");
+  const isAll=r.scope==="all";
+  const nb=(st.newbies||[]).map(n=>`<label class="mcbx"><input type="checkbox" data-rnb="${n.id}" ${(!isAll&&(r.scope||[]).indexOf(n.id)>=0)?"checked":""}> ${esc(n.name)}</label>`).join("")||`<span class="muted">暂无新人账号</span>`;
+  return `<div class="card pad" data-rule="${r.id}" style="margin-bottom:10px">
+   <div class="row" style="justify-content:space-between;gap:8px">
+    <b>收件人 ${i+1}</b>
+    <div class="row" style="gap:8px">
+     <label class="mcbx"><input type="checkbox" data-rfield="enabled" ${r.enabled!==false?"checked":""}> 启用</label>
+     <button class="btn sm danger" data-rdel="${r.id}">删除</button></div>
+   </div>
+   <div class="grid2" style="margin-top:8px">
+    <input data-rfield="name" value="${esc(r.name||"")}" placeholder="称呼（如：张主管）" style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px">
+    <input data-rfield="email" value="${esc(r.email||"")}" placeholder="接收邮箱" style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.5px">
+   </div>
+   <div class="muted" style="margin-top:9px">订阅内容（可多选）</div>
+   <div style="margin-top:4px;line-height:2">${types}</div>
+   <div class="row" style="margin-top:9px;gap:8px;flex-wrap:wrap">
+    <span class="muted">关注新人</span>
+    <select data-rscope style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.4px">
+     <option value="all" ${isAll?"selected":""}>全部新人</option>
+     <option value="pick" ${isAll?"":"selected"}>仅指定新人</option></select>
+    <span class="muted">日报 / 周报 / 个人汇总 / 风险预警都只统计勾选的新人</span>
+   </div>
+   <div data-rnbbox class="${isAll?"hide":""}" style="margin-top:6px;line-height:2">${nb}</div>
+  </div>`;
+ }
+ function render(){
+  const types=(st.types||[]).map(t=>`<option value="${t.key}">${esc(t.name)}</option>`).join("");
+  const nbPick=(st.newbies||[]).map(n=>`<label class="mcbx"><input type="checkbox" data-snb="${n.id}"> ${esc(n.name)}</label>`).join("")||`<span class="muted">暂无新人</span>`;
+  let html=`<div class="mh"><b>邮件中心 · 收件人与内容配置</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+   <div style="padding:16px 20px">
+    <div class="muted" style="margin-bottom:12px">在这里配置「谁收什么邮件」。所有邮件内容与站内统计使用同一套口径（北京时间自然日）。未配置任何规则时，自动沿用兜底收件人 + 已填邮箱的导师/主管，原有流程不受影响。</div>
+    <div class="card pad" style="margin-bottom:14px">
+     <h3 style="margin-bottom:8px">基础设置</h3>
+     <div class="row" style="flex-wrap:wrap">
+      <label class="mcbx"><input type="checkbox" id="mcDaily" ${state.daily!==false?"checked":""}> 工作日整体日报</label>
+      <label class="mcbx"><input type="checkbox" id="mcWeekly" ${state.weekly!==false?"checked":""}> 周一发送上周周报</label>
+      <label class="mcbx"><input type="checkbox" id="mcSelf" ${state.personalSelf!==false?"checked":""}> 新人本人也收个人汇总</label>
+      <span class="mcbx">发送时间 <input type="number" id="mcHour" min="0" max="23" value="${Number(state.reportHour)||18}" style="width:64px;border:1px solid var(--line);border-radius:7px;padding:4px 6px"> 点（北京时间）</span>
+     </div>
+     <div style="margin-top:10px"><div class="muted" style="margin-bottom:4px">兜底收件人（未匹配到任何规则时发送给这些人，多个用逗号分隔）</div>
+      <input id="mcFallback" value="${esc((state.fallbackTo||[]).join(","))}" placeholder="liwf@novastar.tech" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px"></div>
+    </div>
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+     <h3>收件人规则</h3>
+     <button class="btn sm gh" id="mcAdd">＋ 新增收件人</button>
+    </div>
+    <div id="mcRules">${(state.rules||[]).map(ruleCard).join("")||`<div class="muted" style="margin-bottom:10px">还没有规则。点「＋ 新增收件人」为某位领导/导师配置他要收的邮件与关注的新人。</div>`}</div>
+    <div class="row" style="margin-top:6px"><button class="btn" id="mcSave">保存配置</button><span class="muted" id="mcSaveMsg"></span></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0">
+    <h3 style="margin-bottom:6px">预览 / 手动发送</h3>
+    <div class="muted" style="margin-bottom:8px">先预览确认数据无误，再发送。收件人留空时按上面的规则或兜底收件人发送。</div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+     <select id="mcType" style="border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.6px">${types}</select>
+     <input type="date" id="mcDay" value="${esc(st.today||"")}" style="border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.6px">
+     <input id="mcTo" placeholder="收件人邮箱，多个用逗号；留空按规则" style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:12.6px">
+    </div>
+    <div style="margin-top:8px"><span class="muted">统计新人：</span><span class="muted">（不勾选=全部新人）</span>
+     <div style="margin-top:4px;line-height:2">${nbPick}</div></div>
+    <div class="row" style="margin-top:10px;gap:8px">
+     <button class="btn sm gh" id="mcPrev">预览内容</button>
+     <button class="btn sm" id="mcSend">发送这封邮件</button>
+     <span class="muted" id="mcMsg"></span></div>
+    <iframe id="mcFrame" style="display:none;width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:10px"></iframe>
+   </div>`;
+  paintModal(html,true);
+  const msg=m=>{const x=document.getElementById("mcMsg");if(x)x.innerHTML=m&&m.tag?`<span class="tag ${m.tag}">${esc(m.txt)}</span>`:`<span class="muted">${esc(m||"")}</span>`;};
+  const sm=document.getElementById("mcSaveMsg");
+  document.querySelectorAll("[data-rscope]").forEach(sel=>sel.onchange=()=>{
+   const box=sel.closest("[data-rule]");const nbb=box.querySelector("[data-rnbbox]");if(nbb)nbb.classList.toggle("hide",sel.value==="all");
+  });
+  document.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=()=>{
+   state=collect();state.rules=state.rules.filter(r=>r.id!==b.dataset.rdel);render();
+  });
+  const add=document.getElementById("mcAdd");if(add)add.onclick=()=>{
+   state=collect();
+   state.rules.push({id:uid(),name:"",email:"",enabled:true,types:["daily"],scope:"all"});
+   render();
+  };
+  const save=document.getElementById("mcSave");if(save)save.onclick=async()=>{
+   const cfg=collect();
+   const bad=cfg.rules.filter(r=>r.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));
+   if(bad.length){alert("有邮箱格式不正确：" + bad.map(x=>x.email).join("、"));return;}
+   const filled=cfg.rules.filter(r=>r.email);
+   if(filled.some(r=>!r.types.length)){alert("每条规则至少勾选一种订阅内容");return;}
+   save.disabled=true;
+   const r=await apiPost("/api/mail_cfg",cfg);
+   save.disabled=false;
+   if(sm)sm.innerHTML=r.data&&r.data.ok?`<span class="tag ok">已保存</span>`:`<span class="tag no">${esc((r.data&&r.data.msg)||"保存失败")}</span>`;
+   if(r.data&&r.data.ok){
+    renderMailBox();
+    const fresh=(await apiGet("/api/mail_cfg")).data||{};
+    if(fresh.ok){state=Object.assign({},fresh.cfg,{rules:(fresh.cfg&&fresh.cfg.rules||[]).slice()});}
+   }
+  };
+  const prev=document.getElementById("mcPrev");if(prev)prev.onclick=async()=>{
+   prev.disabled=true;msg("生成预览…");
+   const type=document.getElementById("mcType").value;
+   const day=document.getElementById("mcDay").value;
+   const ids=[...document.querySelectorAll("[data-snb]")].filter(x=>x.checked).map(x=>x.dataset.snb);
+   const r=await apiGet(`/api/mail_preview?type=${encodeURIComponent(type)}&day=${encodeURIComponent(day)}&ids=${encodeURIComponent(ids.join(","))}`);
+   prev.disabled=false;
+   if(r.data&&r.data.ok){
+    const f=document.getElementById("mcFrame");f.srcdoc=r.data.html||"";f.style.display="block";
+    msg({tag:"ok",txt:"预览已生成 · "+(r.data.subject||"")});
+   }else msg({tag:"no",txt:(r.data&&r.data.msg)||"预览失败"});
+  };
+  const send=document.getElementById("mcSend");if(send)send.onclick=async()=>{
+   const type=document.getElementById("mcType").value;
+   const day=document.getElementById("mcDay").value;
+   const to=(document.getElementById("mcTo").value||"").split(/[,，;；\s]+/).filter(Boolean);
+   const ids=[...document.querySelectorAll("[data-snb]")].filter(x=>x.checked).map(x=>x.dataset.snb);
+   if(!confirm("确认发送这封邮件？\n类型："+type+"\n日期："+day+"\n收件人："+(to.length?to.join("、"):"按规则/兜底收件人")+"\n统计新人："+(ids.length?ids.length+" 位":"全部")))return;
+   send.disabled=true;msg("发送中…");
+   const r=await apiPost("/api/mail_send",{type,day,to,ids});
+   send.disabled=false;
+   if(r.data&&r.data.ok&&!r.data.skipped)msg({tag:"ok",txt:"已发送 → "+((r.data.to||[]).join("、")||"")});
+   else if(r.data&&r.data.skipped)msg({tag:"wt",txt:r.data.msg||"无可发送内容"});
+   else msg({tag:"no",txt:(r.data&&r.data.msg)||"发送失败"});
+  };
+ }
+ render();
 }
 
 /* ---------- ④ 把控 · 导师 / 主管责任制看板（必回机制） ---------- */

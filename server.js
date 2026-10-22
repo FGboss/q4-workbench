@@ -268,12 +268,33 @@ function normDoc(r) {
 /* ---------- 邮件通知实现（Resend） ---------- */
 let MS = readJson(MAIL_STATE_FILE, { logins: [], lastLogin: {}, lastReport: "", lastSent: 0 });
 function saveMS() { writeJson(MAIL_STATE_FILE, MS); }
-const bj = t => new Date((t || Date.now()) + 8 * 3600000);           // 北京时间（用 UTC 取值）
+/* 统一时间口径：所有业务数据、登录轨迹、日报/周报都按北京时间（UTC+8）。
+   toMs 兼容毫秒/秒时间戳、ISO 字符串、Date 对象，避免旧数据格式不一致导致日期判断失效。 */
+const toMs = t => {
+  if (t == null || t === "") return 0;
+  if (typeof t === "number") return t < 1e11 ? Math.round(t * 1000) : t;
+  if (t instanceof Date) return t.getTime();
+  const n = new Date(t).getTime();
+  return Number.isFinite(n) ? n : 0;
+};
+const bj = t => new Date((toMs(t) || Date.now()) + 8 * 3600000);     // 北京时间（用 UTC 取值）
 const bjKey = t => { const d = bj(t); return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0"); };
 const bjTime = t => { const d = bj(t); return (d.getUTCMonth() + 1) + "-" + d.getUTCDate() + " " + String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+const bjHm = t => { const d = bj(t); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+const dayAdd = (day, n) => { const d = new Date(day + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const dayRange = (end, n) => { const a = []; for (let i = n - 1; i >= 0; i--) a.push(dayAdd(end, -i)); return a; };
+const isDay = (t, day) => { const ms = toMs(t); return !!ms && bjKey(ms) === day; };
+/* 近 7 天 / 近 14 天判断用：返回某天与今天相差的自然日数 */
+const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000);
 const h = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* 兜底收件人：邮件中心里配置过就用它，否则用环境变量 ALERT_TO */
+const fallbackEmails = () => {
+  const fb = (USERS && USERS.mailCfg && Array.isArray(USERS.mailCfg.fallbackTo))
+    ? USERS.mailCfg.fallbackTo.map(x => String(x).trim()).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)) : [];
+  return fb.length ? fb : MAIL_TO;
+};
 const mailTo = () => {
-  const set = new Set(MAIL_TO);
+  const set = new Set(fallbackEmails());
   (USERS.users || []).forEach(u => { if (u.email && u.active && ["lead", "mentor", "admin"].indexOf(u.role) >= 0) set.add(u.email); });
   return [...set];
 };
@@ -304,13 +325,76 @@ async function getWecomToken() {
 /* 按人分邮：新人相关提醒只发给他的直属导师 + 直属主管 + 兜底收件人。
    账号上没配 mentorId/leadId 时，退化为「全部导师与主管」，保证不漏人。 */
 function staffEmailsFor(newbieId) {
-  const set = new Set(MAIL_TO);
+  const set = new Set(fallbackEmails());
   const nb = findUser(newbieId);
   const direct = [nb && nb.mentorId, nb && nb.leadId].filter(Boolean).map(findUser).filter(u => u && u.active && u.email);
   if (direct.length) direct.forEach(u => set.add(u.email));
   else (USERS.users || []).forEach(u => { if (u.email && u.active && (u.role === "mentor" || u.role === "lead" || u.role === "admin")) set.add(u.email); });
   return [...set];
 }
+
+/* ---------- 邮件中心配置（超管可在网站内维护，随账号数据一起持久化） ----------
+   规则 = 一个人 + 邮箱 + 订阅内容 + 关注的新人范围。
+   · 订阅内容：daily 整体日报 / weekly 周报 / personal 个人汇总 / risk 风险预警 / login 登录提醒 / issue 问题提醒
+   · 关注新人：all=全部；或 [新人id...]=只看这几位（日报、周报、个人汇总、风险预警都按此过滤）
+   没有配置任何规则时，完全保持原有行为（发给 ALERT_TO + 已填邮箱的导师/主管），不影响已跑通流程。 */
+const MAIL_TYPES = [
+  ["daily", "整体日报"], ["weekly", "周报"], ["personal", "个人汇总"],
+  ["risk", "风险预警"], ["login", "登录提醒"], ["issue", "问题 / 诉求提醒"],
+];
+const MAIL_TYPE_NAME = MAIL_TYPES.reduce((o, x) => (o[x[0]] = x[1], o), {});
+const validEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
+function defaultMailCfg() {
+  return { daily: true, weekly: true, personalSelf: true, reportHour: REPORT_HOUR, fallbackTo: MAIL_TO, rules: [] };
+}
+function normMailRule(r) {
+  const x = r || {};
+  const types = Array.isArray(x.types) ? x.types.filter(t => MAIL_TYPE_NAME[t]) : [];
+  let scope = x.scope;
+  if (scope !== "all" && !Array.isArray(scope)) scope = "all";
+  if (Array.isArray(scope)) scope = scope.map(String).filter(Boolean);
+  return { id: String(x.id || uid()), name: String(x.name || "").trim(),
+    email: String(x.email || "").trim().toLowerCase(), types, scope, enabled: x.enabled !== false };
+}
+function getMailCfg() {
+  const raw = (USERS && USERS.mailCfg) || {};
+  const d = defaultMailCfg();
+  const fb = Array.isArray(raw.fallbackTo) ? raw.fallbackTo.map(x => String(x).trim()).filter(Boolean) : d.fallbackTo;
+  const h = Number(raw.reportHour);
+  return {
+    daily: raw.daily !== false,
+    weekly: raw.weekly !== false,
+    personalSelf: raw.personalSelf !== false,
+    reportHour: Number.isFinite(h) ? Math.max(0, Math.min(23, Math.floor(h))) : d.reportHour,
+    fallbackTo: fb.length ? fb : d.fallbackTo,
+    rules: (Array.isArray(raw.rules) ? raw.rules : []).map(normMailRule).filter(r => validEmail(r.email)),
+  };
+}
+function saveMailCfg(patch) {
+  const cur = getMailCfg();
+  const next = {
+    daily: patch.daily !== undefined ? !!patch.daily : cur.daily,
+    weekly: patch.weekly !== undefined ? !!patch.weekly : cur.weekly,
+    personalSelf: patch.personalSelf !== undefined ? !!patch.personalSelf : cur.personalSelf,
+    reportHour: patch.reportHour !== undefined ? Math.max(0, Math.min(23, Math.floor(Number(patch.reportHour) || 0))) : cur.reportHour,
+    fallbackTo: Array.isArray(patch.fallbackTo) ? patch.fallbackTo.map(x => String(x).trim()).filter(validEmail) : cur.fallbackTo,
+    rules: Array.isArray(patch.rules) ? patch.rules.map(normMailRule).filter(r => validEmail(r.email)) : cur.rules,
+  };
+  USERS.mailCfg = next; USERS.changed = true; saveUsers();
+  return next;
+}
+/* 命中某类邮件、且关注范围包含该新人的规则（newbieId 为空时只按类型匹配，用于整体邮件） */
+function rulesFor(type, newbieId) {
+  return getMailCfg().rules.filter(r => r.enabled !== false && r.types.indexOf(type) >= 0 &&
+    (!newbieId || r.scope === "all" || (Array.isArray(r.scope) && r.scope.indexOf(newbieId) >= 0)));
+}
+function ruleEmails(type, newbieId) {
+  return [...new Set(rulesFor(type, newbieId).map(r => r.email).filter(validEmail))];
+}
+/* 发送记录持久化到账号库：免费实例重启后不会把「今日已发」清空，避免重复发日报 */
+function mailState() { if (!USERS.mailState || typeof USERS.mailState !== "object") USERS.mailState = {}; return USERS.mailState; }
+function markMailSent(kind, key) { const s = mailState(); s[kind] = key; s.lastSent = Date.now(); saveUsers(); }
+
 /* GitHub Actions 中继：把整封邮件塞进 client_payload（base64，避开引号/换行问题），由 workflow 用 QQ SMTP 发出 */
 async function dispatchViaGithub(mail) {
   const b64 = Buffer.from(JSON.stringify(mail), "utf8").toString("base64");
@@ -428,7 +512,11 @@ function recordLogin(u) {
   const now = Date.now();
   MS.logins = ((MS.logins || []).concat([{ id: u.id, name: u.name, at: now }])).slice(-400);
   const last = MS.lastLogin[u.id] || 0;
-  MS.lastLogin[u.id] = now; saveMS();
+  MS.lastLogin[u.id] = now;
+  /* 登录时间同时写入账号库（持久化到 Supabase / GitHub），免费实例重启后不会丢 */
+  u.lastLoginAt = now;
+  USERS.changed = true;
+  saveMS(); saveUsers();
   if (!MAIL_ON || now - last < 30 * 60000) return;
   const d = bj(now);
   const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getUTCDay()];
@@ -436,7 +524,7 @@ function recordLogin(u) {
     `<p><b>${h(u.name)}</b>（新人）刚登录了工作台。</p>
      <p>时间：${bjTime(now)} ${wk}</p>
      <p style="color:#5C6772;font-size:13px">若长时间无进展，可主动在「协助」或「把控」里看一眼他的问题与待办。</p>`,
-    "登录提醒 · 自动发送", { to: staffEmailsFor(u.id) });
+    "登录提醒 · 自动发送", { to: [...new Set(staffEmailsFor(u.id).concat(ruleEmails("login", u.id)))] });
 }
 
 /* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
@@ -459,7 +547,7 @@ function notifyNewIssues(items) {
        <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
        ${rws}</table>${m}`,
-      "问题协助提醒 · 自动发送", { to: staffEmailsFor(who) });
+      "问题协助提醒 · 自动发送", { to: [...new Set(staffEmailsFor(who).concat(ruleEmails("issue", who)))] });
   });
 }
 
@@ -503,146 +591,534 @@ function mapPaceServer(who, checks, today) {
   });
 }
 
-/* 工作日日报：按北京时间当天聚合，一次发一封 */
-function buildDailyReport(day) {
+/* =====================================================================
+   统一统计引擎：日报 / 周报 / 个人汇总 / 风险预警 全部走同一套口径
+   口径（北京时间自然日）：
+     · 活跃：当日有登录，或有任何业务动作（打卡/小测/载体/行动/问题/回复/演练/自查/沉淀）
+     · 通关节点：以 createdAt 为准（首次完成该节点）
+     · 小测正确率：同一节点取当天最后一次作答（重做不重复累计）；累计正确率按每节点最新一次
+     · 演练：近 14 天；超期：载体行动 due < 统计截止日
+   ===================================================================== */
+function buildActivityMap(D) {
+  const map = {};
+  const add = (who, t, kind) => { if (!who) return; const ms = toMs(t); if (!ms) return; (map[who] = map[who] || []).push({ at: ms, kind }); };
+  ((D.checkins || {}).list || []).filter(x => !x.del).forEach(x => {
+    add(x.who, x.createdAt, "通关节点");
+    const c = toMs(x.createdAt), u = toMs(x.updatedAt);
+    if (u && u > c) add(x.who, x.updatedAt, "重做小测");
+  });
+  /* 只在「确实是后续更新」时记一次更新动作，避免创建当刻 createdAt=updatedAt 被算成两次动作 */
+  const upd = (who, c, u, kind) => { if (toMs(u) > toMs(c)) add(who, u, kind); };
+  ((D.carriers || {}).list || []).filter(x => !x.del).forEach(c => {
+    add(c.who, c.createdAt, "新增载体"); upd(c.who, c.createdAt, c.updatedAt, "更新载体");
+    (c.actions || []).filter(v => !v.del).forEach(v => {
+      add(c.who, v.createdAt, "新增行动"); upd(c.who, v.createdAt, v.updatedAt, "更新行动");
+      (v.log || []).forEach(l => add(l.by || c.who, l.at, "行动记录"));
+    });
+  });
+  ((D.issues || {}).list || []).filter(x => !x.del).forEach(x => {
+    add(x.who, x.createdAt, "提出问题"); upd(x.who, x.createdAt, x.updatedAt, "更新问题");
+    (x.replies || []).forEach(r => add(r.by, r.at, "回复/互助"));
+  });
+  ((D.drills || {}).list || []).filter(x => !x.del).forEach(x => {
+    add(x.who, x.createdAt, "演练"); upd(x.who, x.createdAt, x.updatedAt, "更新演练");
+    (x.scores || []).forEach(sc => add(sc.by, sc.at, "演练评分"));
+  });
+  ((D.reveals || {}).list || []).filter(x => !x.del).forEach(x => add(x.who, x.at || x.updatedAt, "展开自查"));
+  ((D.deposits || {}).list || []).filter(x => !x.del).forEach(x => {
+    add(x.who, x.createdAt, "知识沉淀"); upd(x.who, x.createdAt, x.updatedAt, "更新沉淀");
+  });
+  return map;
+}
+function snapshot() {
   const D = DOC || emptyDoc();
+  return {
+    D,
+    checkins: (D.checkins.list || []).filter(x => !x.del),
+    carriers: (D.carriers.list || []).filter(x => !x.del),
+    issues: (D.issues.list || []).filter(x => !x.del),
+    drills: (D.drills.list || []).filter(x => !x.del),
+    reveals: ((D.reveals || {}).list || []).filter(x => !x.del),
+    deposits: ((D.deposits || {}).list || []).filter(x => !x.del),
+    activity: buildActivityMap(D),
+  };
+}
+function latestQuizPerNode(list) {
+  const m = {};
+  list.filter(x => (+x.total) > 0).forEach(x => {
+    const k = x.nodeId || x.id;
+    const t = toMs(x.updatedAt || x.createdAt);
+    const p = m[k];
+    if (!p || t >= toMs(p.updatedAt || p.createdAt)) m[k] = x;
+  });
+  return Object.values(m);
+}
+function quizSum(list) {
+  let correct = 0, total = 0;
+  list.forEach(x => { correct += Math.max(0, +x.correct || 0); total += Math.max(0, +x.total || 0); });
+  return { correct, total, acc: total > 0 ? Math.round(correct * 100 / total) : null };
+}
+function goalProgress(who, checks) {
+  if (!BANK || !BANK.levels) return null;
+  const done = new Set(checks.filter(x => x.who === who && x.nodeId).map(x => x.nodeId));
+  let got = 0, total = 0;
+  BANK.levels.forEach(L => {
+    const nodes = L.nodes || [];
+    total += L.goal || nodes.length;
+    got += nodes.filter(n => done.has(n.id)).length;
+  });
+  return total ? { got, total, pct: Math.round(got * 100 / total) } : null;
+}
+function workdaysAfter(lastDay, endDay) {
+  let n = 0, d = lastDay;
+  while (d < endDay) {
+    d = dayAdd(d, 1);
+    const wd = new Date(d + "T00:00:00Z").getUTCDay();
+    if (wd !== 0 && wd !== 6) n++;
+  }
+  return n;
+}
+function userStats(u, days, S) {
+  const snap = S || snapshot();
+  const daySet = new Set(days);
+  const end = days[days.length - 1];
+  const inRange = t => { const ms = toMs(t); return !!ms && daySet.has(bjKey(ms)); };
+
+  const ci = snap.checkins.filter(x => x.who === u.id);
+  const newRecs = ci.filter(x => inRange(x.createdAt));
+  const quizRecs = ci.filter(x => (+x.total) > 0 && inRange(x.updatedAt || x.createdAt));
+  const quizLatest = latestQuizPerNode(quizRecs);
+  const q = quizSum(quizLatest);
+  const cum = quizSum(latestQuizPerNode(ci));
+  const retryRecs = quizRecs.filter(x => !inRange(x.createdAt));
+
+  const cars = snap.carriers.filter(x => x.who === u.id);
+  const acts = [];
+  cars.forEach(c => (c.actions || []).filter(v => !v.del).forEach(v => acts.push(v)));
+  const open = acts.filter(v => (v.st || 0) !== 2);
+  const overdue = open.filter(v => { const due = String(v.due || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(due) && due < end; });
+
+  const ops = snap.issues.filter(x => x.who === u.id && (x.status || 0) < 2);
+  const opsNew = snap.issues.filter(x => x.who === u.id && inRange(x.createdAt));
+  let hs = 0, hn = 0;
+  snap.issues.forEach(x => (x.replies || []).forEach(r => {
+    if (r.by === u.id && inRange(r.at)) { const s = helpScoreServer(r); hs += s; if (s) hn++; }
+  }));
+
+  const drills = snap.drills.filter(x => x.who === u.id);
+  const last14 = dayAdd(end, -13);
+  const drills14 = drills.filter(x => { const k = bjKey(x.createdAt); return k >= last14 && k <= end; });
+  /* 均分与「近 14 天演练次数」同口径，避免次数与均分跨时间范围 */
+  const scores = drills14.map(drillTotalServer).filter(v => v != null);
+  const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+
+  const reveals = snap.reveals.filter(x => x.who === u.id);
+  const deposits = snap.deposits.filter(x => x.who === u.id);
+
+  const actsOn = (snap.activity[u.id] || []).filter(a => daySet.has(bjKey(a.at)));
+  const lastAct = actsOn.length ? actsOn.reduce((m, a) => (a.at >= m.at ? a : m), actsOn[0]) : null;
+  const activityAt = lastAct ? lastAct.at : 0;
+  const lastAt = (snap.activity[u.id] || []).reduce((m, a) => Math.max(m, a.at), 0);
+  const kinds = {};
+  actsOn.forEach(a => { kinds[a.kind] = (kinds[a.kind] || 0) + 1; });
+
+  let loginAt = 0;
+  (MS.logins || []).forEach(l => { if (l.id === u.id && inRange(l.at)) loginAt = Math.max(loginAt, toMs(l.at)); });
+  if (u.lastLoginAt && inRange(u.lastLoginAt)) loginAt = Math.max(loginAt, toMs(u.lastLoginAt));
+
+  const inviteDay = u.createdAt ? bjKey(u.createdAt) : "";
+  return {
+    u, days, end, joinsDays: inviteDay ? daysBetween(inviteDay, end) : 999,
+    nodesDone: new Set(ci.filter(x => x.nodeId).map(x => x.nodeId)).size,
+    /* 只统计真正关联到产品地图节点的记录，避免「自定义学习记录」被当成通关节点虚增 */
+    nodesNew: new Set(newRecs.filter(x => x.nodeId).map(x => x.nodeId)).size,
+    newRecs, retryRecs,
+    quizNodes: quizLatest.length, quizCorrect: q.correct, quizTotal: q.total, quizAcc: q.acc,
+    cumCorrect: cum.correct, cumTotal: cum.total, cumAcc: cum.acc,
+    cars: cars.length, carsIn: cars.filter(x => inRange(x.createdAt || x.updatedAt)).length,
+    open: open.length, overdue: overdue.length,
+    ops: ops.length, opsNew: opsNew.length,
+    dr14: drills14.length, drTotal: drills.length, avg, hs, hn,
+    reveals: reveals.length, revealsIn: reveals.filter(x => inRange(x.at || x.updatedAt)).length,
+    deposits: deposits.length, depositsIn: deposits.filter(x => inRange(x.createdAt)).length,
+    activityAt, lastKind: lastAct ? lastAct.kind : "", lastActiveAt: lastAt, lastActiveDay: lastAt ? bjKey(lastAt) : "",
+    loginAt, activeAt: Math.max(activityAt, loginAt), activeDays: new Set(actsOn.map(a => bjKey(a.at))).size, kinds,
+    paces: mapPaceServer(u.id, snap.checkins, end),
+    goal: goalProgress(u.id, snap.checkins),
+  };
+}
+/* 风险预警：所有报表共用；文案带日期/数字，避免“看起来像模板” */
+function riskItems(s) {
+  const out = [];
+  const nm = s.u.name;
+  const span = s.days.length > 1 ? "本周" : "今日";
+  /* 账号当天新建的，当天还没动作属于正常，不算风险（避免刚拉进群就被报「未登录」） */
+  if (!s.activeAt && s.joinsDays >= 1) {
+    out.push(`${nm} ${span}无任何活动（未登录、未打卡、未做题、未更新记录）`);
+  } else if (s.loginAt && !s.activityAt) {
+    out.push(`${nm} ${span}仅登录，未打卡/做题/更新记录`);
+  }
+  if (s.overdue) out.push(`${nm} 有 ${s.overdue} 条行动已超期`);
+  if (s.ops >= 3) out.push(`${nm} 未闭环问题 ${s.ops} 条`);
+  if (s.quizTotal > 0 && s.quizAcc != null && s.quizAcc < 70) out.push(`${nm} ${span}小测正确率 ${s.quizAcc}%（${s.quizCorrect}/${s.quizTotal}，建议回顾 IMA 原文）`);
+  if (s.dr14 === 0 && s.joinsDays >= 14) out.push(`${nm} 近 14 天无演讲演练 / 客户现场培训记录`);
+  s.paces.forEach(p => {
+    if (p.over) out.push(`${nm} 产品地图 ${p.name}档已超期 ${-p.left} 天（还差 ${p.remain} 个节点）`);
+    else if (p.risk) out.push(`${nm} 产品地图 ${p.name}档仅剩 ${p.left} 天（还差 ${p.remain} 个节点，需日均 ${Math.ceil(p.remain / Math.max(1, p.left))} 个）`);
+  });
+  if (s.days.length === 1 && !s.activityAt && s.lastActiveDay) {
+    const idle = workdaysAfter(s.lastActiveDay, s.end);
+    if (idle >= 2) out.push(`${nm} 连续 ${idle} 个工作日无业务活动（上次 ${s.lastActiveDay}）`);
+  }
+  return out;
+}
+const kindText = kinds => Object.entries(kinds || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]).join("、");
+
+/* 工作日日报：按北京时间当天聚合，一次发一封 */
+function buildDailyReport(day, opts) {
+  const o = opts || {};
   const today = day || bjKey(Date.now());
-  const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
-  const checks = (D.checkins.list || []).filter(x => !x.del);
-  const carriers = (D.carriers.list || []).filter(x => !x.del);
-  const issues = (D.issues.list || []).filter(x => !x.del);
-  const drills = (D.drills.list || []).filter(x => !x.del);
-  const reveals = (D.reveals && D.reveals.list ? D.reveals.list : []).filter(x => !x.del);
-  const deposits = (D.deposits && D.deposits.list ? D.deposits.list : []).filter(x => !x.del);
-  const logins = (MS.logins || []).filter(l => bjKey(l.at) === today);
-  const card = [];
-  newbies.forEach(u => {
-    const ci = checks.filter(x => x.who === u.id);
-    const todayCi = ci.filter(x => bjKey(x.createdAt || x.updatedAt || 0) === today);
-    const cars = carriers.filter(x => x.who === u.id);
-    const acts = cars.reduce((a, c) => a.concat((c.actions || []).filter(v => !v.del)), []);
-    const open = acts.filter(v => (v.st || 0) !== 2);
-    const overdue = open.filter(v => v.due && String(v.due).slice(0, 10) < today);
-    const ops = issues.filter(x => x.who === u.id && (x.status || 0) < 2);
-    const todayOps = issues.filter(x => x.who === u.id && bjKey(x.createdAt || 0) === today);
-    const dr = drills.filter(x => x.who === u.id && Date.now() - (x.createdAt || 0) <= 14 * 86400000);
-    const scores = drills.filter(x => x.who === u.id).map(drillTotalServer).filter(v => v != null);
-    const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
-    let hs = 0, hn = 0;
-    issues.forEach(x => (x.replies || []).forEach(r => { if (r.by === u.id) { const s = helpScoreServer(r); hs += s; if (s) hn++; } }));
-    const login = logins.filter(l => l.id === u.id);
-    const paces = mapPaceServer(u.id, checks, today);
-    // 小测正确率
-    const qzAll = ci.filter(x => x.total > 0);
-    const qzToday = todayCi.filter(x => x.total > 0);
-    const correctAll = qzAll.reduce((s, x) => s + (x.correct || 0), 0);
-    const totalAll = qzAll.reduce((s, x) => s + (x.total || 0), 0);
-    const acc = totalAll > 0 ? Math.round(correctAll * 100 / totalAll) : null;
-    const todayCorrect = qzToday.reduce((s, x) => s + (x.correct || 0), 0);
-    const todayTotal = qzToday.reduce((s, x) => s + (x.total || 0), 0);
-    // 自查展开 & 知识沉淀
-    const rv = reveals.filter(x => x.who === u.id);
-    const todayRv = rv.filter(x => bjKey(x.at || x.updatedAt || 0) === today);
-    const dp = deposits.filter(x => x.who === u.id);
-    const todayDp = dp.filter(x => bjKey(x.createdAt || 0) === today);
-    card.push({ u, ci: ci.length, todayCi: todayCi.length, cars: cars.length, open: open.length, overdue: overdue.length,
-      ops: ops.length, todayOps: todayOps.length, dr: dr.length, avg, hs, hn, paces, login: login.length ? bjTime(login[login.length - 1].at) : "—",
-      acc, todayCorrect, todayTotal, rv: rv.length, todayRv: todayRv.length, dp: dp.length, todayDp: todayDp.length,
-      todayCars: cars.filter(x => bjKey(x.createdAt || 0) === today).length });
-  });
-  // 高频错题汇总
-  const wrongCount = {};
-  checks.forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
-  const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  // 今日打卡节点明细（按人）
-  const todayDetail = {};
-  newbies.forEach(u => {
-    todayDetail[u.id] = checks.filter(x => x.who === u.id && bjKey(x.createdAt || x.updatedAt || 0) === today)
-      .map(x => ({ module: x.module || x.line || "—", note: x.note || "", correct: x.correct, total: x.total }));
-  });
-  // 载体跟进明细
+  const S = snapshot();
+  const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
+  const card = newbies.map(u => userStats(u, [today], S));
+  const needAtt = [];
+  card.forEach(c => riskItems(c).forEach(t => needAtt.push(t)));
+
+  const rows = card.map(c => {
+    const mp = c.paces.map(p => `<span style="color:${p.over ? "#B03A2E" : p.risk ? "#A9691B" : "#7C8896"}">${p.name} ${p.d}/${p.goal}${p.over ? " 超期" : ""}${p.risk ? " 临期" : ""}</span>`).join("<br>");
+    const live = c.activityAt
+      ? `${bjHm(c.activityAt)}<div style="font-size:11.5px;color:#7C8896">${h(c.lastKind || "")}</div>`
+      : c.loginAt ? `${bjHm(c.loginAt)}<div style="font-size:11.5px;color:#A9691B">仅登录</div>` : "—";
+    return `<tr>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${live}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesDone}<span style="color:#7C8896">（今日 +${c.nodesNew}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.cumAcc != null ? c.cumAcc + "%" : "—"}${c.quizTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.quizCorrect}/${c.quizTotal}</span>` : `<span style="color:#7C8896"> · 今日无小测</span>`}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">载体 ${c.cars}${c.carsIn ? ` · 今日动 ${c.carsIn}` : ""}</div></td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.opsNew ? `<span style="color:#A9691B"> · 今日 +${c.opsNew}</span>` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
+      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span><div style="font-size:11.5px;color:#7C8896">自查 ${c.reveals}${c.revealsIn ? ` · 今日 ${c.revealsIn}` : ""}</div><div style="font-size:11.5px;color:#7C8896">沉淀 ${c.deposits}${c.depositsIn ? ` · 今日 ${c.depositsIn}` : ""}</div></td>
+    </tr>`; }).join("");
+
+  const todayDetailHtml = card.filter(c => c.newRecs.length || c.retryRecs.length).map(c => {
+    const items = c.newRecs.map(x => `<li>${h(x.module || x.line || "—")}${x.total > 0 ? ` · 小测 ${x.correct}/${x.total}` : ""}${x.note ? ` · ${h(String(x.note).slice(0, 40))}` : ""}</li>`)
+      .concat(c.retryRecs.map(x => `<li>${h(x.module || x.line || "—")} · 重做小测 ${x.correct}/${x.total}</li>`));
+    return `<div style="margin-top:8px"><b style="color:#2C3E50">${h(c.u.name)}</b> 今日 ${items.length} 条学习记录：<ul style="margin:4px 0 0 18px;padding:0;font-size:12.5px;color:#4A5568">${items.join("")}</ul></div>`;
+  }).join("");
+
   const carrierLines = [];
-  carriers.forEach(c => {
+  const scopeIds = new Set(newbies.map(u => u.id));
+  S.carriers.filter(c => scopeIds.has(c.who)).forEach(c => {
     const acts = (c.actions || []).filter(v => !v.del);
     const open = acts.filter(v => (v.st || 0) !== 2);
     carrierLines.push({ who: c.who, name: c.name, partner: c.partner || "—", next: c.nextDate || "—", open: open.length, total: acts.length });
   });
-  const needAtt = [];
-  card.forEach(c => {
-    if (!c.login || c.login === "—") needAtt.push(`${nameOf(c.u.id)} 今日未登录`);
-    if (c.overdue) needAtt.push(`${nameOf(c.u.id)} 有 ${c.overdue} 条行动已超期`);
-    if (!c.dr) needAtt.push(`${nameOf(c.u.id)} 近双周无演讲演练/客户现场培训`);
-    if (c.ops >= 3) needAtt.push(`${nameOf(c.u.id)} 未闭环问题 ${c.ops} 条`);
-    if (c.acc != null && c.acc < 70 && c.todayTotal > 0) needAtt.push(`${nameOf(c.u.id)} 小测正确率 ${c.acc}% 偏低（建议回顾 IMA 原文）`);
-    c.paces.forEach(p => {
-      if (p.over) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档已超期 ${-p.left} 天（还差 ${p.remain} 个节点）`);
-      else if (p.risk) needAtt.push(`${nameOf(c.u.id)} 产品地图 ${p.name}档仅剩 ${p.left} 天（还差 ${p.remain} 个节点，需日均 ${Math.ceil(p.remain / Math.max(1, p.left))} 个）`);
-    });
-  });
-  const rows = card.map(c => { const mp = c.paces.map(p => `<span style="color:${p.over ? "#B03A2E" : p.risk ? "#A9691B" : "#7C8896"}">${p.name} ${p.d}/${p.goal}${p.over ? " 超期" : ""}${p.risk ? " 临期" : ""}</span>`).join("<br>");
-    return `<tr>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.login}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ci}<span style="color:#7C8896">（今日 ${c.todayCi}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.acc != null ? c.acc + "%" : "—"}${c.todayTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.todayCorrect}/${c.todayTotal}</span>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open}${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">载体 ${c.cars}${c.todayCars ? ` · 今日+${c.todayCars}` : ""}</div></td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.todayOps ? `<span style="color:#A9691B"> · 今日 +${c.todayOps}</span>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span><div style="font-size:11.5px;color:#7C8896">自查 ${c.rv}${c.todayRv ? ` · 今日 ${c.todayRv}` : ""}</div><div style="font-size:11.5px;color:#7C8896">沉淀 ${c.dp}${c.todayDp ? ` · 今日 ${c.todayDp}` : ""}</div></td>
-    </tr>`;}).join("");
-  const todayDetailHtml = newbies.filter(u => (todayDetail[u.id] || []).length).map(u =>
-    `<div style="margin-top:8px"><b style="color:#2C3E50">${h(u.name)}</b> 今日打卡 ${todayDetail[u.id].length} 个节点：<ul style="margin:4px 0 0 18px;padding:0;font-size:12.5px;color:#4A5568">${todayDetail[u.id].map(x => `<li>${h(x.module)}${x.total > 0 ? ` · 小测 ${x.correct}/${x.total}` : ""}${x.note ? ` · ${h(x.note.slice(0, 40))}` : ""}</li>`).join("")}</ul></div>`
-  ).join("");
-  const carrierHtml = carrierLines.length ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">载体</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">待办/总</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td></tr>`).join("")}</table>` : "<p style=\"color:#7C8896;font-size:12.5px\">暂无载体记录</p>";
-  const wrongHtml = topWrong.length ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">错题</th><th style="padding:6px 8px">答错次数</th></tr>${topWrong.map(([q, n]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(q)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:#B03A2E">${n}</td></tr>`).join("")}</table>` : "<p style=\"color:#7C8896;font-size:12.5px\">暂无错题记录</p>";
-  return { today, card, needAtt, html:
-    `<p style="margin:0 0 10px"><b>${today}</b> 工作日整体进度${newbies.length ? "" : "（暂无新人账号）"}</p>
+  const carrierHtml = carrierLines.length
+    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">载体</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">待办/总</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td></tr>`).join("")}</table>`
+    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无载体记录</p>";
+
+  const wrongCount = {};
+  S.checkins.filter(x => scopeIds.has(x.who)).forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
+  const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const wrongHtml = topWrong.length
+    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">错题</th><th style="padding:6px 8px">答错次数</th></tr>${topWrong.map(([q, n]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(q)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:#B03A2E">${n}</td></tr>`).join("")}</table>`
+    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无错题记录</p>";
+
+  const html = `<p style="margin:0 0 10px"><b>${today}</b> 工作日整体进度${newbies.length ? "" : "（暂无新人账号）"}</p>
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
-         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日登录</th>
-         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率</th><th style="padding:8px 9px">载体待办</th>
-         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">双周演练</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
+         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日活跃（最近动作）</th>
+         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率（累计/今日）</th><th style="padding:8px 9px">载体待办</th>
+         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">近 14 天演练</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
      ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8C2B1F">需要关注</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>` : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">今日各项无明显阻塞。</p>`}
+       <b style="color:#8C2B1F">需要关注（${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
+      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">今日各项无明显阻塞。</p>`}
      <div style="margin-top:14px;background:#F0F7FF;border:1px solid #CFE2F3;border-radius:8px;padding:10px 12px">
-       <b style="color:#1A5276">今日打卡节点明细</b>${todayDetailHtml || "<p style=\"color:#7C8896;font-size:12.5px;margin:6px 0 0\">今日暂无打卡</p>"}</div>
+       <b style="color:#1A5276">今日学习记录（通关节点 / 重做小测）</b>${todayDetailHtml || "<p style=\"color:#7C8896;font-size:12.5px;margin:6px 0 0\">今日暂无打卡或小测</p>"}</div>
      <div style="margin-top:14px;background:#F5FFF0;border:1px solid #CFEBD0;border-radius:8px;padding:10px 12px">
        <b style="color:#3C6B1A">客户载体跟进</b>${carrierHtml}</div>
      <div style="margin-top:14px;background:#FFFBF0;border:1px solid #F3E7C9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8A6D1A">高频错题（全员）</b>${wrongHtml}</div>
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：打卡=已登记节点数；小测正确率=答对题数/总题数（累计）；待办=载体下未闭环行动；演练=近 14 天；自查=展开自查要点次数；沉淀=知识沉淀条数；互助分由导师+主管双评认定。</p>` };
+       <b style="color:#8A6D1A">高频错题（本次统计范围）</b>${wrongHtml}</div>
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/载体/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率累计值按每节点最新一次作答计算，同一节点重做不重复累计；待办=载体下未闭环行动；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
+  return { today, card, needAtt, html };
 }
 
-function sendDailyReport(day) {
-  const r = buildDailyReport(day);
-  return sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
-    `自动发送 · 工作日 ${REPORT_HOUR}:00 后汇总；由 GitHub Actions 定时任务投递。`);
+/* 周报：默认统计上一个自然周（周一至周日） */
+function lastWeekRange(day) {
+  const d = new Date(day + "T00:00:00Z");
+  const sinceMon = (d.getUTCDay() + 6) % 7;
+  const thisMon = dayAdd(day, -sinceMon);
+  const end = dayAdd(thisMon, -1);
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(dayAdd(end, -i));
+  return { start: days[0], end, days };
+}
+function buildWeeklyReport(day, opts) {
+  const o = opts || {};
+  const range = lastWeekRange(day || bjKey(Date.now()));
+  const S = snapshot();
+  const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
+  const card = newbies.map(u => userStats(u, range.days, S));
+  const needAtt = [];
+  card.forEach(c => riskItems(c).forEach(t => needAtt.push(t)));
+  const rows = card.map(c => `<tr>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.activeDays} 天<div style="font-size:11.5px;color:#7C8896">${h(kindText(c.kinds)) || "—"}</div></td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesNew} 个<div style="font-size:11.5px;color:#7C8896">累计 ${c.nodesDone}${c.goal ? ` · 目标 ${c.goal.pct}%` : ""}</div></td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.quizCorrect}/${c.quizTotal}${c.quizAcc != null ? ` · ${c.quizAcc}%` : ""}</td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.carsIn} 个<div style="font-size:11.5px;color:#7C8896">待办 ${c.open}${c.overdue ? ` · 超期 ${c.overdue}` : ""}</div></td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.opsNew} 条<div style="font-size:11.5px;color:#7C8896">未闭环 ${c.ops}</div></td>
+     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs} 分/${c.hn} 条<div style="font-size:11.5px;color:#7C8896">自查 ${c.revealsIn} · 沉淀 ${c.depositsIn}</div></td>
+   </tr>`).join("");
+  const html = `<p style="margin:0 0 10px"><b>${range.start} ～ ${range.end}</b> 新人培养周报</p>
+     <table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left">
+         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">本周通关</th>
+         <th style="padding:8px 9px">本周小测</th><th style="padding:8px 9px">近 14 天演练</th><th style="padding:8px 9px">载体</th>
+         <th style="padding:8px 9px">新问题</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
+       ${rows}
+     </table>
+     ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
+       <b style="color:#8C2B1F">需要关注（${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
+      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">本周各项无明显阻塞。</p>`}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=本周有登录或任何业务动作的天数；通关=本周首次通关节点；小测正确率按每节点本周最后一次作答汇总。</p>`;
+  return { range, card, needAtt, html };
+}
+
+/* 个人汇总：某位新人的当日概览 + 目标达成率 + 风险提示 */
+function personalSection(c) {
+  const g = c.goal;
+  const kinds = Object.entries(c.kinds || {}).map(([k, n]) => `${k} ${n}`).join(" · ") || "无业务动作";
+  const risks = riskItems(c);
+  return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
+    <div style="font-size:15px;font-weight:700;color:#17558F">${h(c.u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${c.end}</span></div>
+    <table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px">
+      <tr><td style="padding:5px 8px;color:#5C6772;width:110px">今日活跃</td><td style="padding:5px 8px">${c.activeAt ? bjHm(c.activeAt) + "（" + h(c.lastKind || "登录") + "）" : "无"}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">今日学习</td><td style="padding:5px 8px">通关 ${c.nodesNew} 个节点；小测 ${c.quizTotal > 0 ? c.quizCorrect + "/" + c.quizTotal + "（" + c.quizAcc + "%）" : "无"}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">累计进度</td><td style="padding:5px 8px">地图 ${c.nodesDone}/${g ? g.total : "—"} 个节点${g ? `（目标达成 ${g.pct}%）` : ""}；累计正确率 ${c.cumAcc != null ? c.cumAcc + "%" : "—"}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">业务动作</td><td style="padding:5px 8px">${h(kinds)}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">待办 / 问题</td><td style="padding:5px 8px">载体待办 ${c.open}${c.overdue ? `（超期 ${c.overdue}）` : ""}；未闭环问题 ${c.ops}</td></tr>
+      <tr><td style="padding:5px 8px;color:#5C6772">演练 / 互助</td><td style="padding:5px 8px">近 14 天演练 ${c.dr14} 次${c.avg != null ? `（均分 ${c.avg}）` : ""}；互助 ${c.hs} 分/${c.hn} 条</td></tr>
+    </table>
+    ${risks.length ? `<div style="margin-top:8px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:8px 10px;color:#8C2B1F;font-size:12.5px"><b>风险提示</b><ul style="margin:4px 0 0 18px;padding:0">${risks.map(x => `<li>${h(x)}</li>`).join("")}</ul></div>`
+      : `<div style="margin-top:8px;color:#3C6B1A;font-size:12.5px">今日无明显风险。</div>`}
+  </div>`;
+}
+function buildPersonalReport(users, day) {
+  const S = snapshot();
+  const today = day || bjKey(Date.now());
+  const list = (users || []).map(u => userStats(u, [today], S));
+  const html = `<p style="margin:0 0 6px"><b>${today}</b> 个人学习汇总</p>
+    <p style="color:#5C6772;font-size:12.5px">包含当日活跃、学习记录、目标达成率与风险提示，数据以工作台实际记录为准（北京时间）。</p>
+    ${list.map(personalSection).join("") || "<p style=\"color:#7C8896\">暂无新人数据</p>"}`;
+  return { today, list, html };
+}
+
+function mergeRuleScopes(rules) {
+  const m = {};
+  rules.forEach(r => {
+    if (!m[r.email]) m[r.email] = { email: r.email, all: false, ids: new Set() };
+    if (r.scope === "all") m[r.email].all = true;
+    else r.scope.forEach(id => m[r.email].ids.add(id));
+  });
+  return Object.values(m).map(x => ({ email: x.email, ids: x.all ? null : [...x.ids] })).filter(x => x.ids === null || x.ids.length);
+}
+async function sendDailyAll(day) {
+  const cfg = getMailCfg();
+  if (!cfg.daily) return { ok: false, msg: "日报已在邮件中心关闭", skipped: true };
+  const theDay = day || bjKey(Date.now());
+  /* 只保留「范围内仍有在职新人」的规则；勾选的人被删/停用后不再发空表 */
+  const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
+  const rawGroups = mergeRuleScopes(rulesFor("daily"));
+  const groups = rawGroups.map(g => ({
+    email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
+  })).filter(g => g.ids === null || g.ids.length);
+  if (rawGroups.length && !groups.length) return { ok: true, to: [], skipped: true, msg: "日报规则勾选的新人均已停用/删除，未发送" };
+  if (!groups.length) {
+    const r = buildDailyReport(theDay);
+    return sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
+      `自动发送 · 工作日 ${cfg.reportHour}:00 汇总（邮件中心未配置规则时，沿用兜底收件人 + 已填邮箱的导师/主管）。`, { to: mailTo() });
+  }
+  const results = [];
+  for (const g of groups) {
+    const r = buildDailyReport(theDay, { newbieIds: g.ids });
+    const x = await sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
+      `自动发送 · 工作日 ${cfg.reportHour}:00 汇总。`, { to: [g.email] });
+    results.push(Object.assign({ to: [g.email] }, x));
+  }
+  const ok = results.some(x => x.ok);
+  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
+    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
+}
+async function sendWeeklyAll(day) {
+  const cfg = getMailCfg();
+  if (!cfg.weekly) return { ok: false, msg: "周报已在邮件中心关闭", skipped: true };
+  const theDay = day || bjKey(Date.now());
+  const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
+  const rawGroups = mergeRuleScopes(rulesFor("weekly"));
+  const groups = rawGroups.map(g => ({
+    email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
+  })).filter(g => g.ids === null || g.ids.length);
+  if (rawGroups.length && !groups.length) return { ok: true, to: [], skipped: true, msg: "周报规则勾选的新人均已停用/删除，未发送" };
+  if (!groups.length) {
+    const r = buildWeeklyReport(theDay);
+    return sendMail(`【周报】${r.range.start}～${r.range.end} 新人培养周报`, r.html,
+      "自动发送 · 每周一汇总上一自然周（周一至周日）。", { to: mailTo() });
+  }
+  const results = [];
+  for (const g of groups) {
+    const r = buildWeeklyReport(theDay, { newbieIds: g.ids });
+    const x = await sendMail(`【周报】${r.range.start}～${r.range.end} 新人培养周报`, r.html,
+      "自动发送 · 每周一汇总上一自然周（周一至周日）。", { to: [g.email] });
+    results.push(Object.assign({ to: [g.email] }, x));
+  }
+  const ok = results.some(x => x.ok);
+  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
+    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
+}
+async function sendPersonalAll(day) {
+  const cfg = getMailCfg();
+  const theDay = day || bjKey(Date.now());
+  const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const targets = {};
+  const add = (email, id) => { if (!validEmail(email)) return; (targets[email] = targets[email] || []).push(id); };
+  if (cfg.personalSelf) newbies.forEach(u => { if (validEmail(u.email)) add(u.email, u.id); });
+  rulesFor("personal").forEach(r => {
+    const ids = r.scope === "all" ? newbies.map(u => u.id) : r.scope;
+    ids.forEach(id => add(r.email, id));
+  });
+  const emails = Object.keys(targets);
+  if (!emails.length) return { ok: true, to: [], msg: "没有配置个人汇总收件人（可在账号或邮件中心填邮箱）", skipped: true };
+  const results = [];
+  for (const email of emails) {
+    const us = newbies.filter(u => targets[email].indexOf(u.id) >= 0);
+    const r = buildPersonalReport(us, theDay);
+    const x = await sendMail(`【个人汇总】${r.today} 学习进展与风险提示`, r.html,
+      "自动发送 · 工作日个人汇总（含目标达成率与风险提示）。", { to: [email] });
+    results.push(Object.assign({ to: [email] }, x));
+  }
+  const ok = results.some(x => x.ok);
+  return { ok, to: emails, channel: (results.find(x => x.channel) || {}).channel || "", results,
+    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
+}
+/* 风险预警内容：只列有风险的新人；无风险返回 null */
+function buildRiskReport(users, day) {
+  const theDay = day || bjKey(Date.now());
+  const S = snapshot();
+  const list = (users || []).map(u => userStats(u, [theDay], S)).map(c => ({ c, risks: riskItems(c) })).filter(x => x.risks.length);
+  if (!list.length) return null;
+  const html = `<p style="margin:0 0 8px"><b>${theDay}</b> 风险预警（仅列有风险的新人）</p>
+    ${list.map(({ c, risks }) => `<div style="margin-top:10px"><b>${h(c.u.name)}</b><ul style="margin:4px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${risks.map(x => `<li>${h(x)}</li>`).join("")}</ul></div>`).join("")}
+    <p style="margin-top:12px;color:#5C6772;font-size:12px">统计口径与日报一致（北京时间自然日）。</p>`;
+  return { html, count: list.length, list };
+}
+async function sendRiskAll(day) {
+  const theDay = day || bjKey(Date.now());
+  const groups = mergeRuleScopes(rulesFor("risk"));
+  if (!groups.length) return { ok: true, to: [], msg: "未配置风险预警收件人", skipped: true };
+  const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const results = [];
+  for (const g of groups) {
+    const us = g.ids ? allNewbies.filter(u => g.ids.indexOf(u.id) >= 0) : allNewbies;
+    const r = buildRiskReport(us, theDay);
+    if (!r) continue;
+    const x = await sendMail(`【风险预警】${theDay} 有 ${r.count} 位新人需要关注`, r.html,
+      "自动发送 · 仅在有风险时发送。", { to: [g.email] });
+    results.push(Object.assign({ to: [g.email] }, x));
+  }
+  if (!results.length) return { ok: true, to: [], msg: "今日无风险项，未发送", skipped: true };
+  const ok = results.some(x => x.ok);
+  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
+    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
+}
+/* 定时任务统一入口：日报 + 个人汇总 + 风险预警（工作日）；周一再加周报 */
+let scheduledLock = false;
+async function runScheduled(day) {
+  if (scheduledLock) return { ok: true, skipped: "正在发送中" };
+  scheduledLock = true;
+  try {
+    const cfg = getMailCfg();
+    const theDay = day || bjKey(Date.now());
+    const st = mailState();
+    const out = {};
+    if (cfg.daily && st.lastDaily !== theDay) {
+      out.daily = await sendDailyAll(theDay);
+      if (out.daily.ok) markMailSent("lastDaily", theDay);
+    }
+    if (cfg.daily && st.lastPersonal !== theDay) {
+      out.personal = await sendPersonalAll(theDay);
+      if (out.personal.ok) markMailSent("lastPersonal", theDay);
+    }
+    if (cfg.daily && st.lastRisk !== theDay) {
+      out.risk = await sendRiskAll(theDay);
+      if (out.risk.ok) markMailSent("lastRisk", theDay);
+    }
+    const wd = bj(theDay).getUTCDay();
+    if (wd === 1 && cfg.weekly && st.lastWeekly !== theDay) {
+      out.weekly = await sendWeeklyAll(theDay);
+      if (out.weekly.ok) markMailSent("lastWeekly", theDay);
+    }
+    if (!Object.keys(out).length) return { ok: true, skipped: "今日已发" };
+    return Object.assign({ ok: true, day: theDay }, out);
+  } finally { scheduledLock = false; }
+}
+function sendDailyReport(day) { return sendDailyAll(day); }
+/* 按类型生成邮件内容（供「邮件中心」预览 / 手动发送，与自动发送共用同一套统计口径） */
+function reportOf(type, day, ids) {
+  const theDay = day || bjKey(Date.now());
+  const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
+  const sel = ids && ids.length ? allNewbies.filter(u => ids.indexOf(u.id) >= 0) : allNewbies;
+  const scope = ids && ids.length ? ids : undefined;
+  if (type === "weekly") {
+    const r = buildWeeklyReport(theDay, { newbieIds: scope });
+    return { subject: `【周报】${r.range.start}～${r.range.end} 新人培养周报`, html: r.html,
+      note: "手动发送 · 上一自然周（周一至周日）。" };
+  }
+  if (type === "personal") {
+    const r = buildPersonalReport(sel, theDay);
+    return { subject: `【个人汇总】${theDay} 学习进展与风险提示`, html: r.html,
+      note: "手动发送 · 个人汇总（含目标达成率与风险提示）。" };
+  }
+  if (type === "risk") {
+    const r = buildRiskReport(sel, theDay);
+    if (!r) return null;
+    return { subject: `【风险预警】${theDay} 有 ${r.count} 位新人需要关注`, html: r.html,
+      note: "手动发送 · 仅列有风险的新人。" };
+  }
+  const r = buildDailyReport(theDay, { newbieIds: scope });
+  return { subject: `【每日进度】${r.today} 新人培养整体进度`, html: r.html,
+    note: `手动发送 · 工作日 ${getMailCfg().reportHour}:00 汇总。` };
 }
 /* 供 GitHub Actions 定时任务拉取日报（只生成内容，不在服务端发送；Render 免费实例会休眠，定时器不可靠） */
 function reportPayload() {
   const r = buildDailyReport();
   const subject = `【每日进度】${r.today} 新人培养整体进度`;
-  const note = `自动发送 · 工作日 ${REPORT_HOUR}:00 汇总。`;
+  const note = `自动发送 · 工作日 ${getMailCfg().reportHour}:00 汇总。`;
   return { to: mailTo(), subject, html: mailShell(subject, r.html, note), from: MAIL_FROM, replyTo: MAIL_REPLY_TO, today: r.today };
 }
-/* 工作日到点自动发日报：每 5 分钟检查一次，同一天只发一次。
-   GitHub Actions 的 cron 只负责「唤醒实例 + 触发 /api/daily_ping」兜底，不会重复发。 */
+/* 工作日到点自动发：每 5 分钟检查一次，同一天只发一次（发送记录持久化，重启不重复）。
+   GitHub Actions 的 cron 只负责「唤醒实例 + 触发 /api/daily_ping」兜底。 */
 function startDailyReportTimer() {
   setInterval(() => {
-    if (!MAIL_ON) return;                          // 未配置密钥时不占用「今日已发」标记
+    if (!MAIL_ON) return;
+    const cfg = getMailCfg();
     const d = bj(Date.now());
     const wd = d.getUTCDay(), hour = d.getUTCHours();
+    if (wd === 0 || wd === 6) return;
+    if (hour < cfg.reportHour) return;
     const key = bjKey(Date.now());
-    if (wd === 0 || wd === 6) return;              // 周末不发
-    if (hour < REPORT_HOUR) return;
-    if ((MS.lastReport || "") === key) return;
-    if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;   // 失败后 30 分钟再试，避免刷屏
+    const st = mailState();
+    if (!(cfg.daily && st.lastDaily !== key) && !(wd === 1 && cfg.weekly && st.lastWeekly !== key)) return;
+    if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;
     MS.lastTry = Date.now(); saveMS();
-    sendDailyReport(key).then(r => {
-      if (r.ok) { MS.lastReport = key; saveMS(); }
-      else console.log("[mail] 日报未发送：", r.msg);
+    runScheduled(key).then(r => {
+      if (!r.ok) console.log("[mail] 定时发送未完成：", r.msg || "");
+      else if (!r.skipped) console.log("[mail] 定时邮件已处理：" + key);
     });
   }, 5 * 60000);
 }
@@ -989,7 +1465,7 @@ function requireStaff(req, res) {
 app.get("/api/mail_status", (req, res) => {
   if (!requireStaff(req, res)) return;
   res.json({ ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL, smtpHost: SMTP_ON ? SMTP_HOST : "", smtpUser: SMTP_ON ? SMTP_USER : "",
-    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: REPORT_HOUR,
+    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: getMailCfg().reportHour,
     lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today: bjKey(Date.now()) });
 });
 app.post("/api/mail_test", async (req, res) => {
@@ -1007,6 +1483,66 @@ app.post("/api/mail_report", async (req, res) => {
   const r = await sendDailyReport(/^\d{4}-\d{2}-\d{2}$/.test(day) ? day : bjKey(Date.now()));
   res.status(r.ok ? 200 : 400).json(r);
 });
+
+/* ---------- 邮件中心（超管在网站内配置收件人 / 内容 / 关注新人） ---------- */
+function requireAdmin(req, res) {
+  const me = tokenFromReq(req);
+  if (!me) { res.status(401).json({ ok: false, msg: "未登录或会话失效" }); return null; }
+  if (me.role !== "admin") { res.status(403).json({ ok: false, msg: "仅超级管理员可配置邮件中心" }); return null; }
+  return me;
+}
+function mailCfgPayload() {
+  const cfg = getMailCfg();
+  const users = (USERS.users || []).map(u => ({ id: u.id, name: u.name, username: u.username,
+    role: u.role, roleName: ROLE_NAME[u.role], email: u.email || "", active: !!u.active,
+    mentorId: u.mentorId || "", leadId: u.leadId || "" }));
+  return {
+    ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL,
+    types: MAIL_TYPES.map(x => ({ key: x[0], name: x[1] })),
+    cfg, users,
+    newbies: users.filter(u => u.role === "newbie" && u.active),
+    staff: users.filter(u => u.role !== "newbie" && u.active),
+    today: bjKey(Date.now()), lastSent: MS.lastSent || 0, state: mailState(),
+  };
+}
+app.get("/api/mail_cfg", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json(mailCfgPayload());
+});
+app.post("/api/mail_cfg", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const cfg = saveMailCfg(req.body || {});
+  res.json({ ok: true, cfg });
+});
+/* 预览：返回渲染好的邮件 HTML，供后台直接看内容（不发送） */
+app.get("/api/mail_preview", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const type = String(req.query.type || "daily");
+  if (!MAIL_TYPE_NAME[type]) return res.status(400).json({ ok: false, msg: "未知的邮件类型" });
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || "")) ? String(req.query.day) : bjKey(Date.now());
+  const ids = String(req.query.ids || "").split(",").map(x => x.trim()).filter(Boolean);
+  const r = reportOf(type, day, ids);
+  if (!r) return res.json({ ok: true, empty: true, day, subject: "无内容", html: mailShell("无内容", "<p>当前没有符合条件的内容（例如今日无风险项）。</p>", "预览") });
+  res.json({ ok: true, day, subject: r.subject, html: mailShell(r.subject, r.html, r.note) });
+});
+/* 手动发送：指定类型 / 日期 / 新人范围 / 收件人（收件人留空则按邮件中心规则或兜底收件人） */
+app.post("/api/mail_send", async (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const b = req.body || {};
+  const type = String(b.type || "daily");
+  if (!MAIL_TYPE_NAME[type]) return res.status(400).json({ ok: false, msg: "未知的邮件类型" });
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : bjKey(Date.now());
+  const ids = Array.isArray(b.ids) ? b.ids.map(String).filter(Boolean) : [];
+  let to = (Array.isArray(b.to) ? b.to : String(b.to || "").split(",")).map(x => String(x).trim().toLowerCase()).filter(validEmail);
+  /* 没手填收件人时：限定了新人范围，就只取「订阅了这些新人」的规则邮箱，避免把 A 的数据发给只关注 B 的人 */
+  if (!to.length) to = ids.length ? [...new Set(ids.flatMap(id => ruleEmails(type, id)))] : ruleEmails(type);
+  if (!to.length) to = mailTo();
+  if (!to.length) return res.status(400).json({ ok: false, msg: "没有收件人：请填写邮箱，或在邮件中心配置规则" });
+  const r = reportOf(type, day, ids);
+  if (!r) return res.json({ ok: true, skipped: true, msg: "当前没有符合条件的内容，未发送", to: [] });
+  const x = await sendMail(r.subject, r.html, r.note + " · 邮件中心手动发送。", { to });
+  res.status(x.ok ? 200 : 400).json(Object.assign({ to, subject: r.subject, day, type }, x));
+});
 /* GitHub Actions 定时任务用它拉取日报内容（备用；主链路是下面的 daily_ping 让服务端自己触发） */
 app.get("/api/report_payload", (req, res) => {
   const t = String(req.query.token || "");
@@ -1019,14 +1555,17 @@ app.get("/api/report_payload", (req, res) => {
 app.get("/api/daily_ping", async (req, res) => {
   const key = bjKey(Date.now());
   if (!MAIL_ON) return res.json({ ok: false, msg: "邮件通道未配置", skipped: "未配置" });
+  const cfg = getMailCfg();
   const d = bj(Date.now());
   const wd = d.getUTCDay(), hour = d.getUTCHours();
   if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
-  if (hour < REPORT_HOUR) return res.json({ ok: true, skipped: "未到 " + REPORT_HOUR + ":00" });
-  if ((MS.lastReport || "") === key) return res.json({ ok: true, skipped: "今日已发" });
-  const r = await sendDailyReport(key);
-  if (r.ok) { MS.lastReport = key; saveMS(); }
-  res.json({ ok: !!r.ok, msg: r.msg || "", to: r.to || [], channel: r.channel || "" });
+  if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00" });
+  const st = mailState();
+  const pending = (cfg.daily && st.lastDaily !== key) || (wd === 1 && cfg.weekly && st.lastWeekly !== key);
+  if (!pending) return res.json({ ok: true, skipped: "今日已发" });
+  const r = await runScheduled(key);
+  MS.lastReport = key; saveMS();
+  res.json({ ok: !!r.ok, msg: r.msg || "", to: r.to || [], channel: r.channel || "", result: r });
 });
 
 /* ---------- 企业微信扫码登录（可选） ---------- */
