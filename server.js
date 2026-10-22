@@ -170,7 +170,7 @@ function applyMailSeed() {
     }
     if (typeof u.mailAuto !== "boolean") u.mailAuto = true;
   });
-  USERS.mailSeedV = 3;
+  USERS.mailSeedV = 4;
   /* 兜底收件人默认就是导师 + 主管，保证未绑定关系的新人提醒不漏人 */
   const cur = USERS.mailCfg || {};
   if (!Array.isArray(cur.fallbackTo) || !cur.fallbackTo.length) {
@@ -224,7 +224,7 @@ function ensureUsers() {
     /* 推送方式：自动=按设定时间自动发；手动=只在账号管理里手动发送（默认自动） */
     if (typeof u.mailAuto !== "boolean") u.mailAuto = true;
   });
-  if (!USERS.mailSeedV || USERS.mailSeedV < 3) applyMailSeed();
+  if (!USERS.mailSeedV || USERS.mailSeedV < 4) applyMailSeed();
   writeJson(USERS_FILE, USERS);
 }
 /* 账号变更：本地落盘 +（若配了 GitHub）同步到仓库，避免重启丢账号 */
