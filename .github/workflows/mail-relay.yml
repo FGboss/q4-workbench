@@ -34,9 +34,9 @@ jobs:
         if: github.event_name == 'repository_dispatch'
         timeout-minutes: 3
         run: |
-          mkdir -p .relay
-          cd .relay
-          npm init -y > /dev/null 2>&1
+          mkdir -p relay-deps
+          printf '{"name":"relay-deps","private":true}' > relay-deps/package.json
+          cd relay-deps
           npm install nodemailer@10.1.7 --no-audit --no-fund --registry=https://registry.npmjs.org
 
       - name: 发送邮件（服务端已按人算好收件人）
@@ -45,7 +45,7 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           PAYLOAD_B64: ${{ github.event.client_payload.b64 }}
-          NODE_PATH: ${{ github.workspace }}/.relay/node_modules
+          NODE_PATH: ${{ github.workspace }}/relay-deps/node_modules
         run: node mail-relay.js
 
       - name: 定时兜底：唤醒实例并补发当日日报

@@ -1,4 +1,5 @@
 node_modules/
+relay-deps/
 data/
 *.log
 .DS_Store
