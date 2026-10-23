@@ -133,13 +133,18 @@ const newSalt = () => crypto.randomBytes(8).toString("hex");
 const newInvite = () => crypto.randomBytes(12).toString("hex");
 const hashPass = (p, salt) => sha("p|" + salt + "|" + p + "|" + APP_SECRET);
 
-/* ---------- 邮件订阅（账号自带，随账号一起持久化） ----------
-   导师/主管：整体日报 + 周报 + 个人汇总 + 风险预警 + 登录/问题即时提醒
-   新人：个人日报 + 个人周报（范围固定为本人）
-   后续新增导师/新人时，账号建好即带默认订阅，管理员在「账号管理」里可随时改。 */
+/* ---------- 邮件订阅（按角色固定内容，管理端不再逐项勾选） ----------
+   · 新人：个人学习汇总（每日）+ 个人周报（每周五），范围固定为本人；
+   · 导师/主管：整体日报 + 每位新人的个人汇总 + 风险预警 + 本周周报（每周五），范围默认全部新人，
+     后续新增导师时可在账号管理里勾选「只关注自己带的几位新人」；
+   · 登录提醒 / 问题提醒：只发给导师/主管，属即时单发。
+   发送时一律按 role 推导内容，账号上历史遗留的 mailTypes 不再参与判断。 */
 const STAFF_MAIL_TYPES = ["daily", "weekly", "personal", "risk", "login", "issue"];
 const NEWBIE_MAIL_TYPES = ["personal", "weekly"];
 const defaultMailTypes = role => (role === "newbie" ? NEWBIE_MAIL_TYPES : STAFF_MAIL_TYPES).slice();
+/* 某角色是否接收某类邮件（唯一判定入口） */
+const roleAcceptsMail = (role, type) =>
+  role === "newbie" ? (type === "personal" || type === "weekly") : true;
 let MAIL_SEED_DIRTY = false;
 /* 首次升级时把已知的四位成员一次性配置好；只跑一次，之后管理员的手动修改不会被覆盖 */
 const MAIL_SEED = [
@@ -395,7 +400,7 @@ async function getWecomToken() {
 function staffEmailsFor(newbieId, type) {
   const nb = findUser(newbieId);
   const ok = u => u && u.active && u.email && u.mailAuto !== false &&
-    (!type || (Array.isArray(u.mailTypes) && u.mailTypes.indexOf(type) >= 0));
+    (!type || roleAcceptsMail(u.role, type));
   const direct = [nb && nb.mentorId, nb && nb.leadId].filter(Boolean).map(findUser).filter(ok);
   /* 已绑定直属导师/主管：只发给这两位，避免「手动」账号被兜底收件人绕过 */
   if (direct.length) return [...new Set(direct.map(u => u.email))];
@@ -464,19 +469,19 @@ function saveMailCfg(patch) {
   return next;
 }
 /* 命中某类邮件、且关注范围包含该新人的规则。
-   规则来源 = 账号自带的订阅（推荐，账号管理里维护） + 旧版邮件中心的规则（兼容保留）。
-   新人的订阅范围永远是本人，避免把别人的数据发给他。 */
+   规则来源 = 账号角色（内容固定） + 旧版邮件中心的规则（兼容保留）。
+   新人的范围永远是本人，避免把别人的数据发给他。 */
 function userMailRules(type, newbieId, opts) {
   const autoOnly = !!(opts && opts.autoOnly);
   const out = [];
   (USERS.users || []).forEach(u => {
     if (!u.active || !validEmail(u.email)) return;
-    if (!Array.isArray(u.mailTypes) || u.mailTypes.indexOf(type) < 0) return;
+    if (!roleAcceptsMail(u.role, type)) return;
     if (autoOnly && u.mailAuto === false) return;      /* 仅手动：不参与定时推送 */
     const scope = u.role === "newbie" ? [u.id]
       : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope : []));
     if (scope !== "all" && newbieId && scope.indexOf(newbieId) < 0) return;
-    out.push({ id: "u:" + u.id, name: u.name || "", email: u.email, types: u.mailTypes.slice(), scope, enabled: true });
+    out.push({ id: "u:" + u.id, name: u.name || "", email: u.email, types: new Set(defaultMailTypes(u.role)), scope, enabled: true });
   });
   return out;
 }
@@ -1141,8 +1146,7 @@ function digestSubscribers(withWeekly) {
   };
   (USERS.users || []).forEach(u => {
     if (!u.active || !validEmail(u.email) || u.mailAuto === false) return;
-    const allowed = u.role === "newbie" ? ["personal", "weekly"] : DIGEST_TYPES;
-    const types = (u.mailTypes || []).filter(t => allowed.indexOf(t) >= 0 && (withWeekly || t !== "weekly"));
+    const types = DIGEST_TYPES.filter(t => roleAcceptsMail(u.role, t) && (withWeekly || t !== "weekly"));
     if (!types.length) return;
     const scope = u.role === "newbie" ? [u.id]
       : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope : []));
@@ -1190,7 +1194,7 @@ function renderDigest(parts) {
   const nav = parts.map(p => p.label).join(" · ");
   return `<div style="background:#EDF4FA;border:1px solid #CFE2F3;border-radius:8px;padding:9px 12px;font-size:12.5px;color:#1A5276">
       <b>本封汇总（1 封）</b>：${h(nav)}
-      <div style="color:#5C6772;font-size:11.8px;margin-top:2px">同一账号勾选的内容已合并为一封；登录提醒 / 问题提醒仍为即时单发。</div>
+      <div style="color:#5C6772;font-size:11.8px;margin-top:2px">内容按角色固定并合并为一封；登录提醒 / 问题提醒为即时单发。</div>
     </div>
     ${parts.map((p, i) => `<div style="${i ? "margin-top:22px;padding-top:16px;border-top:2px solid #E3E8EE;" : "margin-top:14px;"}">
       <div style="font-size:15px;font-weight:700;color:#0B3A63;margin-bottom:6px">${i + 1}. ${h(p.label)}</div>
@@ -1204,13 +1208,20 @@ async function sendDigestAll(day, opts) {
   const withWeekly = o.withWeekly !== undefined ? !!o.withWeekly : isWeeklyDay(theDay);
   const skip = new Set((o.skipEmails || []).map(x => String(x).toLowerCase()));
   const onlyTo = o.onlyTo ? String(o.onlyTo).trim().toLowerCase() : "";
-  const note = `自动发送 · 工作日 ${cfg.reportHour}:00 · 按账号订阅合并为 1 封（登录 / 问题提醒为即时单发）${withWeekly ? " · 周五含本周周报" : ""}。`;
+  const onlyTypes = Array.isArray(o.onlyTypes) && o.onlyTypes.length
+    ? new Set(o.onlyTypes.filter(t => DIGEST_TYPES.indexOf(t) >= 0)) : null;
+  const pick = types => onlyTypes ? new Set([...types].filter(t => onlyTypes.has(t))) : types;
+  const note = onlyTypes
+    ? `手动补发 · ${withWeekly ? "本周周报" : "指定内容"} · ${theDay}。`
+    : `自动发送 · 工作日 ${cfg.reportHour}:00 · 按角色固定内容合并为 1 封（登录 / 问题提醒为即时单发）${withWeekly ? " · 周五含本周周报" : ""}。`;
   const targets = onlyTo
-    ? [{ email: onlyTo, types: new Set(DIGEST_TYPES.filter(t => withWeekly || t !== "weekly")), ids: null }]
-    : digestSubscribers(withWeekly).filter(t => !skip.has(t.email.toLowerCase()));
+    ? [{ email: onlyTo, types: pick(new Set(DIGEST_TYPES.filter(t => withWeekly || t !== "weekly"))), ids: null }]
+    : digestSubscribers(withWeekly).map(t => ({ email: t.email, types: pick(t.types), ids: t.ids }))
+      .filter(t => t.types.size && !skip.has(t.email.toLowerCase()));
   const results = [];
   if (!targets.length) {
     if (skip.size) return { ok: true, to: [], skipped: true, results, msg: "今日收件人均已发送" };
+    if (onlyTypes) return { ok: true, to: [], skipped: true, results, msg: "没有可发送的收件人" };
     /* 没有任何自动订阅时保留兜底：给 ALERT_TO 发一封完整汇总 */
     const fb = mailTo();
     if (!fb.length) return { ok: true, to: [], skipped: true, results, msg: "没有自动订阅收件人" };
@@ -1256,24 +1267,27 @@ async function runScheduled(day, opts) {
   scheduledLock = true;
   try {
     const theDay = day || bjKey(Date.now());
-    const withWeekly = isWeeklyDay(theDay);
+    const onlyTypes = Array.isArray(o.onlyTypes) && o.onlyTypes.length
+      ? o.onlyTypes.filter(t => DIGEST_TYPES.indexOf(t) >= 0) : null;
+    const withWeekly = isWeeklyDay(theDay) || !!(onlyTypes && onlyTypes.indexOf("weekly") >= 0);
     const st = mailState();
     const sentToday = (st.sentTo && Array.isArray(st.sentTo[theDay])) ? st.sentTo[theDay] : [];
-    if (!o.force && digestDone(st, theDay, withWeekly)) return { ok: true, skipped: "今日已发", withWeekly, day: theDay };
+    /* 只补某一类内容（如补发周报）时不看「今日已发」，也不改写当天状态 */
+    if (!o.force && !onlyTypes && digestDone(st, theDay, withWeekly)) return { ok: true, skipped: "今日已发", withWeekly, day: theDay };
     if (!o.onlyTo && !digestSubscribers(withWeekly).length && !mailTo().length) return { ok: true, skipped: "没有订阅收件人", withWeekly, day: theDay };
     const out = await sendDigestAll(theDay, {
-      withWeekly, onlyTo: o.onlyTo, trigger: o.trigger || "auto",
+      withWeekly, onlyTo: o.onlyTo, onlyTypes, trigger: o.trigger || "auto",
       skipEmails: o.force || o.onlyTo ? [] : sentToday,
     });
     const st2 = mailState();
     st2.sentTo = st2.sentTo || {};
     const cur = new Set((st2.sentTo[theDay] || []).map(x => String(x).toLowerCase()));
-    if (!o.onlyTo) (out.results || []).forEach(r => { if (r.ok && r.to && r.to[0]) cur.add(String(r.to[0]).toLowerCase()); });
+    if (!o.onlyTo && !onlyTypes) (out.results || []).forEach(r => { if (r.ok && r.to && r.to[0]) cur.add(String(r.to[0]).toLowerCase()); });
     st2.sentTo[theDay] = [...cur];
     /* 只保留最近 14 天的已发记录，避免账号文件无限膨胀 */
     Object.keys(st2.sentTo).forEach(k => { if (k < dayAdd(theDay, -14)) delete st2.sentTo[k]; });
     const failed = (out.results || []).filter(r => r.ok === false && !r.skipped);
-    if (!o.onlyTo && !failed.length && (out.ok || out.skipped)) {
+    if (!o.onlyTo && !onlyTypes && !failed.length && (out.ok || out.skipped)) {
       st2.lastDigest = theDay;
       st2.lastDaily = theDay; st2.lastPersonal = theDay; st2.lastRisk = theDay;
       if (withWeekly) { st2.lastWeekly = theDay; st2.weeklyDay = theDay; }
@@ -1644,11 +1658,8 @@ app.post("/api/user_update", (req, res) => {
     if (em && !validEmail(em)) return res.status(400).json({ ok: false, msg: "邮箱格式不正确" });
     u.email = em;
   }
-  /* 邮件订阅：类型可多选；关注新人 all=全部，或新人 id 数组。新人固定为本人、且只允许个人日报/周报。 */
-  if (b.mailTypes != null) {
-    let types = (Array.isArray(b.mailTypes) ? b.mailTypes : []).map(String).filter(t => MAIL_TYPE_NAME[t]);
-    u.mailTypes = u.role === "newbie" ? types.filter(t => NEWBIE_MAIL_TYPES.indexOf(t) >= 0) : types;
-  }
+  /* 邮件范围：内容按角色固定，不可逐项勾选；这里只维护「关注哪些新人」与是否自动推送。
+     新人固定本人；导师/主管默认全部新人，也可只勾自己带的几位。 */
   if (b.mailAuto != null) u.mailAuto = !!b.mailAuto;
   if (b.mailScope != null) {
     if (u.role === "newbie") u.mailScope = [u.id];
@@ -1658,9 +1669,8 @@ app.post("/api/user_update", (req, res) => {
   /* 直属导师 / 直属主管：只影响「提醒邮件发给谁」，不改变任何业务数据 */
   if (b.mentorId != null) u.mentorId = String(b.mentorId).trim();
   if (b.leadId != null) u.leadId = String(b.leadId).trim();
-  /* 转岗后保持订阅合法：新人只看自己；不再是新人且范围只有自己时改为全部 */
+  /* 转岗后保持订阅合法：新人只看自己；转为导师/主管时范围回到全部新人 */
   if (u.role === "newbie") u.mailScope = [u.id];
-  else if (!Array.isArray(u.mailTypes)) u.mailTypes = defaultMailTypes(u.role);
   if (u.role !== "newbie" && Array.isArray(u.mailScope) && u.mailScope.length === 1 && u.mailScope[0] === u.id) u.mailScope = "all";
   if (b.password != null && String(b.password).length) {
     const np = String(b.password);
@@ -1766,7 +1776,10 @@ app.post("/api/mail_report", async (req, res) => {
   const selfOnly = String(req.query.self || "") === "1" && validEmail(me.email);
   const onlyTo = toList[0] || (selfOnly ? me.email : "");
   const force = String(req.query.force || "") === "1" || !!onlyTo;
-  const r = await runScheduled(theDay, { force, onlyTo, trigger: onlyTo ? "manual-test" : "manual" });
+  /* ?weekly=1：只补发本周周报（用于周五升级当天漏发、或单独补发） */
+  const weeklyOnly = String(req.query.weekly || "") === "1";
+  const r = await runScheduled(theDay, { force, onlyTo, trigger: onlyTo ? "manual-test" : "manual",
+    onlyTypes: weeklyOnly ? ["weekly"] : null });
   res.status(r.ok ? 200 : 400).json(r);
 });
 
@@ -1776,7 +1789,8 @@ function mailCfgPayload() {
   const users = (USERS.users || []).map(u => ({ id: u.id, name: u.name, username: u.username,
     role: u.role, roleName: ROLE_NAME[u.role], email: u.email || "", active: !!u.active,
     mentorId: u.mentorId || "", leadId: u.leadId || "",
-    mailTypes: Array.isArray(u.mailTypes) ? u.mailTypes.slice() : defaultMailTypes(u.role),
+    /* 内容按角色固定，前端只做展示，不再参与保存 */
+    mailTypes: defaultMailTypes(u.role),
     mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : "all")),
     mailAuto: u.mailAuto !== false }));
   return {
@@ -1836,17 +1850,15 @@ app.post("/api/mail_send_user", async (req, res) => {
   if (!u) return res.status(404).json({ ok: false, msg: "账号不存在" });
   if (!validEmail(u.email)) return res.status(400).json({ ok: false, msg: "该账号还没有填写有效邮箱" });
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : bjKey(Date.now());
-  const types = (Array.isArray(b.types) && b.types.length ? b.types : (u.mailTypes || []))
-    .map(String).filter(t => MAIL_TYPE_NAME[t]);
-  if (!types.length) return res.status(400).json({ ok: false, msg: "该账号未勾选任何邮件内容" });
-  const digestTypes = types.filter(t => DIGEST_TYPES.indexOf(t) >= 0);
-  if (!digestTypes.length) return res.status(400).json({ ok: false, msg: "登录提醒 / 问题提醒为事件触发，没有可手动发送的周期内容" });
+  /* 内容按角色固定，不接受前端指定类型 */
+  const digestTypes = DIGEST_TYPES.filter(t => roleAcceptsMail(u.role, t));
+  if (!digestTypes.length) return res.status(400).json({ ok: false, msg: "该角色没有可手动发送的周期内容" });
   const ids = u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? null : (u.mailScope || []));
   const parts = buildDigestParts(day, { email: u.email, types: new Set(digestTypes), ids });
   if (!parts.length) return res.json({ ok: true, skipped: true, msg: "当日无符合条件的内容，未发送", to: [] });
   const subject = digestSubject(day, parts);
   const x = await sendMail(subject, renderDigest(parts),
-    `手动发送 · 已按该账号勾选合并为 1 封 · ${day}。`, { to: [u.email], kind: "digest", trigger: "manual-user" });
+    `手动发送 · 已按该角色固定内容合并为 1 封 · ${day}。`, { to: [u.email], kind: "digest", trigger: "manual-user" });
   res.status(x.ok ? 200 : 400).json(Object.assign({ to: [u.email], subject, day,
     types: parts.map(p => p.key), labels: parts.map(p => p.label), merged: true }, x));
 });
@@ -1872,11 +1884,13 @@ app.get("/api/daily_ping", async (req, res) => {
   const theDay = qDay || key;
   const toOverride = String(req.query.to || "").trim().toLowerCase();
   const force = String(req.query.force || "") === "1";
+  const weeklyOnly = String(req.query.weekly || "") === "1";
   if (!toOverride && !qDay && !force) {
     if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
     if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00", hour, now: bjTime(Date.now()) });
   }
-  const r = await runScheduled(theDay, { trigger: "ping", force, onlyTo: validEmail(toOverride) ? toOverride : "" });
+  const r = await runScheduled(theDay, { trigger: "ping", force, onlyTo: validEmail(toOverride) ? toOverride : "",
+    onlyTypes: weeklyOnly ? ["weekly"] : null });
   if (!toOverride) { MS.lastReport = theDay; saveMS(); }
   res.json({ ok: !!r.ok, msg: r.msg || "", skipped: r.skipped || "", to: r.to || [],
     failed: r.failed || 0, withWeekly: !!r.withWeekly, day: theDay, channel: r.channel || "", result: r });

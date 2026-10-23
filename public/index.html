@@ -897,28 +897,28 @@ async function openAccounts(){
  const newbieList=users.filter(x=>x.role==="newbie"&&x.active);
  const MAIL_TYPE_DEF=[["daily","整体日报"],["weekly","周报"],["personal","个人日报 / 汇总"],["risk","风险预警"],["login","登录提醒"],["issue","问题 / 诉求提醒"]];
  const mtypeName=k=>(MAIL_TYPE_DEF.find(t=>t[0]===k)||[k,k])[1];
- const mailTypeKeys=role=>role==="newbie"?["personal","weekly"]:MAIL_TYPE_DEF.map(t=>t[0]);
+ /* 内容按角色固定，管理端不再逐项勾选 */
+ const fixedTypes=role=>role==="newbie"?["personal","weekly"]:["daily","personal","risk","weekly"];
  const roleOpts=sel=>["admin","lead","mentor","newbie"].map(k=>`<option value="${k}" ${sel===k?"selected":""}>${ROLE_NAME[k]}</option>`).join("");
  const peopleOpts=(role,sel)=>`<option value="">— 未指定 —</option>`+users.filter(x=>x.role===role).map(x=>`<option value="${x.id}" ${sel===x.id?"selected":""}>${esc(x.name)}</option>`).join("");
  const readSub=u=>{
-  const types=[...document.querySelectorAll(`[data-umtype="${u.id}"]`)].filter(x=>x.checked).map(x=>x.value);
   const sel=document.querySelector(`[data-umscope="${u.id}"]`);
   const scope=u.role==="newbie"?"self":(sel?sel.value:"all");
   const ids=scope==="pick"?[...document.querySelectorAll(`[data-umnb="${u.id}"]`)].filter(x=>x.checked).map(x=>x.value):[];
   const am=document.querySelector(`[data-umauto="${u.id}"]:checked`);
-  return {types,scope,ids,auto:am?am.value!=="manual":true};
+  return {scope,ids,auto:am?am.value!=="manual":true};
  };
  let html=`<div class="mh"><b>账号管理 · 成员与邮件订阅</b><button class="btn gh sm" id="ovlClose">关闭</button></div><div style="padding:16px 18px">`;
- html+=`<div class="muted" style="margin-bottom:10px">在这里给人建账号、分配角色，并<b>统一维护每人的邮件订阅</b>：收什么内容、关注哪些新人、自动还是手动推送、发给哪个邮箱。
- 新增导师/新人时，账号建好即带默认订阅，后续只需按需勾选。</div>
+ html+=`<div class="muted" style="margin-bottom:10px">在这里给人建账号、分配角色，并<b>维护每人的邮件订阅</b>：发给哪个邮箱、关注哪些新人、自动还是手动推送。
+ 收什么内容由<b>角色固定</b>，不用逐个勾选：新人只收自己的个人汇总与周报；导师/主管收每位新人的学习汇总、整体日报、风险预警与周报。</div>
  <div class="card pad" style="margin-bottom:14px">
   <h3>邮件基础设置</h3>
-  <div class="muted" style="margin-top:4px">所有日报 / 周报 / 个人汇总 / 风险预警统一按<b>北京时间</b>统计；自动推送只作用于勾选“自动”的账号。</div>
+  <div class="muted" style="margin-top:4px">所有日报 / 周报 / 个人汇总 / 风险预警统一按<b>北京时间</b>统计；自动推送只作用于选“自动”的账号。</div>
   <div class="row" style="margin-top:9px;flex-wrap:wrap;align-items:center">
    <span class="mcbx">工作日推送时间 <input type="number" id="mgHour" min="0" max="23" value="${Number(mcfg.reportHour)||18}" style="width:64px;border:1px solid var(--line);border-radius:7px;padding:4px 6px"> 点（北京时间）</span>
    <button class="btn sm" id="mgSave">保存基础设置</button><span class="muted" id="mgMsg"></span>
   </div>
-  <div class="muted" style="margin-top:6px">新人本人是否接收自己的个人日报，直接看下方该新人账号里的「个人日报 / 汇总」勾选，避免重复开关互相覆盖。</div>
+  <div class="muted" style="margin-top:6px">新人默认接收自己的个人汇总与周报；导师/主管默认接收全部新人的内容，后续新增导师可在下方「关注新人」里只勾自己带的人。</div>
   <div style="margin-top:9px"><div class="muted" style="margin-bottom:4px">兜底收件人（新人未绑定直属导师/主管时使用；多个用逗号分隔）</div>
    <input id="mgFallback" value="${esc((mcfg.fallbackTo||[]).join(","))}" placeholder="liwf@novastar.tech" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.6px"></div>
  </div>
@@ -938,12 +938,11 @@ async function openAccounts(){
  html+=users.map(u=>{
   const inv=u.inviteUrl?`<div class="linkrow" style="margin-top:7px"><code>${esc(u.inviteUrl)}</code><button class="btn sm gh" data-copy="${esc(u.inviteUrl)}">复制邀请链接</button></div>
     <div class="muted" style="margin-top:2px">发给本人 → 打开后设置自己的密码即可进入。</div>`:"";
-  const allowed=mailTypeKeys(u.role);
-  const mt=(Array.isArray(u.mailTypes)&&u.mailTypes.length?u.mailTypes:allowed).filter(t=>allowed.indexOf(t)>=0);
+  const allowed=fixedTypes(u.role);
+  const mt=allowed.slice();
   const isNb=u.role==="newbie";
   const sc=isNb?"self":(u.mailScope==="all"?"all":"pick");
   const scIds=isNb?[]:(Array.isArray(u.mailScope)?u.mailScope:[]);
-  const typeBoxes=allowed.map(k=>`<label class="mcbx"><input type="checkbox" data-umtype="${u.id}" value="${k}" ${mt.indexOf(k)>=0?"checked":""}> ${mtypeName(k)}</label>`).join("");
   const nbBoxes=newbieList.map(n=>`<label class="mcbx"><input type="checkbox" data-umnb="${u.id}" value="${n.id}" ${scIds.indexOf(n.id)>=0?"checked":""}> ${esc(n.name)}</label>`).join("")||`<span class="muted">暂无新人账号</span>`;
   return `<div class="card pad" style="margin-bottom:10px">
    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -967,10 +966,12 @@ async function openAccounts(){
    </div>
    <details style="margin-top:10px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 11px">
     <summary style="cursor:pointer;font-size:12.7px;font-weight:700;color:var(--ink2)">邮件订阅与推送
-      <span class="muted" style="font-weight:400">· ${esc(u.email||"未填邮箱")} · ${mt.length?mt.map(mtypeName).join(" / "):"未选内容"} · ${u.mailAuto!==false?"自动":"手动"}</span></summary>
+      <span class="muted" style="font-weight:400">· ${esc(u.email||"未填邮箱")} · ${mt.length?mt.map(mtypeName).join(" / "):"无"} · ${u.mailAuto!==false?"自动":"手动"}</span></summary>
     <div style="margin-top:10px">
-     <div class="muted" style="font-weight:700">接收内容（可多选）</div>
-     <div style="margin-top:4px;line-height:2">${typeBoxes||`<span class="muted">该角色暂无可用邮件类型</span>`}</div>
+     <div class="muted" style="font-weight:700">接收内容（按角色固定，无需勾选）</div>
+     <div style="margin-top:4px;line-height:1.9">${isNb
+       ?`本人：<b>个人学习汇总</b>（每工作日）+ <b>个人周报</b>（每周五），只统计本人数据。`
+       :`<b>整体日报</b> + <b>每位新人的个人汇总</b> + <b>风险预警</b>（有则附）+ <b>本周周报</b>（每周五），合并为 1 封；另收新人登录/问题提醒。`}</div>
      <div class="muted" style="margin-top:8px;font-weight:700">关注新人</div>
      ${isNb?`<div class="muted" style="margin-top:3px">仅本人（固定）：只统计并发送 ${esc(u.name)} 自己的数据，不会收到其他新人的信息。</div>`:
        `<div class="row" style="margin-top:4px;gap:8px;flex-wrap:wrap">
@@ -1049,14 +1050,13 @@ async function openAccounts(){
   const ld=document.querySelector(`[data-ulead="${id}"]`);
   const ms=readSub(u);
   if(em&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){alert("邮箱格式不正确");return;}
-  if(em&&!ms.types.length){alert("该账号已填邮箱，但没有勾选任何接收内容。\n请至少勾选一项；如不想接收邮件，请清空邮箱。");return;}
   if(ms.scope==="pick"&&!ms.ids.length){alert("关注新人选择了“仅指定新人”，请至少勾选一位新人。");return;}
   b.disabled=true;
   const rr=await apiPost("/api/user_update",{id,email:em,wecom:wc,
     mentorId:(mt.value||""),leadId:(ld.value||""),
-    mailTypes:ms.types,mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
+    mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
   b.disabled=false;
-  if(rr.data&&rr.data.ok){alert("已保存：账号信息与邮件订阅均已生效。");openAccounts();}
+  if(rr.data&&rr.data.ok){alert("已保存：账号信息与邮件推送设置均已生效。");openAccounts();}
   else alert((rr.data&&rr.data.msg)||"保存失败");
  });
  document.querySelectorAll("[data-umsend]").forEach(b=>b.onclick=async()=>{
@@ -1065,13 +1065,12 @@ async function openAccounts(){
   const day=(document.querySelector(`[data-umday="${id}"]`)||{}).value||"";
   const ms=readSub(u);
   if(!em||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)){alert("请先填写有效的接收邮箱");return;}
-  if(!ms.types.length){alert("请先勾选要发送的邮件内容");return;}
   if(ms.scope==="pick"&&!ms.ids.length){alert("关注新人选择了“仅指定新人”，请至少勾选一位新人。");return;}
-  if(!confirm("按当前订阅手动发送？\n账号："+u.name+"\n邮箱："+em+"\n日期："+day+"\n内容："+ms.types.map(mtypeName).join("、")+"\n关注："+(ms.scope==="all"?"全部新人":(ms.scope==="self"?"仅本人":ms.ids.length+" 位新人"))))return;
+  if(!confirm("按角色固定内容手动发送？\n账号："+u.name+"\n邮箱："+em+"\n日期："+day+"\n内容："+fixedTypes(u.role).map(mtypeName).join("、")+"\n关注："+(ms.scope==="all"?"全部新人":(ms.scope==="self"?"仅本人":ms.ids.length+" 位新人"))))return;
   b.disabled=true;
-  const sv=await apiPost("/api/user_update",{id,email:em,mailTypes:ms.types,mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
-  if(!sv.data||!sv.data.ok){b.disabled=false;alert((sv.data&&sv.data.msg)||"订阅保存失败，未发送");return;}
-  const rr=await apiPost("/api/mail_send_user",{userId:id,day,types:ms.types});
+  const sv=await apiPost("/api/user_update",{id,email:em,mailScope:ms.scope==="all"?"all":ms.ids,mailAuto:ms.auto});
+  if(!sv.data||!sv.data.ok){b.disabled=false;alert((sv.data&&sv.data.msg)||"设置保存失败，未发送");return;}
+  const rr=await apiPost("/api/mail_send_user",{userId:id,day});
   b.disabled=false;
   if(rr.data&&rr.data.ok){
    const rows=(rr.data.results||[]).map(x=>`${x.typeName||x.type}：${x.ok?("已发送 → "+(x.to||[]).join("、")):(x.skipped?"跳过（"+x.msg+"）":"失败 "+x.msg)}`).join("\n");
@@ -2348,13 +2347,14 @@ async function renderMailBox(){
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　默认收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${s.lastSent?fmt(s.lastSent):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">发送规则：<b>工作日 ${sch.hour}:00</b> 发「整体日报 + 个人汇总 + 风险预警（有则附）」，按账号订阅合并为 <b>1 封</b>；<b>每周五 ${sch.hour}:00</b> 加发本周周报；登录提醒、问题/诉求提醒为即时单发。</div>
+     <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师/主管发「整体日报 + 每位新人的个人汇总 + 风险预警（有则附）」，给新人发「本人学习汇总」，合并为 <b>1 封</b>；<b>每周五 ${sch.hour}:00</b> 加发本周周报；登录提醒、问题/诉求提醒为即时单发。</div>
      <div style="margin-top:6px">${state}${ts.isWeeklyDay&&!ts.done?' <span class="tag wt">今天周五，会加发周报</span>':""}</div>
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px;align-items:flex-start;flex-wrap:wrap">
      ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件设置（账号管理）</button>':""}
      <button class="btn sm gh" id="mailTestBtn">发测试邮件（只给我）</button>
      <button class="btn sm gh" id="mailSelfBtn">补发今日（只给我）</button>
+     <button class="btn sm gh" id="mailWeekBtn" title="只补发周报内容，不影响今日日报状态">补发周报（只给我）</button>
      <button class="btn sm" id="mailRepBtn">立即发今日（全部订阅人）</button></div>
  </div>
  <div class="muted" id="mailMsg" style="margin-top:7px"></div>
@@ -2370,6 +2370,9 @@ async function renderMailBox(){
  const sb=document.getElementById("mailSelfBtn");if(sb)sb.onclick=async()=>{sb.disabled=true;msg("生成并发送中…");
   try{const r=await apiPost("/api/mail_report?self=1&force=1",{});msg(r.ok?`<span class="tag ok">已发送（仅你本人）</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}sb.disabled=false;};
+ const wb=document.getElementById("mailWeekBtn");if(wb)wb.onclick=async()=>{wb.disabled=true;msg("生成周报并发送中…");
+  try{const r=await apiPost("/api/mail_report?self=1&force=1&weekly=1",{});msg(r.ok?`<span class="tag ok">周报已发送（仅你本人）</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  catch(e){msg('<span class="tag no">请求失败</span>');}wb.disabled=false;};
  const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{if(!confirm("会给全部自动订阅的导师/主管/新人各发一封今日汇总，确定？"))return;rb.disabled=true;msg("汇总并发送中…");
   try{const r=await apiPost("/api/mail_report?force=1",{});msg(r.ok?`<span class="tag ok">今日邮件已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}rb.disabled=false;};
