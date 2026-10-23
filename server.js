@@ -86,6 +86,11 @@ const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@no
 /* 回复地址：邮件转发给领导后，领导点「回复」即回到这个邮箱（默认取第一个收件人） */
 const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || MAIL_TO[0] || "";
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
+/* 周报发送日：5 = 周五（北京时间）。周五 18:00 与日报合并成一封发出，覆盖本周一至周五。
+   周一不再发周报，避免「周五发一次、周一又发一次」的重复。 */
+const WEEKLY_WEEKDAY = 5;
+/* 是否是周报日（周五） */
+const isWeeklyDay = day => bj(day).getUTCDay() === WEEKLY_WEEKDAY;
 /* ---------- GitHub Actions 发信中继（推荐：全免费、无需注册任何邮件平台、可精准按人发送） ----------
    Render / Railway 等免费云都封了 25/465/587 端口，服务端自己发不出去。
    方案：服务端只负责「生成邮件 + 触发」，真正的发信交给公开仓库的 GitHub Actions
@@ -483,14 +488,27 @@ function rulesFor(type, newbieId, opts) {
 function ruleEmails(type, newbieId, opts) {
   return [...new Set(rulesFor(type, newbieId, opts).map(r => r.email).filter(validEmail))];
 }
-/* 定时推送是否仍有「自动订阅」的收件人：账号级配置优先，旧版邮件中心规则兼容 */
-function autoSubscribed(type) {
-  if (userMailRules(type, null, { autoOnly: true }).length) return true;
-  return getMailCfg().rules.some(r => r.enabled !== false && r.types.indexOf(type) >= 0);
-}
 /* 发送记录持久化到账号库：免费实例重启后不会把「今日已发」清空，避免重复发日报 */
 function mailState() { if (!USERS.mailState || typeof USERS.mailState !== "object") USERS.mailState = {}; return USERS.mailState; }
 function markMailSent(kind, key) { const s = mailState(); s[kind] = key; s.lastSent = Date.now(); saveUsers(); }
+/* 发送日志：谁在什么时候、因为什么触发、发给了谁、成功还是失败。
+   出问题（比如「18:00 没收到邮件」）时可直接在「邮件通知」面板看到原因，不用翻 Render 日志。 */
+function logMail(e) {
+  const s = USERS;
+  s.mailLog = (Array.isArray(s.mailLog) ? s.mailLog : []).concat([{
+    at: Date.now(),
+    kind: String(e.kind || "mail"),
+    trigger: String(e.trigger || ""),
+    subject: String(e.subject || "").slice(0, 160),
+    to: Array.isArray(e.to) ? e.to.slice(0, 20) : [],
+    ok: !!e.ok,
+    msg: String(e.msg || "").slice(0, 300),
+    channel: String(e.channel || ""),
+  }]).slice(-200);
+  s.changed = true;
+  saveUsers();
+}
+function recentMailLog(n) { return (Array.isArray(USERS.mailLog) ? USERS.mailLog : []).slice(-(n || 30)).reverse(); }
 
 /* GitHub Actions 中继：把整封邮件塞进 client_payload（base64，避开引号/换行问题），由 workflow 用 QQ SMTP 发出 */
 async function dispatchViaGithub(mail) {
@@ -533,9 +551,18 @@ function mailShell(subject, inner, note) {
 }
 async function sendMail(subject, inner, note, opts) {
   const o = opts || {};
-  if (!MAIL_ON) return { ok: false, msg: "未配置邮件通道（GH_DISPATCH_TOKEN 或 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
+  const r = await sendMailRaw(subject, inner, note, o);
+  try {
+    logMail({ kind: o.kind || "mail", trigger: o.trigger || "", subject,
+      to: (r && r.to) || o.to || [], ok: !!(r && r.ok), msg: (r && r.msg) || "", channel: (r && r.channel) || "" });
+  } catch (e) { console.error("[mail] log", e.message); }
+  return r;
+}
+async function sendMailRaw(subject, inner, note, opts) {
+  const o = opts || {};
   const to = (o.to && o.to.length ? o.to : mailTo());
-  if (!to.length) return { ok: false, msg: "没有收件人（配置 ALERT_TO 或给账号填邮箱）" };
+  if (!MAIL_ON) return { ok: false, to, msg: "未配置邮件通道（GH_DISPATCH_TOKEN 或 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
+  if (!to.length) return { ok: false, to: [], msg: "没有收件人（配置 ALERT_TO 或给账号填邮箱）" };
   const html = mailShell(subject, inner, note);
   try {
     if (GHA_ON) return await dispatchViaGithub({ to, subject, html, from: MAIL_FROM, replyTo: MAIL_REPLY_TO });
@@ -1005,25 +1032,34 @@ function buildDailyReport(day, opts) {
   return { today, card, needAtt, html };
 }
 
-/* 周报：默认统计上一个自然周（周一至周日） */
-function lastWeekRange(day) {
+/* 周报周期：
+   · 周五（周报日）发送 → 统计「本周一 ~ 今天」，当天 18:00 之后就是完整工作周；
+   · 其余日期（补发 / 手动发送）→ 统计上一个自然周（周一 ~ 周日），口径固定不跳变。 */
+function weekRangeFor(day) {
   const d = new Date(day + "T00:00:00Z");
-  const sinceMon = (d.getUTCDay() + 6) % 7;
+  const dow = d.getUTCDay();
+  const sinceMon = (dow + 6) % 7;
   const thisMon = dayAdd(day, -sinceMon);
+  if (dow === WEEKLY_WEEKDAY) {
+    const days = [];
+    for (let i = 0; i <= sinceMon; i++) days.push(dayAdd(thisMon, i));
+    return { start: thisMon, end: day, days, current: true };
+  }
   const end = dayAdd(thisMon, -1);
   const days = [];
   for (let i = 6; i >= 0; i--) days.push(dayAdd(end, -i));
-  return { start: days[0], end, days };
+  return { start: days[0], end, days, current: false };
 }
 function buildWeeklyReport(day, opts) {
   const o = opts || {};
-  const range = lastWeekRange(day || bjKey(Date.now()));
+  const range = weekRangeFor(day || bjKey(Date.now()));
+  const rl = range.current ? "本周" : "上周";
   const S = snapshot();
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
   const card = newbies.map(u => userStats(u, range.days, S));
   const needAtt = [];
-  card.forEach(c => riskItems(c, "上周").forEach(t => needAtt.push(t)));
+  card.forEach(c => riskItems(c, rl).forEach(t => needAtt.push(t)));
   const rows = card.map(c => `<tr>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.activeDays} 天<div style="font-size:11.5px;color:#7C8896">${h(kindText(c.kinds)) || "—"}</div></td>
@@ -1037,15 +1073,15 @@ function buildWeeklyReport(day, opts) {
   const html = `<p style="margin:0 0 10px"><b>${range.start} ～ ${range.end}</b> 新人培养周报</p>
      <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left">
-         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">上周通关</th>
-         <th style="padding:8px 9px">上周小测</th><th style="padding:8px 9px">演练（截至上周日）</th><th style="padding:8px 9px">客户档案 / 任务</th>
+         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">${rl}通关</th>
+         <th style="padding:8px 9px">${rl}小测</th><th style="padding:8px 9px">演练（截至${range.current ? "今天" : "上周日"}）</th><th style="padding:8px 9px">客户档案 / 任务</th>
          <th style="padding:8px 9px">新问题</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
        ${rows}
      </table>
      ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8C2B1F">需要关注（按上周数据，${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
-      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">上周各项无明显阻塞。</p>`}
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=上周一至周日有登录或任何业务动作的天数；通关=上周首次通关节点；小测正确率按每节点上周最后一次作答汇总；客户档案只登记不闭环，闭环=上周经导师确认验收的任务/项目。</p>`;
+       <b style="color:#8C2B1F">需要关注（按${rl}数据，${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
+      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">${rl}各项无明显阻塞。</p>`}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=${rl}一至周${range.current ? "五" : "日"}有登录或任何业务动作的天数；通关=${rl}首次通关节点；小测正确率按每节点${rl}最后一次作答汇总；客户档案只登记不闭环，闭环=${rl}经导师确认验收的任务/项目。</p>`;
   return { range, card, needAtt, html };
 }
 
@@ -1078,98 +1114,6 @@ function buildPersonalReport(users, day) {
   return { today, list, html };
 }
 
-function mergeRuleScopes(rules) {
-  const m = {};
-  rules.forEach(r => {
-    if (!m[r.email]) m[r.email] = { email: r.email, all: false, ids: new Set() };
-    if (r.scope === "all") m[r.email].all = true;
-    else r.scope.forEach(id => m[r.email].ids.add(id));
-  });
-  return Object.values(m).map(x => ({ email: x.email, ids: x.all ? null : [...x.ids] })).filter(x => x.ids === null || x.ids.length);
-}
-async function sendDailyAll(day) {
-  const cfg = getMailCfg();
-  const theDay = day || bjKey(Date.now());
-  /* 只保留「范围内仍有在职新人」的规则；勾选的人被删/停用后不再发空表 */
-  const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
-  const rawGroups = mergeRuleScopes(rulesFor("daily", null, { autoOnly: true }));
-  const groups = rawGroups.map(g => ({
-    email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
-  })).filter(g => g.ids === null || g.ids.length);
-  if (rawGroups.length && !groups.length) return { ok: true, to: [], skipped: true, msg: "日报规则勾选的新人均已停用/删除，未发送" };
-  if (!groups.length) {
-    const r = buildDailyReport(theDay);
-    return sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
-      `自动发送 · 工作日 ${cfg.reportHour}:00 汇总（邮件中心未配置规则时，沿用兜底收件人 + 已填邮箱的导师/主管）。`, { to: mailTo() });
-  }
-  const results = [];
-  for (const g of groups) {
-    const r = buildDailyReport(theDay, { newbieIds: g.ids });
-    const x = await sendMail(`【每日进度】${r.today} 新人培养整体进度`, r.html,
-      `自动发送 · 工作日 ${cfg.reportHour}:00 汇总。`, { to: [g.email] });
-    results.push(Object.assign({ to: [g.email] }, x));
-  }
-  const ok = results.some(x => x.ok);
-  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
-    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
-}
-async function sendWeeklyAll(day) {
-  const cfg = getMailCfg();
-  const theDay = day || bjKey(Date.now());
-  const aliveIds = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
-  const rawGroups = mergeRuleScopes(rulesFor("weekly", null, { autoOnly: true }));
-  const groups = rawGroups.map(g => ({
-    email: g.email, ids: g.ids === null ? null : g.ids.filter(id => aliveIds.has(id)),
-  })).filter(g => g.ids === null || g.ids.length);
-  if (rawGroups.length && !groups.length) return { ok: true, to: [], skipped: true, msg: "周报规则勾选的新人均已停用/删除，未发送" };
-  if (!groups.length) {
-    const r = buildWeeklyReport(theDay);
-    return sendMail(`【周报】${r.range.start}～${r.range.end} 新人培养周报`, r.html,
-      "自动发送 · 每周一汇总上一自然周（周一至周日）。", { to: mailTo() });
-  }
-  const results = [];
-  for (const g of groups) {
-    const r = buildWeeklyReport(theDay, { newbieIds: g.ids });
-    const x = await sendMail(`【周报】${r.range.start}～${r.range.end} 新人培养周报`, r.html,
-      "自动发送 · 每周一汇总上一自然周（周一至周日）。", { to: [g.email] });
-    results.push(Object.assign({ to: [g.email] }, x));
-  }
-  const ok = results.some(x => x.ok);
-  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
-    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
-}
-async function sendPersonalAll(day) {
-  const cfg = getMailCfg();
-  const theDay = day || bjKey(Date.now());
-  const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
-  const targets = {};
-  const add = (email, id) => {
-    if (!validEmail(email)) return;
-    const arr = targets[email] = targets[email] || [];
-    if (arr.indexOf(id) < 0) arr.push(id);   /* 同一人既勾「本人收」又命中规则时，避免重复出现在汇总里 */
-  };
-  /* 新人是否收自己的个人日报，完全由账号里的订阅决定（默认已勾选），不再受全局开关影响 */
-  newbies.forEach(u => {
-    if (validEmail(u.email) && u.mailAuto !== false && u.mailTypes && u.mailTypes.indexOf("personal") >= 0) add(u.email, u.id);
-  });
-  rulesFor("personal", null, { autoOnly: true }).forEach(r => {
-    const ids = r.scope === "all" ? newbies.map(u => u.id) : r.scope;
-    ids.forEach(id => add(r.email, id));
-  });
-  const emails = Object.keys(targets);
-  if (!emails.length) return { ok: true, to: [], msg: "没有配置个人汇总收件人（可在账号或邮件中心填邮箱）", skipped: true };
-  const results = [];
-  for (const email of emails) {
-    const us = newbies.filter(u => targets[email].indexOf(u.id) >= 0);
-    const r = buildPersonalReport(us, theDay);
-    const x = await sendMail(`【个人汇总】${r.today} 学习进展与风险提示`, r.html,
-      "自动发送 · 工作日个人汇总（含目标达成率与风险提示）。", { to: [email] });
-    results.push(Object.assign({ to: [email] }, x));
-  }
-  const ok = results.some(x => x.ok);
-  return { ok, to: emails, channel: (results.find(x => x.channel) || {}).channel || "", results,
-    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
-}
 /* 风险预警内容：只列有风险的新人；无风险返回 null */
 function buildRiskReport(users, day) {
   const theDay = day || bjKey(Date.now());
@@ -1181,27 +1125,10 @@ function buildRiskReport(users, day) {
     <p style="margin-top:12px;color:#5C6772;font-size:12px">统计口径与日报一致（北京时间自然日）。</p>`;
   return { html, count: list.length, list };
 }
-async function sendRiskAll(day) {
-  const theDay = day || bjKey(Date.now());
-  const groups = mergeRuleScopes(rulesFor("risk", null, { autoOnly: true }));
-  if (!groups.length) return { ok: true, to: [], msg: "未配置风险预警收件人", skipped: true };
-  const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
-  const results = [];
-  for (const g of groups) {
-    const us = g.ids ? allNewbies.filter(u => g.ids.indexOf(u.id) >= 0) : allNewbies;
-    const r = buildRiskReport(us, theDay);
-    if (!r) continue;
-    const x = await sendMail(`【风险预警】${theDay} 有 ${r.count} 位新人需要关注`, r.html,
-      "自动发送 · 仅在有风险时发送。", { to: [g.email] });
-    results.push(Object.assign({ to: [g.email] }, x));
-  }
-  if (!results.length) return { ok: true, to: [], msg: "今日无风险项，未发送", skipped: true };
-  const ok = results.some(x => x.ok);
-  return { ok, to: results.map(x => x.to[0]), channel: (results.find(x => x.channel) || {}).channel || "", results,
-    msg: ok ? "" : (results[0] && results[0].msg) || "发送失败" };
-}
-/* ---------- 合并汇总：同一账号勾选的多项内容 → 只发 1 封 ---------- */
-function digestSubscribers(isMonday) {
+/* ---------- 合并汇总：同一账号勾选的多项内容 → 只发 1 封 ----------
+   withWeekly=true 时才带上周报（仅周五）。
+   新人账号固定只发「自己的」内容：勾了整体日报/风险预警也按个人范围处理，避免收到别人的数据。 */
+function digestSubscribers(withWeekly) {
   const alive = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
   const map = new Map();
   const add = (email, types, scope) => {
@@ -1214,7 +1141,8 @@ function digestSubscribers(isMonday) {
   };
   (USERS.users || []).forEach(u => {
     if (!u.active || !validEmail(u.email) || u.mailAuto === false) return;
-    const types = (u.mailTypes || []).filter(t => DIGEST_TYPES.indexOf(t) >= 0 && (isMonday || t !== "weekly"));
+    const allowed = u.role === "newbie" ? ["personal", "weekly"] : DIGEST_TYPES;
+    const types = (u.mailTypes || []).filter(t => allowed.indexOf(t) >= 0 && (withWeekly || t !== "weekly"));
     if (!types.length) return;
     const scope = u.role === "newbie" ? [u.id]
       : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope : []));
@@ -1223,7 +1151,7 @@ function digestSubscribers(isMonday) {
   /* 兼容旧版邮件中心的收件人规则；同一邮箱自动合并类型与关注范围，避免重复发 */
   getMailCfg().rules.forEach(r => {
     if (r.enabled === false) return;
-    const types = (r.types || []).filter(t => DIGEST_TYPES.indexOf(t) >= 0 && (isMonday || t !== "weekly"));
+    const types = (r.types || []).filter(t => DIGEST_TYPES.indexOf(t) >= 0 && (withWeekly || t !== "weekly"));
     if (!types.length) return;
     add(r.email, types, r.scope);
   });
@@ -1269,28 +1197,34 @@ function renderDigest(parts) {
       ${p.html}
     </div>`).join("")}`;
 }
-async function sendDigestAll(day) {
+async function sendDigestAll(day, opts) {
+  const o = opts || {};
   const cfg = getMailCfg();
   const theDay = day || bjKey(Date.now());
-  const isMonday = bj(theDay).getUTCDay() === 1;
-  const note = `自动发送 · 工作日 ${cfg.reportHour}:00 · 按账号订阅合并为 1 封（登录 / 问题提醒为即时单发）。`;
-  const targets = digestSubscribers(isMonday);
+  const withWeekly = o.withWeekly !== undefined ? !!o.withWeekly : isWeeklyDay(theDay);
+  const skip = new Set((o.skipEmails || []).map(x => String(x).toLowerCase()));
+  const onlyTo = o.onlyTo ? String(o.onlyTo).trim().toLowerCase() : "";
+  const note = `自动发送 · 工作日 ${cfg.reportHour}:00 · 按账号订阅合并为 1 封（登录 / 问题提醒为即时单发）${withWeekly ? " · 周五含本周周报" : ""}。`;
+  const targets = onlyTo
+    ? [{ email: onlyTo, types: new Set(DIGEST_TYPES.filter(t => withWeekly || t !== "weekly")), ids: null }]
+    : digestSubscribers(withWeekly).filter(t => !skip.has(t.email.toLowerCase()));
   const results = [];
   if (!targets.length) {
-    /* 没有账号订阅时保留旧兜底：给 ALERT_TO 发一封完整汇总 */
+    if (skip.size) return { ok: true, to: [], skipped: true, results, msg: "今日收件人均已发送" };
+    /* 没有任何自动订阅时保留兜底：给 ALERT_TO 发一封完整汇总 */
     const fb = mailTo();
-    if (!fb.length) return { ok: true, to: [], skipped: true, msg: "没有自动订阅收件人" };
-    const types = new Set(["daily", "personal", "risk"].concat(isMonday ? ["weekly"] : []));
+    if (!fb.length) return { ok: true, to: [], skipped: true, results, msg: "没有自动订阅收件人" };
+    const types = new Set(["daily", "personal", "risk"].concat(withWeekly ? ["weekly"] : []));
     const parts = buildDigestParts(theDay, { types, ids: null });
     const subject = digestSubject(theDay, parts);
-    const x = await sendMail(subject, renderDigest(parts), note, { to: fb });
+    const x = await sendMail(subject, renderDigest(parts), note, { to: fb, kind: "digest", trigger: o.trigger || "" });
     return Object.assign({ to: fb, subject, merged: true, results: [Object.assign({ to: fb }, x)] }, x);
   }
   for (const t of targets) {
     const parts = buildDigestParts(theDay, t);
     if (!parts.length) { results.push({ to: [t.email], skipped: true, msg: "本日无符合条件的内容" }); continue; }
     const subject = digestSubject(theDay, parts);
-    const x = await sendMail(subject, renderDigest(parts), note, { to: [t.email] });
+    const x = await sendMail(subject, renderDigest(parts), note, { to: [t.email], kind: "digest", trigger: o.trigger || "" });
     results.push(Object.assign({ to: [t.email], subject, merged: true,
       types: parts.map(p => p.key), labels: parts.map(p => p.label) }, x));
   }
@@ -1302,36 +1236,58 @@ async function sendDigestAll(day) {
   }
   return { ok: true, to: sent.map(x => x.to[0]), channel: (sent.find(x => x.channel) || {}).channel || "", results, msg: "" };
 }
-/* 升级当天兼容：旧版已按类型分别发过，就不再补发一封合并邮件 */
-function digestSentToday(st, key) {
+/* 今日是否已完整发过：以 lastDigest 为准；兼容升级当天旧版按类型分开发的记录。
+   周报日若只发过日报、周报还没发，仍要继续补一次（不会重复日报，sentTo 会兜住）。 */
+function digestDone(st, key, withWeekly) {
   if (st.lastDigest === key) return true;
-  if (st.lastDaily === key || st.lastPersonal === key || st.lastRisk === key || st.lastWeekly === key) {
-    st.lastDigest = key; saveUsers(); return true;
+  if (st.lastDaily === key || st.lastPersonal === key || st.lastRisk === key) {
+    if (!withWeekly) { st.lastDigest = key; saveUsers(); return true; }
+    if (st.lastWeekly === key || st.weeklyDay === key) { st.lastDigest = key; saveUsers(); return true; }
+    return false;
   }
   return false;
 }
-/* 定时任务统一入口：每个订阅账号只发 1 封合并邮件（周一含周报） */
+/* 定时任务统一入口：每个订阅账号只发 1 封合并邮件（周五含本周周报）。
+   幂等：按「日期 + 已成功收件人」记录，失败的下一次自动重试，成功的不重复发。 */
 let scheduledLock = false;
-async function runScheduled(day) {
+async function runScheduled(day, opts) {
+  const o = opts || {};
   if (scheduledLock) return { ok: true, skipped: "正在发送中" };
   scheduledLock = true;
   try {
     const theDay = day || bjKey(Date.now());
-    const isMonday = bj(theDay).getUTCDay() === 1;
+    const withWeekly = isWeeklyDay(theDay);
     const st = mailState();
-    if (digestSentToday(st, theDay)) return { ok: true, skipped: "今日已发" };
-    if (!digestSubscribers(isMonday).length && !mailTo().length) return { ok: true, skipped: "没有订阅收件人" };
-    const out = await sendDigestAll(theDay);
-    if (out.ok) {
-      st.lastDigest = theDay;
-      st.lastDaily = theDay; st.lastPersonal = theDay; st.lastRisk = theDay;
-      if (isMonday) st.lastWeekly = theDay;
-      st.lastSent = Date.now(); saveUsers();
+    const sentToday = (st.sentTo && Array.isArray(st.sentTo[theDay])) ? st.sentTo[theDay] : [];
+    if (!o.force && digestDone(st, theDay, withWeekly)) return { ok: true, skipped: "今日已发", withWeekly, day: theDay };
+    if (!o.onlyTo && !digestSubscribers(withWeekly).length && !mailTo().length) return { ok: true, skipped: "没有订阅收件人", withWeekly, day: theDay };
+    const out = await sendDigestAll(theDay, {
+      withWeekly, onlyTo: o.onlyTo, trigger: o.trigger || "auto",
+      skipEmails: o.force || o.onlyTo ? [] : sentToday,
+    });
+    const st2 = mailState();
+    st2.sentTo = st2.sentTo || {};
+    const cur = new Set((st2.sentTo[theDay] || []).map(x => String(x).toLowerCase()));
+    if (!o.onlyTo) (out.results || []).forEach(r => { if (r.ok && r.to && r.to[0]) cur.add(String(r.to[0]).toLowerCase()); });
+    st2.sentTo[theDay] = [...cur];
+    /* 只保留最近 14 天的已发记录，避免账号文件无限膨胀 */
+    Object.keys(st2.sentTo).forEach(k => { if (k < dayAdd(theDay, -14)) delete st2.sentTo[k]; });
+    const failed = (out.results || []).filter(r => r.ok === false && !r.skipped);
+    if (!o.onlyTo && !failed.length && (out.ok || out.skipped)) {
+      st2.lastDigest = theDay;
+      st2.lastDaily = theDay; st2.lastPersonal = theDay; st2.lastRisk = theDay;
+      if (withWeekly) { st2.lastWeekly = theDay; st2.weeklyDay = theDay; }
+      st2.lastSent = Date.now();
+      st2.tries = {};
+    } else if (failed.length) {
+      st2.tries = st2.tries || {};
+      st2.tries[theDay] = (st2.tries[theDay] || 0) + 1;
+      st2.lastFail = { at: Date.now(), day: theDay, msg: (failed[0] && failed[0].msg) || out.msg || "发送失败" };
     }
-    return Object.assign({ ok: out.ok, day: theDay }, out);
+    saveUsers();
+    return Object.assign({ ok: out.ok, day: theDay, withWeekly, sentTo: st2.sentTo[theDay], failed: failed.length }, out);
   } finally { scheduledLock = false; }
 }
-function sendDailyReport(day) { return sendDailyAll(day); }
 /* 按类型生成邮件内容（供「邮件中心」预览 / 手动发送，与自动发送共用同一套统计口径） */
 function reportOf(type, day, ids) {
   const theDay = day || bjKey(Date.now());
@@ -1341,7 +1297,7 @@ function reportOf(type, day, ids) {
   if (type === "weekly") {
     const r = buildWeeklyReport(theDay, { newbieIds: scope });
     return { subject: `【周报】${r.range.start}～${r.range.end} 新人培养周报`, html: r.html,
-      note: "手动发送 · 上一自然周（周一至周日）。" };
+      note: `手动发送 · ${r.range.current ? "本周（周一至发送日）" : "上一自然周（周一至周日）"}。` };
   }
   if (type === "personal") {
     const r = buildPersonalReport(sel, theDay);
@@ -1365,8 +1321,9 @@ function reportPayload() {
   const note = `自动发送 · 工作日 ${getMailCfg().reportHour}:00 汇总。`;
   return { to: mailTo(), subject, html: mailShell(subject, r.html, note), from: MAIL_FROM, replyTo: MAIL_REPLY_TO, today: r.today };
 }
-/* 工作日到点自动发：每 5 分钟检查一次，同一天只发一次（发送记录持久化，重启不重复）。
-   GitHub Actions 的 cron 只负责「唤醒实例 + 触发 /api/daily_ping」兜底。 */
+/* 工作日到点自动发：每分钟检查一次（实例醒着时 18:00 准点发出）。
+   Render 免费实例会休眠，所以真正的准点保障靠 GitHub Actions 定时唤醒 + /api/daily_ping。
+   发送失败会自动重试：每次间隔 5 分钟，当天最多 6 次；成功后不再重复。 */
 function startDailyReportTimer() {
   setInterval(() => {
     if (!MAIL_ON) return;
@@ -1376,17 +1333,19 @@ function startDailyReportTimer() {
     if (wd === 0 || wd === 6) return;
     if (hour < cfg.reportHour) return;
     const key = bjKey(Date.now());
+    const withWeekly = isWeeklyDay(key);
     const st = mailState();
-    /* 统一按「今日是否已发合并邮件」判断；周一自动带上周报，不再分类型各发一次 */
-    if (digestSentToday(st, key)) return;
-    if (!digestSubscribers(wd === 1).length && !mailTo().length) return;
-    if (MS.lastTry && Date.now() - MS.lastTry < 30 * 60000) return;
+    if (digestDone(st, key, withWeekly)) return;
+    if (!digestSubscribers(withWeekly).length && !mailTo().length) return;
+    const tries = (st.tries && st.tries[key]) || 0;
+    if (tries >= 6) return;
+    if (MS.lastTry && Date.now() - MS.lastTry < 5 * 60000) return;
     MS.lastTry = Date.now(); saveMS();
-    runScheduled(key).then(r => {
+    runScheduled(key, { trigger: "timer" }).then(r => {
       if (!r.ok) console.log("[mail] 定时发送未完成：", r.msg || "");
-      else if (!r.skipped) console.log("[mail] 定时邮件已处理：" + key);
+      else if (!r.skipped) console.log("[mail] 定时邮件已处理：" + key + (r.withWeekly ? "（含周报）" : ""));
     });
-  }, 5 * 60000);
+  }, 60000);
 }
 
 /* ---------- GitHub 持久化 ---------- */
@@ -1758,23 +1717,56 @@ function requireStaff(req, res) {
 }
 app.get("/api/mail_status", (req, res) => {
   if (!requireStaff(req, res)) return;
+  const cfg = getMailCfg();
+  const st = mailState();
+  const today = bjKey(Date.now());
+  const withWeekly = isWeeklyDay(today);
+  const sentToday = (st.sentTo && st.sentTo[today]) || [];
+  const targets = digestSubscribers(withWeekly).map(t => t.email);
   res.json({ ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL, smtpHost: SMTP_ON ? SMTP_HOST : "", smtpUser: SMTP_ON ? SMTP_USER : "",
-    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: getMailCfg().reportHour,
-    lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today: bjKey(Date.now()) });
+    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: cfg.reportHour,
+    lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today,
+    schedule: { hour: cfg.reportHour, weekday: WEEKLY_WEEKDAY, weekdayName: "周五", timezone: "北京时间" },
+    todayState: {
+      isWorkday: [0, 6].indexOf(bj(today).getUTCDay()) < 0,
+      isWeeklyDay: withWeekly,
+      done: st.lastDigest === today
+        || (!withWeekly && (st.lastDaily === today || st.lastPersonal === today || st.lastRisk === today))
+        || (withWeekly && (st.weeklyDay === today || st.lastWeekly === today)),
+      sentTo: sentToday,
+      pending: targets.filter(e => sentToday.map(x => x.toLowerCase()).indexOf(e.toLowerCase()) < 0),
+      tries: (st.tries && st.tries[today]) || 0,
+      lastFail: st.lastFail && st.lastFail.day === today ? st.lastFail : null,
+    },
+    log: recentMailLog(30) });
 });
 app.post("/api/mail_test", async (req, res) => {
-  if (!requireStaff(req, res)) return;
+  const me = requireStaff(req, res); if (!me) return;
+  /* 测试只发给操作人自己，避免打扰其他导师/主管/新人；也支持显式传 to */
+  const b = req.body || {};
+  const ask = (Array.isArray(b.to) ? b.to : String(b.to || "").split(",")).map(x => String(x).trim()).filter(validEmail);
+  const self = validEmail(me.email) ? me.email : "";
+  const to = ask.length ? ask : (self ? [self] : []);
+  if (!to.length) return res.status(400).json({ ok: false, msg: "你的账号还没填邮箱，无法给自己发测试邮件（也可以手动填一个收件邮箱）" });
   const r = await sendMail("【测试】Q4 工作台邮件通知链路已连通",
     `<p>这是一封测试邮件。</p><p>收到它说明邮件通道（QQ 邮箱 SMTP / Resend）、发件人、收件人都已配置正确。</p>
-     <p style="color:#5C6772;font-size:13px">后续会自动发送：新人登录提醒、新人问题/诉求提醒、工作日 ${REPORT_HOUR}:00 的每日进度报告。</p>`,
-    "测试邮件 · 手动触发");
+     <p style="color:#5C6772;font-size:13px">后续会在工作日 ${getMailCfg().reportHour}:00 自动发送：整体日报 + 个人汇总 + 风险预警，周五加发本周周报（按账号订阅合并为 1 封）。</p>`,
+    "测试邮件 · 手动触发", { to, kind: "test", trigger: "manual" });
   res.status(r.ok ? 200 : 400).json(r);
 });
 app.post("/api/mail_report", async (req, res) => {
-  if (!requireStaff(req, res)) return;
-  /* 可选 ?day=YYYY-MM-DD：补发/重发指定某天的日报；不传则发当天 */
+  const me = requireStaff(req, res); if (!me) return;
+  /* 可选 ?day=YYYY-MM-DD 补发指定某天；?to=邮箱 只发给该邮箱（验证用，不影响其他人）；
+     ?force=1 忽略「今日已发」强制重发。默认发给全部自动订阅账号。 */
   const day = String(req.query.day || "");
-  const r = await sendDailyReport(/^\d{4}-\d{2}-\d{2}$/.test(day) ? day : bjKey(Date.now()));
+  const theDay = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : bjKey(Date.now());
+  const bodyTo = (req.body && req.body.to) || "";
+  const toList = (Array.isArray(bodyTo) ? bodyTo : String(bodyTo || "").split(",")).map(x => String(x).trim().toLowerCase()).filter(validEmail);
+  /* ?self=1：只发给操作人自己，用于验证，不打扰其他人 */
+  const selfOnly = String(req.query.self || "") === "1" && validEmail(me.email);
+  const onlyTo = toList[0] || (selfOnly ? me.email : "");
+  const force = String(req.query.force || "") === "1" || !!onlyTo;
+  const r = await runScheduled(theDay, { force, onlyTo, trigger: onlyTo ? "manual-test" : "manual" });
   res.status(r.ok ? 200 : 400).json(r);
 });
 
@@ -1831,7 +1823,7 @@ app.post("/api/mail_send", async (req, res) => {
   if (!to.length) return res.status(400).json({ ok: false, msg: "没有收件人：请填写邮箱，或在邮件中心配置规则" });
   const r = reportOf(type, day, ids);
   if (!r) return res.json({ ok: true, skipped: true, msg: "当前没有符合条件的内容，未发送", to: [] });
-  const x = await sendMail(r.subject, r.html, r.note + " · 邮件中心手动发送。", { to });
+  const x = await sendMail(r.subject, r.html, r.note + " · 邮件中心手动发送。", { to, kind: type, trigger: "manual" });
   res.status(x.ok ? 200 : 400).json(Object.assign({ to, subject: r.subject, day, type }, x));
 });
 /* 账号管理里「手动发送」：按该账号已保存的订阅内容，把指定日期的邮件发到其邮箱。
@@ -1854,7 +1846,7 @@ app.post("/api/mail_send_user", async (req, res) => {
   if (!parts.length) return res.json({ ok: true, skipped: true, msg: "当日无符合条件的内容，未发送", to: [] });
   const subject = digestSubject(day, parts);
   const x = await sendMail(subject, renderDigest(parts),
-    `手动发送 · 已按该账号勾选合并为 1 封 · ${day}。`, { to: [u.email] });
+    `手动发送 · 已按该账号勾选合并为 1 封 · ${day}。`, { to: [u.email], kind: "digest", trigger: "manual-user" });
   res.status(x.ok ? 200 : 400).json(Object.assign({ to: [u.email], subject, day,
     types: parts.map(p => p.key), labels: parts.map(p => p.label), merged: true }, x));
 });
@@ -1865,22 +1857,29 @@ app.get("/api/report_payload", (req, res) => {
   try { res.json({ ok: true, mail: reportPayload() }); }
   catch (e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
-/* 定时兜底：GitHub Actions 工作日 18:15 访问此接口唤醒免费实例，由服务端自己判断是否该发今日日报。
-   同一天只发一次（看 MS.lastReport），重复访问不会重复发信。 */
+/* 定时唤醒入口：GitHub Actions 在工作日 17:50–19:30 之间多次访问，唤醒免费实例并触发发送。
+   特点：
+     · 幂等：同一天已发过直接返回 skipped，可安全地被多次调用；
+     · 自愈：部分收件人失败时，下一次 ping 会只补发失败的；
+     · 可手动：?day=YYYY-MM-DD 补发历史 / ?to=邮箱 只发给自己验证 / ?force=1 强制重发。 */
 app.get("/api/daily_ping", async (req, res) => {
   const key = bjKey(Date.now());
   if (!MAIL_ON) return res.json({ ok: false, msg: "邮件通道未配置", skipped: "未配置" });
   const cfg = getMailCfg();
   const d = bj(Date.now());
   const wd = d.getUTCDay(), hour = d.getUTCHours();
-  if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
-  if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00" });
-  const st = mailState();
-  if (digestSentToday(st, key)) return res.json({ ok: true, skipped: "今日已发" });
-  if (!digestSubscribers(wd === 1).length && !mailTo().length) return res.json({ ok: true, skipped: "没有订阅收件人" });
-  const r = await runScheduled(key);
-  MS.lastReport = key; saveMS();
-  res.json({ ok: !!r.ok, msg: r.msg || "", to: r.to || [], channel: r.channel || "", result: r });
+  const qDay = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || "")) ? String(req.query.day) : "";
+  const theDay = qDay || key;
+  const toOverride = String(req.query.to || "").trim().toLowerCase();
+  const force = String(req.query.force || "") === "1";
+  if (!toOverride && !qDay && !force) {
+    if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
+    if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00", hour, now: bjTime(Date.now()) });
+  }
+  const r = await runScheduled(theDay, { trigger: "ping", force, onlyTo: validEmail(toOverride) ? toOverride : "" });
+  if (!toOverride) { MS.lastReport = theDay; saveMS(); }
+  res.json({ ok: !!r.ok, msg: r.msg || "", skipped: r.skipped || "", to: r.to || [],
+    failed: r.failed || 0, withWeekly: !!r.withWeekly, day: theDay, channel: r.channel || "", result: r });
 });
 
 /* ---------- 企业微信扫码登录（可选） ---------- */
@@ -1944,7 +1943,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`Q4 工作台在线版已启动： http://localhost:${PORT}`);
     console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
-    console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
+    console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报 / 周五 " + REPORT_HOUR + ":00 周报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
     startDailyReportTimer();
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));

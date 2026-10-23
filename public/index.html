@@ -2325,7 +2325,7 @@ function renderMonitor(){
  renderMailBox();
 }
 
-/* 通知与提醒：状态 + 测试 + 立即发送日报（仅导师/主管/超管） */
+/* 通知与提醒：发送规则 + 今日状态 + 最近发送记录 + 测试/补发（默认只发给自己，不打扰他人） */
 async function renderMailBox(){
  const el=document.getElementById("mailBox");if(!el)return;
  const sec=document.getElementById("mailSec");if(sec)sec.classList.toggle("hide",!isStaff());
@@ -2335,24 +2335,43 @@ async function renderMailBox(){
  try{s=await apiGet("/api/mail_status");}catch(e){el.innerHTML=`<div class="tag no">读取失败：连不上服务器</div>`;return;}
  if(!document.getElementById("mailBox"))return;
  const on=!!s.enabled;
- const last=s.lastSent?fmt(s.lastSent):"暂无";
+ const ts=s.todayState||{};const sch=s.schedule||{hour:18};
+ const state=!ts.isWorkday?`<span class="tag gy">今天不是工作日，不自动发送</span>`
+   :ts.done?`<span class="tag ok">今日已发送</span> <span class="muted">→ ${(ts.sentTo||[]).map(esc).join("、")||"—"}</span>`
+   :`<span class="tag wt">今日待发送</span> <span class="muted">${(ts.pending||[]).length?`待发 ${ts.pending.map(esc).join("、")}`:"暂无订阅收件人"}${ts.lastFail?`　·　上次失败：${esc(ts.lastFail.msg||"")}`:""}</span>`;
+ const rows=(s.log||[]).slice(0,12).map(x=>`<tr>
+   <td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap">${fmt(x.at)}</td>
+   <td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap">${esc(x.trigger||"—")}</td>
+   <td style="padding:5px 8px;border-bottom:1px solid var(--line)">${esc(x.subject||"")}</td>
+   <td style="padding:5px 8px;border-bottom:1px solid var(--line)">${(x.to||[]).map(esc).join("、")||"—"}</td>
+   <td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap">${x.ok?'<span class="tag ok">成功</span>':`<span class="tag no">失败</span> <span class="muted">${esc(x.msg||"")}</span>`}</td></tr>`).join("");
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
-     <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>${s.replyTo?`　·　回复地址：<b>${esc(s.replyTo)}</b>`:""}　·　最近发送：${last}　·　最近日报：${s.lastReport?esc(s.lastReport):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">自动触发：登录提醒（30 分钟内不重复）· 问题/诉求即时提醒 · 工作日 ${s.reportHour||18}:00 日报 · 周一发上周周报 · 个人汇总 · 风险预警（收件人与内容统一在「账号管理」里按人配置）</div>
+     <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　默认收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${s.lastSent?fmt(s.lastSent):"暂无"}</div>
+     <div class="muted" style="margin-top:3px">发送规则：<b>工作日 ${sch.hour}:00</b> 发「整体日报 + 个人汇总 + 风险预警（有则附）」，按账号订阅合并为 <b>1 封</b>；<b>每周五 ${sch.hour}:00</b> 加发本周周报；登录提醒、问题/诉求提醒为即时单发。</div>
+     <div style="margin-top:6px">${state}${ts.isWeeklyDay&&!ts.done?' <span class="tag wt">今天周五，会加发周报</span>':""}</div>
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
-   <div class="row" style="gap:7px">
+   <div class="row" style="gap:7px;align-items:flex-start;flex-wrap:wrap">
      ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件设置（账号管理）</button>':""}
-     <button class="btn sm gh" id="mailTestBtn">发测试邮件</button>
-     <button class="btn sm" id="mailRepBtn">立即发今日日报</button></div>
+     <button class="btn sm gh" id="mailTestBtn">发测试邮件（只给我）</button>
+     <button class="btn sm gh" id="mailSelfBtn">补发今日（只给我）</button>
+     <button class="btn sm" id="mailRepBtn">立即发今日（全部订阅人）</button></div>
  </div>
- <div class="muted" id="mailMsg" style="margin-top:7px"></div>`;
+ <div class="muted" id="mailMsg" style="margin-top:7px"></div>
+ <details style="margin-top:10px" ${rows?"open":""}><summary style="cursor:pointer;font-size:12.7px;font-weight:700;color:var(--ink2)">最近发送记录（含触发方式与失败原因）</summary>
+  ${rows?`<table style="border-collapse:collapse;width:100%;font-size:12.3px;margin-top:8px">
+    <tr style="background:var(--blue-l);text-align:left"><th style="padding:6px 8px">时间</th><th style="padding:6px 8px">触发</th><th style="padding:6px 8px">标题</th><th style="padding:6px 8px">收件人</th><th style="padding:6px 8px">结果</th></tr>${rows}</table>`
+   :`<div class="muted" style="margin-top:6px">还没有发送记录。工作日 ${sch.hour}:00 后这里会出现每天的发送结果。</div>`}
+ </details>`;
  const msg=m=>{const x=document.getElementById("mailMsg");if(x)x.innerHTML=m;};
  const tb=document.getElementById("mailTestBtn");if(tb)tb.onclick=async()=>{tb.disabled=true;msg("发送中…");
-  try{const r=await apiPost("/api/mail_test",{});msg(r.ok?`<span class="tag ok">已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);}
+  try{const r=await apiPost("/api/mail_test",{});msg(r.ok?`<span class="tag ok">已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}tb.disabled=false;};
- const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{rb.disabled=true;msg("汇总并发送中…");
-  try{const r=await apiPost("/api/mail_report",{});msg(r.ok?`<span class="tag ok">今日日报已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);}
+ const sb=document.getElementById("mailSelfBtn");if(sb)sb.onclick=async()=>{sb.disabled=true;msg("生成并发送中…");
+  try{const r=await apiPost("/api/mail_report?self=1&force=1",{});msg(r.ok?`<span class="tag ok">已发送（仅你本人）</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  catch(e){msg('<span class="tag no">请求失败</span>');}sb.disabled=false;};
+ const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{if(!confirm("会给全部自动订阅的导师/主管/新人各发一封今日汇总，确定？"))return;rb.disabled=true;msg("汇总并发送中…");
+  try{const r=await apiPost("/api/mail_report?force=1",{});msg(r.ok?`<span class="tag ok">今日邮件已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}rb.disabled=false;};
  const cb=document.getElementById("mailCfgBtn");if(cb)cb.onclick=()=>openAccounts();
 }
@@ -2425,7 +2444,7 @@ async function openMailCenter(){
      <h3 style="margin-bottom:8px">基础设置</h3>
      <div class="row" style="flex-wrap:wrap">
       <label class="mcbx"><input type="checkbox" id="mcDaily" ${state.daily!==false?"checked":""}> 工作日整体日报</label>
-      <label class="mcbx"><input type="checkbox" id="mcWeekly" ${state.weekly!==false?"checked":""}> 周一发送上周周报</label>
+      <label class="mcbx"><input type="checkbox" id="mcWeekly" ${state.weekly!==false?"checked":""}> 周五发送本周周报</label>
       <label class="mcbx"><input type="checkbox" id="mcPersonal" ${state.personal!==false?"checked":""}> 个人汇总</label>
       <label class="mcbx"><input type="checkbox" id="mcRisk" ${state.risk!==false?"checked":""}> 风险预警</label>
       <label class="mcbx"><input type="checkbox" id="mcSelf" ${state.personalSelf!==false?"checked":""}> 新人本人也收个人汇总</label>

@@ -2,9 +2,14 @@ name: mail-relay
 
 # 免费发信中继：公开仓库 Actions 分钟数不限，runner 可连 QQ 邮箱 SMTP。
 # 触发方式：
-#   1) repository_dispatch（服务端事件：登录/新问题/测试/日报）—— 秒级发信
-#   2) schedule（工作日 18:15 北京时间 = 10:15 UTC）—— 唤醒免费实例，让它补发当日日报
-#   3) 手动 workflow_dispatch
+#   1) repository_dispatch（服务端事件：登录提醒 / 问题提醒 / 手动发送）—— 秒级发信
+#   2) schedule（工作日 17:50 唤醒实例，等到 18:00 再触发日报；另配多次补偿）
+#   3) workflow_dispatch（手动）
+#
+# 定时发信为什么这样排：
+#   · Render 免费实例会休眠，服务端自己的定时器在休眠时不跑，必须靠外部唤醒；
+#   · GitHub 的 schedule 会被延迟（实测有延迟数小时的情况），所以不能只排一次；
+#   · 服务端 /api/daily_ping 是幂等的，同一个工作日被调用多次也只会发 1 封。
 #
 # 仓库 Secrets 只需两个：SMTP_USER、SMTP_PASS
 
@@ -12,13 +17,23 @@ on:
   repository_dispatch:
     types: [send-mail]
   schedule:
-    - cron: "15 10 * * 1-5"
+    # 17:50 预热：把实例唤醒，并等到 18:00 整再触发（北京时间 = UTC+8）
+    - cron: "50 9 * * 1-5"
+    # 以下为补偿：主任务被延迟/失败时兜底；已发过会直接 skipped
+    - cron: "5 10 * * 1-5"
+    - cron: "20 10 * * 1-5"
+    - cron: "50 10 * * 1-5"
+    - cron: "20 11 * * 1-5"
   workflow_dispatch:
+
+concurrency:
+  group: mail-relay
+  cancel-in-progress: false
 
 jobs:
   send:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'repository_dispatch'
@@ -48,10 +63,26 @@ jobs:
           NODE_PATH: ${{ github.workspace }}/relay-deps/node_modules
         run: node mail-relay.js
 
-      - name: 定时兜底：唤醒实例并补发当日日报
+      - name: 定时唤醒并触发日报
         if: github.event_name != 'repository_dispatch'
         run: |
           APP="https://q4-workbench.onrender.com"
-          curl -fsS -m 90 "$APP/" > /dev/null || true
-          sleep 10
-          curl -fsS -m 120 "$APP/api/daily_ping" || true
+          # 1) 唤醒实例（免费实例冷启动约 30–60 秒）
+          curl -fsS -m 120 "$APP/" > /dev/null || true
+          # 2) 若是 17:50 这一次，等到 18:00 整再触发，保证准点
+          TARGET=$(date -u -d "today 10:00" +%s)
+          NOW=$(date -u +%s)
+          WAIT=$((TARGET - NOW))
+          if [ "$WAIT" -gt 0 ] && [ "$WAIT" -lt 3600 ]; then
+            echo "等待 ${WAIT}s 到北京时间 18:00"
+            sleep "$WAIT"
+          fi
+          # 3) 触发（幂等：已发过返回 skipped，不会重复发信）
+          for i in 1 2 3; do
+            echo "--- 第 $i 次触发 ---"
+            OUT=$(curl -fsS -m 180 "$APP/api/daily_ping" || true)
+            echo "$OUT"
+            echo "$OUT" | grep -q '"ok":true' && break
+            echo "$OUT" | grep -q '"skipped":"今日已发"' && break
+            sleep 60
+          done
