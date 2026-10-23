@@ -1129,7 +1129,7 @@ function buildDailyReport(day, opts) {
     if (s.quizTotal > 0) bits.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
     if (logs.length) bits.push(`更新 ${logs.length} 条任务进展`);
     if (submitted.length) bits.push(`提交验收 ${submitted.length} 项`);
-    if (newCars.length) bits.push(`新登记客户 ${newCars.length} 个（${newCars.map(c => c.name).slice(0, 2).join("、")}）`);
+    if (newCars.length) bits.push(`新登记客户 ${newCars.length} 个（${newCars.slice(0, 2).map(c => c.name).join("、")}${newCars.length > 2 ? " 等" : ""}）`);
     else if (touchedCars.length) bits.push(`跟进客户 ${touchedCars.length} 个（${touchedCars.map(c => c.name).slice(0, 2).join("、")}）`);
     if (returned.length) bits.push(`有 ${returned.length} 项被退回待改`);
     const oneLine = bits.length ? "今天" + bits.join("、") + "。"
@@ -1162,9 +1162,9 @@ function buildDailyReport(day, opts) {
   const cardHtml = rows.map(x => {
     const r2 = (k, v) => `<tr><td style="padding:4px 8px;color:#5C6772;white-space:nowrap;vertical-align:top;font-size:12.5px">${k}</td><td style="padding:4px 8px;font-size:12.5px">${v}</td></tr>`;
     const progress = `<table style="border-collapse:collapse;width:100%;margin-top:4px">
-      ${r2("通关节点", x.nodeNames.length ? x.nodeNames.slice(0, 6).map(h).join("、") : "今日无通关节点")}
+      ${r2("通关节点", x.nodeNames.length ? `${x.nodeNames.slice(0, 6).map(h).join("、")}${x.nodeNames.length > 6 ? ` 等 ${x.nodeNames.length} 个` : ""}` : "今日无通关节点")}
       ${r2("小测得分", x.s.quizTotal > 0 ? `${x.s.quizCorrect}/${x.s.quizTotal}（${x.s.quizAcc}%）` : "今日无小测")}
-      ${r2("任务/项目进展", x.logs.length ? x.logs.slice(0, 5).map(h).join("<br>") : "今日没有更新任务进展")}
+      ${r2("任务/项目进展", x.logs.length ? `${x.logs.slice(0, 5).map(h).join("<br>")}${x.logs.length > 5 ? `<br>…等 ${x.logs.length} 条` : ""}` : "今日没有更新任务进展")}
       ${r2("提交验收", x.submitted.length ? x.submitted.map(v => h(v.text)).join("、") : "今日无提交验收")}
       ${r2("客户档案", x.newCars.length ? `新建 ${x.newCars.length} 个：${x.newCars.slice(0, 6).map(c => h(c.name)).join("、")}${x.newCars.length > 6 ? " 等" : ""}${x.touchedCars.length ? `<br>跟进 ${x.touchedCars.length} 个：${x.touchedCars.slice(0, 6).map(c => h(c.name)).join("、")}` : ""}` : (x.touchedCars.length ? `跟进 ${x.touchedCars.length} 个：${x.touchedCars.slice(0, 6).map(c => h(c.name)).join("、")}` : "今日无客户档案变更"))}
       ${r2("问题 / 求助", x.todayIssues.length ? `新增 ${x.todayIssues.length} 条：${x.todayIssues.slice(0, 2).map(q => h(String(q.text || "").slice(0, 28))).join("；")}` : "今日无新问题")}
