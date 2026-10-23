@@ -1023,53 +1023,70 @@ function nextStepsFor(u, S, s, day) {
   if (!out.length) out.push("挑一个未闭环任务，今天更新一条进展");
   return [...new Set(out)].slice(0, 3);
 }
-/* 新人本人文本：今日/本周一句话 */
-function oneLineNewbie(s, day, closedCount) {
-  const bits = [];
-  if (s.nodesNew) bits.push(`通关 ${s.nodesNew} 个节点`);
-  if (s.quizTotal > 0) bits.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
-  if (closedCount) bits.push(`闭环 ${closedCount} 项`);
-  if (s.carsIn) bits.push(`更新 ${s.carsIn} 个客户档案`);
-  if (!s.activeAt) return "今天还没有任何动作，先从一个小任务开始。";
-  if (!bits.length) return `今天有 ${s.kinds ? Object.values(s.kinds).reduce((a, b) => a + b, 0) : 0} 条业务动作，继续保持。`;
-  return "今天" + bits.join("、") + "。";
-}
+/* 新人日报/周报的「一句话」在各模板内按当日/当周数据现算，不再单独抽函数 */
 
-/* ---------- 新人日报 ---------- */
+/* ---------- 新人日报（发给本人，所有板块固定展示，没数据也写「无」） ---------- */
 function buildNewbieDaily(u, day, S0) {
   const S = S0 || snapshot();
   const dayKey = day || bjKey(Date.now());
   const s = userStats(u, [dayKey], S);
-  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
-  const steps = mlines.length ? mlines.slice(0, 3) : nextStepsFor(u, S, s, dayKey);
-  const stepTitle = mlines.length ? "我的下一步（导师已确认）" : "我的下一步（系统建议）";
-  const open = tasksOf(u, S).filter(taskOpen);
+  const allTasks = tasksOf(u, S);
+  const open = allTasks.filter(taskOpen);
   const returned = open.filter(v => v.cfm === 2);
   const blocked = open.filter(v => v.blocked);
-  const review = open.filter(v => v.cfm === 3);
+  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const steps = nextStepsFor(u, S, s, dayKey);
+  const stepTitle = "我的下一步（按优先级）";
+
+  const closedToday = allTasks.filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === dayKey);
+  const submitted = allTasks.filter(v => v.cfm === 3 && bjKey(v.updatedAt) === dayKey);
   const logs = [];
-  tasksOf(u, S).forEach(v => (v.log || []).filter(y => !y.del && y.by === u.id && bjKey(y.at) === dayKey)
-    .forEach(y => logs.push(`<b>${h(v.car)}</b> · ${h(v.text)}：${h(y.text)}`)));
-  const newNodeNames = s.newRecs.filter(x => x.nodeId).map(x => h(x.module || x.line || x.nodeId));
-  const closedToday = tasksOf(u, S).filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === dayKey);
-  const done = [];
-  closedToday.forEach(v => done.push(`闭环：${v.car} · ${v.text}`));
-  if (newNodeNames.length) done.push(`通关 ${newNodeNames.length} 个节点：${[...new Set(newNodeNames)].slice(0, 4).join("、")}`);
-  if (s.quizTotal > 0) done.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
-  logs.slice(0, 4).forEach(t => done.push(`进展：${t}`));
-  if (s.carsIn) done.push(`更新客户档案 ${s.carsIn} 个`);
-  if (s.revealsIn) done.push(`自查 ${s.revealsIn} 条`);
-  if (s.depositsIn) done.push(`知识沉淀 ${s.depositsIn} 篇`);
+  allTasks.forEach(v => (v.log || []).filter(y => !y.del && y.by === u.id && bjKey(y.at) === dayKey)
+    .forEach(y => logs.push(`${v.car} · ${v.text}：${y.text}`)));
+  const nodeNames = [...new Set(s.newRecs.filter(x => x.nodeId).map(x => x.module || x.line || x.nodeId))];
+  const newCars = S.carriers.filter(c => c.who === u.id && bjKey(c.createdAt) === dayKey);
+  const touchedCars = S.carriers.filter(c => c.who === u.id && bjKey(c.updatedAt) === dayKey && bjKey(c.createdAt) !== dayKey);
+  const todayIssues = (S.issues || []).filter(x => x.who === u.id && bjKey(x.createdAt) === dayKey);
+  const drillsToday = (S.drills || []).filter(x => x.who === u.id && bjKey(x.createdAt) === dayKey).length;
+
+  /* 今日一句话：把当天最有信息量的数字/名称拼出来 */
+  const bits = [];
+  if (closedToday.length) bits.push(`闭环 ${closedToday.length} 项（${closedToday.map(v => v.text).slice(0, 2).join("、")}）`);
+  if (nodeNames.length) bits.push(`通关 ${nodeNames.length} 个节点`);
+  if (s.quizTotal > 0) bits.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
+  if (logs.length) bits.push(`更新 ${logs.length} 条任务进展`);
+  if (submitted.length) bits.push(`提交验收 ${submitted.length} 项`);
+  if (newCars.length) bits.push(`新登记客户 ${newCars.length} 个（${newCars.map(c => c.name).slice(0, 2).join("、")}）`);
+  else if (touchedCars.length) bits.push(`跟进客户 ${touchedCars.length} 个（${touchedCars.map(c => c.name).slice(0, 2).join("、")}）`);
+  if (returned.length) bits.push(`有 ${returned.length} 项被退回待改`);
+  const oneLine = bits.length ? "今天" + bits.join("、") + "。" : (s.activeAt ? "今天有登录/浏览动作，但没有产生可记录的推进。" : "今天还没有任何动作，先从一个小任务开始。");
+
+  const row = (k, v, color) => `<tr><td style="padding:5px 8px;color:#5C6772;white-space:nowrap;vertical-align:top">${k}</td><td style="padding:5px 8px${color ? ";color:" + color : ""}">${v}</td></tr>`;
+  const progressTable = `<table style="border-collapse:collapse;width:100%;font-size:12.8px;margin-top:4px">
+    ${row("通关节点", nodeNames.length ? nodeNames.slice(0, 6).map(h).join("、") : "今日无通关节点")}
+    ${row("小测得分", s.quizTotal > 0 ? `${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）` : "今日无小测")}
+    ${row("任务/项目进展", logs.length ? logs.slice(0, 5).map(h).join("<br>") : "今日没有更新任务进展")}
+    ${row("提交验收", submitted.length ? submitted.map(v => h(v.text)).join("、") : "今日无提交验收")}
+    ${row("客户档案", newCars.length ? `新建：${newCars.map(c => h(c.name)).slice(0, 5).join("、")}` : (touchedCars.length ? `更新：${touchedCars.map(c => h(c.name)).slice(0, 5).join("、")}` : "今日无客户档案变更"))}
+    ${row("问题 / 求助", todayIssues.length ? `新增 ${todayIssues.length} 条：${todayIssues.slice(0, 2).map(x => h(String(x.text || "").slice(0, 30))).join("；")}` : "今日无新问题")}
+    ${row("演练 / 自查 / 沉淀", `演练今日 ${drillsToday} 次（近 14 天 ${s.dr14} 次）· 自查 ${s.revealsIn} 条 · 沉淀 ${s.depositsIn} 篇`)}
+  </table>`;
+
   const blockItems = [];
   blocked.forEach(v => blockItems.push(`<b>${h(v.text)}</b>：${h(v.blocked)}${v.need ? `（需要：${h(v.need)}）` : ""}`));
-  returned.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 被退回：${h((v.log || []).filter(y => /退回/.test(y.text || "")).slice(-1).map(y => y.text)[0] || "请按导师意见补充后重新提交")}`));
-  review.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 已提交验收，等导师确认`));
+  returned.forEach(v => {
+    const reason = (v.log || []).filter(y => /退回/.test(y.text || "")).slice(-1).map(y => y.text)[0];
+    blockItems.push(`<b>${h(v.text)}</b> 被退回：${h(reason || "请按导师意见补充后重新提交")}`);
+  });
+  const blockHtml = blockItems.length ? ul(blockItems, "#8C2B1F") : `<div style="font-size:12.5px;color:#3C6B1A">今天没有记录卡点或被退回的内容，继续保持。</div>`;
+
   return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
-    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${dayKey}</span></div>
-    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLineNewbie(s, dayKey, closedToday.length)}</div>
-    ${mailBox("今日完成", done.length ? ul(done) : `<div style="font-size:12.5px;color:#7C8896">今天还没有可计入的记录</div>`, "green")}
-    ${blockItems.length ? mailBox("卡住的地方", ul(blockItems, "#8C2B1F"), "red") : ""}
+    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${dayKey} 今日小结</span></div>
+    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLine}</div>
+    ${mailBox("我的今日进展", progressTable, "green")}
+    ${mailBox("卡住的地方", blockHtml, blockItems.length ? "red" : "green")}
     ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
+    ${mailBox("导师给你的要求", mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>` : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师暂未填写额外要求，按上面的下一步执行即可。</div>`, "yellow")}
   </div>`;
 }
 
@@ -1276,7 +1293,7 @@ function buildWeeklyReport(day, opts) {
   return { range, rows, html };
 }
 
-/* ---------- 新人周报（发给本人） ---------- */
+/* ---------- 新人周报（发给本人，所有板块固定展示） ---------- */
 function buildNewbieWeekly(u, day, S0) {
   const S = S0 || snapshot();
   const range = weekRangeFor(day || bjKey(Date.now()));
@@ -1286,34 +1303,65 @@ function buildNewbieWeekly(u, day, S0) {
   else { for (let i = 7; i >= 1; i--) prevDays.push(dayAdd(range.start, -i)); }
   const p = userStats(u, prevDays, S);
   const acts = tasksOf(u, S);
-  const doneIn = acts.filter(v => (v.st || 0) === 2 && range.days.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
+  const inRange = t => range.days.indexOf(bjKey(t)) >= 0;
+  const doneIn = acts.filter(v => (v.st || 0) === 2 && inRange(v.cfmAt || v.updatedAt));
+  const prevDone = acts.filter(v => (v.st || 0) === 2 && prevDays.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
   const returned = acts.filter(v => taskOpen(v) && v.cfm === 2);
   const blocked = acts.filter(v => taskOpen(v) && v.blocked);
   const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
-  const steps = mlines.length ? mlines.slice(0, 3) : nextStepsFor(u, S, s, range.end);
-  const stepTitle = mlines.length ? "下周 3 件事（导师已确认）" : "下周 3 件事（系统建议）";
+  const steps = nextStepsFor(u, S, s, range.end);
+  const stepTitle = "下周 3 件事（系统建议）";
+
+  const newCars = S.carriers.filter(c => c.who === u.id && inRange(c.createdAt));
+  const touchedCars = S.carriers.filter(c => c.who === u.id && inRange(c.updatedAt) && !inRange(c.createdAt));
+  const logsIn = [];
+  acts.forEach(v => (v.log || []).filter(y => !y.del && y.by === u.id && inRange(y.at))
+    .forEach(y => logsIn.push(`${v.car} · ${v.text}：${y.text}`)));
+
   const ach = [];
   doneIn.forEach(v => ach.push(`闭环：${v.car} · ${v.text}`));
+  newCars.slice(0, 5).forEach(c => ach.push(`新登记客户：${c.name}`));
+  if (touchedCars.length) ach.push(`跟进客户 ${touchedCars.length} 个：${touchedCars.slice(0, 5).map(c => c.name).join("、")}`);
+  if (logsIn.length) ach.push(`更新任务进展 ${logsIn.length} 条`);
   if (s.nodesNew) ach.push(`通关 ${s.nodesNew} 个节点（累计 ${s.nodesDone}）`);
   if (s.quizTotal > 0) ach.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
-  if (s.carsIn) ach.push(`客户档案有动作 ${s.carsIn} 个`);
-  if (s.opsNew) ach.push(`提出/跟进问题 ${s.opsNew} 条`);
   if (s.dr14) ach.push(`演练 ${s.dr14} 次${s.avg != null ? `（均分 ${s.avg}）` : ""}`);
-  if (s.depositsIn) ach.push(`沉淀 ${s.depositsIn} 篇`);
-  const cmp = [`<tr><td style="padding:5px 8px;color:#5C6772">活跃天数</td><td style="padding:5px 8px">${s.activeDays} 天</td><td style="padding:5px 8px;color:#7C8896">${p.activeDays} 天</td></tr>`,
+  if (s.opsNew) ach.push(`提出 / 跟进问题 ${s.opsNew} 条`);
+  if (s.hs) ach.push(`帮同伴支招 ${s.hs} 分（${s.hn} 条）`);
+  if (s.depositsIn) ach.push(`知识沉淀 ${s.depositsIn} 篇`);
+  if (s.revealsIn) ach.push(`自查 ${s.revealsIn} 条`);
+
+  const cmp = [
+    `<tr><td style="padding:5px 8px;color:#5C6772">活跃天数</td><td style="padding:5px 8px">${s.activeDays} 天</td><td style="padding:5px 8px;color:#7C8896">${p.activeDays} 天</td></tr>`,
     `<tr><td style="padding:5px 8px;color:#5C6772">通关节点</td><td style="padding:5px 8px">${s.nodesNew} 个</td><td style="padding:5px 8px;color:#7C8896">${p.nodesNew} 个</td></tr>`,
     `<tr><td style="padding:5px 8px;color:#5C6772">小测正确率</td><td style="padding:5px 8px">${s.quizAcc != null ? s.quizAcc + "%" : "—"}</td><td style="padding:5px 8px;color:#7C8896">${p.quizAcc != null ? p.quizAcc + "%" : "—"}</td></tr>`,
-    `<tr><td style="padding:5px 8px;color:#5C6772">演练次数</td><td style="padding:5px 8px">${s.dr14} 次</td><td style="padding:5px 8px;color:#7C8896">—</td></tr>`].join("");
+    `<tr><td style="padding:5px 8px;color:#5C6772">闭环任务/项目</td><td style="padding:5px 8px">${doneIn.length} 项</td><td style="padding:5px 8px;color:#7C8896">${prevDone.length} 项</td></tr>`,
+    `<tr><td style="padding:5px 8px;color:#5C6772">演练次数</td><td style="padding:5px 8px">${s.dr14} 次</td><td style="padding:5px 8px;color:#7C8896">${p.dr14} 次</td></tr>`
+  ].join("");
+
+  /* 本周卡点与应对：卡点 / 退回原因 / 停滞任务，并给出建议动作 */
   const blockItems = [];
-  blocked.forEach(v => blockItems.push(`<b>${h(v.text)}</b>：${h(v.blocked)}`));
-  returned.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 被退回，待修改后重新提交`));
+  blocked.forEach(v => blockItems.push(`<b>${h(v.text)}</b>：${h(v.blocked)}　<span style="color:#5C6772">→ 建议：先把卡点写进「转求助」或找导师确认方向</span>`));
+  returned.forEach(v => {
+    const reason = (v.log || []).filter(y => /退回/.test(y.text || "")).slice(-1).map(y => y.text)[0];
+    blockItems.push(`<b>${h(v.text)}</b> 被退回：${h(reason || "按导师意见补充后重新提交")}`);
+  });
+  acts.filter(v => taskOpen(v) && v.cfm !== 3 && waitDays(v.updatedAt) > 5)
+    .slice(0, 2).forEach(v => blockItems.push(`<b>${h(v.text)}</b> 已停滞 ${waitDays(v.updatedAt)} 天，建议本周内更新进展或重排截止日`));
+  const blockHtml = blockItems.length ? ul(blockItems, "#8C2B1F") : `<div style="font-size:12.5px;color:#3C6B1A">本周没有记录卡点或被退回的内容。</div>`;
+
+  const oneLine = (doneIn.length || s.nodesNew || s.carsIn || s.quizTotal)
+    ? `本周闭环 ${doneIn.length} 项、通关 ${s.nodesNew} 个节点、小测 ${s.quizAcc != null ? s.quizAcc + "%" : "—"}${newCars.length ? `、新登记客户 ${newCars.length} 个` : ""}${returned.length ? `；${returned.length} 项被退回待改` : ""}。`
+    : "本周记录较少，下周先从一个小目标开始。";
+
   return { range, html: `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
-    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${range.start} ～ ${range.end}</span></div>
-    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${doneIn.length || s.nodesNew || s.quizTotal ? `本周闭环 ${doneIn.length} 项、通关 ${s.nodesNew} 个节点、小测 ${s.quizAcc != null ? s.quizAcc + "%" : "—"}。` : "本周记录较少，下周先从一个小目标开始。"}</div>
+    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${range.start} ～ ${range.end} 周报</span></div>
+    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLine}</div>
     ${mailBox("本周成果", ach.length ? ul(ach) : `<div style="font-size:12.5px;color:#7C8896">本周还没有闭环或学习记录</div>`, "green")}
-    ${mailBox("与上周对比", `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:4px"><tr style="text-align:left"><td style="padding:5px 8px;color:#7C8896">指标</td><td style="padding:5px 8px;color:#7C8896">本周</td><td style="padding:5px 8px;color:#7C8896">上周</td></tr>${cmp}</table>`, "yellow")}
-    ${blockItems.length ? mailBox("本周卡点", ul(blockItems, "#8C2B1F"), "red") : ""}
+    ${mailBox("与上周对比", `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:4px"><tr style="text-align:left"><td style="padding:5px 8px;color:#7C8896">指标</td><td style="padding:5px 8px;color:#7C8896">本周</td><td style="padding:5px 8px;color:#7C8896">上周同期</td></tr>${cmp}</table>`, "yellow")}
+    ${mailBox("本周卡点与应对", blockHtml, blockItems.length ? "red" : "green")}
     ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
+    ${mailBox("导师评价", mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>` : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师本周未点评（系统已提醒导师）。有疑问可直接在工作台「② 协助」发起求助。</div>`, "green")}
    </div>` };
 }
 
