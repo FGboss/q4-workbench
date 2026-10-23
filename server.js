@@ -1110,9 +1110,31 @@ function buildDailyReport(day, opts) {
     const closedIds = new Set(closed.map(v => v.id));
     const logs = [];
     allTasks.forEach(v => { if (closedIds.has(v.id)) return;
-      (v.log || []).filter(y => !y.del && bjKey(y.at) === today).forEach(y => logs.push(`${v.car}·${v.text}：${y.text}`)); });
+      (v.log || []).filter(y => !y.del && bjKey(y.at) === today && !/退回/.test(y.text || ""))
+        .forEach(y => logs.push(`${v.car} · ${v.text}：${y.text}`)); });
     const newCars = S.carriers.filter(c => c.who === u.id && bjKey(c.createdAt) === today);
-    return { u, s, risk, steps, logs, closed, newCars };
+    const touchedCars = S.carriers.filter(c => c.who === u.id && bjKey(c.updatedAt) === today && bjKey(c.createdAt) !== today);
+    const submitted = allTasks.filter(v => v.cfm === 3 && bjKey(v.updatedAt) === today);
+    const nodeNames = [...new Set(s.newRecs.filter(x => x.nodeId).map(x => x.module || x.line || x.nodeId))];
+    const todayIssues = (S.issues || []).filter(x => x.who === u.id && bjKey(x.createdAt) === today);
+    const drillsToday = (S.drills || []).filter(x => x.who === u.id && bjKey(x.createdAt) === today).length;
+    const open = allTasks.filter(taskOpen);
+    const blocked = open.filter(v => v.blocked);
+    const returned = open.filter(v => v.cfm === 2);
+    const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+    /* 今日一句话：与新人日报同口径 */
+    const bits = [];
+    if (closed.length) bits.push(`闭环 ${closed.length} 项（${closed.map(v => v.text).slice(0, 2).join("、")}）`);
+    if (nodeNames.length) bits.push(`通关 ${nodeNames.length} 个节点`);
+    if (s.quizTotal > 0) bits.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
+    if (logs.length) bits.push(`更新 ${logs.length} 条任务进展`);
+    if (submitted.length) bits.push(`提交验收 ${submitted.length} 项`);
+    if (newCars.length) bits.push(`新登记客户 ${newCars.length} 个（${newCars.map(c => c.name).slice(0, 2).join("、")}）`);
+    else if (touchedCars.length) bits.push(`跟进客户 ${touchedCars.length} 个（${touchedCars.map(c => c.name).slice(0, 2).join("、")}）`);
+    if (returned.length) bits.push(`有 ${returned.length} 项被退回待改`);
+    const oneLine = bits.length ? "今天" + bits.join("、") + "。"
+      : (s.activeAt ? "今天有登录/浏览动作，但没有产生可记录的推进。" : "今天还没有任何动作。");
+    return { u, s, risk, steps, logs, closed, newCars, touchedCars, submitted, nodeNames, todayIssues, drillsToday, blocked, returned, mlines, oneLine };
   });
   const reds = rows.filter(x => x.risk.level === "red");
   const yels = rows.filter(x => x.risk.level === "yellow");
@@ -1138,21 +1160,38 @@ function buildDailyReport(day, opts) {
   const topTodo = todo.sort((a, b) => a.p - b.p || b.w - a.w).slice(0, 3);
 
   const cardHtml = rows.map(x => {
-    const prog = [];
-    x.closed.forEach(v => prog.push(`闭环：${v.text}`));
-    x.logs.slice(0, 2).forEach(t => prog.push(t));
-    x.newCars.slice(0, 1).forEach(c => prog.push(`新登记客户：${c.name}`));
-    if (x.s.nodesNew) prog.push(`通关 ${x.s.nodesNew} 个节点`);
-    if (x.s.quizTotal > 0) prog.push(`小测 ${x.s.quizCorrect}/${x.s.quizTotal}（${x.s.quizAcc}%）`);
-    const risks = x.risk.red.concat(x.risk.yellow).slice(0, 3);
+    const r2 = (k, v) => `<tr><td style="padding:4px 8px;color:#5C6772;white-space:nowrap;vertical-align:top;font-size:12.5px">${k}</td><td style="padding:4px 8px;font-size:12.5px">${v}</td></tr>`;
+    const progress = `<table style="border-collapse:collapse;width:100%;margin-top:4px">
+      ${r2("通关节点", x.nodeNames.length ? x.nodeNames.slice(0, 6).map(h).join("、") : "今日无通关节点")}
+      ${r2("小测得分", x.s.quizTotal > 0 ? `${x.s.quizCorrect}/${x.s.quizTotal}（${x.s.quizAcc}%）` : "今日无小测")}
+      ${r2("任务/项目进展", x.logs.length ? x.logs.slice(0, 5).map(h).join("<br>") : "今日没有更新任务进展")}
+      ${r2("提交验收", x.submitted.length ? x.submitted.map(v => h(v.text)).join("、") : "今日无提交验收")}
+      ${r2("客户档案", x.newCars.length ? `新建 ${x.newCars.length} 个：${x.newCars.slice(0, 6).map(c => h(c.name)).join("、")}${x.newCars.length > 6 ? " 等" : ""}${x.touchedCars.length ? `<br>跟进 ${x.touchedCars.length} 个：${x.touchedCars.slice(0, 6).map(c => h(c.name)).join("、")}` : ""}` : (x.touchedCars.length ? `跟进 ${x.touchedCars.length} 个：${x.touchedCars.slice(0, 6).map(c => h(c.name)).join("、")}` : "今日无客户档案变更"))}
+      ${r2("问题 / 求助", x.todayIssues.length ? `新增 ${x.todayIssues.length} 条：${x.todayIssues.slice(0, 2).map(q => h(String(q.text || "").slice(0, 28))).join("；")}` : "今日无新问题")}
+      ${r2("演练/自查/沉淀", `演练今日 ${x.drillsToday} 次（近 14 天 ${x.s.dr14} 次）· 自查 ${x.s.revealsIn} 条 · 沉淀 ${x.s.depositsIn} 篇`)}
+    </table>`;
+    const blockBits = [];
+    x.blocked.forEach(v => {
+      const over = taskOverDays(v, today);
+      blockBits.push(`${v.text}：${v.blocked}${over ? `（超期 ${over} 天）` : ""}`);
+    });
+    x.returned.forEach(v => {
+      const reason = (v.log || []).filter(y => /退回/.test(y.text || "")).slice(-1).map(y => y.text)[0];
+      blockBits.push(`${v.text} 被退回：${reason || "待按导师意见修改"}`);
+    });
+    const risks = x.risk.red.concat(x.risk.yellow)
+      .filter(t => !x.blocked.concat(x.returned).some(v => String(t).indexOf(v.text) >= 0));
+    const riskLine = blockBits.concat(risks);
     return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px;margin-top:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
         <div style="font-size:14.5px;font-weight:700;color:#17558F">${h(x.u.name)} ${lightTag(x.risk.level)}</div>
         <div style="font-size:12px;color:#7C8896">今日动作：${x.s.activityAt ? bjHm(x.s.activityAt) + " · " + h(x.s.lastKind || "") : (x.s.loginAt ? "仅登录" : "无")}</div>
       </div>
-      <div style="margin-top:6px;font-size:12.8px;color:#2C3E50"><b>关键进展：</b>${prog.length ? prog.slice(0, 3).map(h).join("；") : "今天暂无实质推进"}</div>
-      ${risks.length ? `<div style="margin-top:4px;font-size:12.8px;color:#8C2B1F"><b>风险：</b>${risks.map(h).join("；")}</div>` : ""}
-      <div style="margin-top:4px;font-size:12.8px;color:#1A5276"><b>建议下一步：</b>${h(x.steps[0] || "保持节奏，更新一条进展")}</div>
+      <div style="margin-top:5px;font-size:12.9px;color:#2C3E50">${x.oneLine}</div>
+      ${progress}
+      <div style="margin-top:5px;font-size:12.6px;color:#8C2B1F"><b>卡点与风险：</b>${riskLine.length ? riskLine.slice(0, 4).map(h).join("；") : '<span style="color:#3C6B1A">今日无明显卡点</span>'}</div>
+      <div style="margin-top:4px;font-size:12.6px;color:#1A5276"><b>建议下一步：</b>${x.steps.map(h).join("；")}</div>
+      <div style="margin-top:4px;font-size:12.6px;color:#7A4C12"><b>导师要求：</b>${x.mlines.length ? x.mlines.slice(0, 3).map(h).join("；") : '<span style="color:#7C8896">未填写，建议今天给一句明确要求</span>'}</div>
     </div>`;
   }).join("");
 
@@ -1164,6 +1203,11 @@ function buildDailyReport(day, opts) {
   const issueHtml = slowIssues.length
     ? ul(slowIssues.slice(0, 5).map(x => `${h(nameOf(x.who))}：${h(String(x.text || "").slice(0, 50))}（已等 ${waitDays(x.createdAt)} 天）`), "#8C2B1F")
     : "";
+  const closedAll = [];
+  rows.forEach(x => x.closed.forEach(v => closedAll.push({ who: x.u.name, car: v.car, text: v.text })));
+  const closedHtml = closedAll.length
+    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px"><tr style="background:#F5FFF0;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">客户</th><th style="padding:6px 8px">闭环的任务/项目</th></tr>${closedAll.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.who)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.car)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.text)}</td></tr>`).join("")}</table>`
+    : `<div style="font-size:12.5px;color:#7C8896;margin-top:4px">今日无闭环。</div>`;
 
   const html = `<p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#0B3A63">${today} 导师 / 主管日报</p>
      <div style="font-size:13.2px;color:#2C3E50">${head}${reviewRows.length ? ` 另有 <b>${reviewRows.length}</b> 项待你验收。` : ""}</div>
@@ -1171,6 +1215,7 @@ function buildDailyReport(day, opts) {
      ${mailBox("每位新人今天的情况", cardHtml || `<div style="font-size:12.5px;color:#7C8896">暂无新人账号</div>`, reds.length ? "red" : (yels.length ? "yellow" : "green"))}
      ${reviewHtml ? mailBox("待验收清单（你确认后才闭环）", reviewHtml, "yellow") : ""}
      ${issueHtml ? mailBox("等你答复的问题", issueHtml, "red") : ""}
+     ${mailBox("今日闭环", closedHtml, closedAll.length ? "green" : "yellow")}
      <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：全部按北京时间自然日，数据取自工作台实时记录（打卡/小测/任务/进展/客户档案/问题/演练）。红灯=任务超期≥3天、待验收≥3天、连续≥3个工作日无动作、问题≥2天未答复、客户跟进过期且3天无新进展；黄灯=任务停滞>5天、小测<70%、近14天无演练、待验收1–2项、档案下无任务、连续2个工作日无动作。生成时间：${bjTime(Date.now())}。</p>`;
   return { today, rows, html };
 }
