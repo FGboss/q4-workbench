@@ -1018,6 +1018,9 @@ function nextStepsFor(u, S, s, day) {
     else if (!s.quizTotal) extra.push("做一次节点小测，确认这一周的掌握情况");
     if (s.dr14 === 0 && s.joinsDays >= 14) extra.push("安排一次演练（演讲 / 客户培训）并复盘");
     if (!s.activeAt) extra.push("补一条今日进展，说明做到哪一步");
+    if (s.depositsIn === 0) extra.push("把本周一个客户的情况整理成知识沉淀，方便下次复用");
+    if (s.hn === 0) extra.push("去「② 协助」帮同伴看一个问题，积累互助分");
+    extra.push("和导师约 10 分钟复盘，确认下周优先级");
     extra.forEach(t => { if (out.length < 3 && out.indexOf(t) < 0) out.push(t); });
   }
   if (!out.length) out.push("挑一个未闭环任务，今天更新一条进展");
@@ -1320,8 +1323,8 @@ function buildNewbieWeekly(u, day, S0) {
 
   const ach = [];
   doneIn.forEach(v => ach.push(`闭环：${v.car} · ${v.text}`));
-  newCars.slice(0, 5).forEach(c => ach.push(`新登记客户：${c.name}`));
-  if (touchedCars.length) ach.push(`跟进客户 ${touchedCars.length} 个：${touchedCars.slice(0, 5).map(c => c.name).join("、")}`);
+  if (newCars.length) ach.push(`新登记客户 ${newCars.length} 个：${newCars.slice(0, 6).map(c => c.name).join("、")}${newCars.length > 6 ? " 等" : ""}`);
+  if (touchedCars.length) ach.push(`跟进客户 ${touchedCars.length} 个：${touchedCars.slice(0, 6).map(c => c.name).join("、")}${touchedCars.length > 6 ? " 等" : ""}`);
   if (logsIn.length) ach.push(`更新任务进展 ${logsIn.length} 条`);
   if (s.nodesNew) ach.push(`通关 ${s.nodesNew} 个节点（累计 ${s.nodesDone}）`);
   if (s.quizTotal > 0) ach.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
