@@ -1006,12 +1006,21 @@ function nextStepsFor(u, S, s, day) {
     .forEach(v => out.push(`推进最近截止任务：${v.text}（${v.due} 前）`));
   S.carriers.filter(c => c.who === u.id && carNext(c) && carNext(c) <= day).slice(0, 1)
     .forEach(c => out.push(`跟进客户「${c.name}」（原计划 ${carNext(c)}）`));
-  if (!out.length) {
-    if (s.quizAcc != null && s.quizAcc < 70) out.push(`重做错题并回顾对应节点原文（当前正确率 ${s.quizAcc}%）`);
-    else if (s.dr14 === 0 && s.joinsDays >= 14) out.push("安排一次演练（演讲 / 客户培训），本周内完成并复盘");
-    else if (!s.activeAt) out.push("今天还没有记录，补一条进展说明做到哪一步");
-    else out.push("挑一个未闭环任务，今天更新一条进展");
+  /* 若上面规则没凑满 3 条，用「补数据质量」的建议兜底，避免只给一句空泛建议 */
+  if (out.length < 3) {
+    const cars = S.carriers.filter(c => c.who === u.id);
+    const noTask = cars.filter(c => !(c.actions || []).filter(v => !v.del).length);
+    const noNext = cars.filter(c => !carNext(c));
+    const extra = [];
+    if (noTask.length) extra.push(`给「${noTask[0].name}」补一条下一步任务（做什么 + 截止日）`);
+    if (noNext.length) extra.push(`给「${noNext[0].name}」补下次跟进日`);
+    if (s.quizAcc != null && s.quizAcc < 70) extra.push(`重做错题并回顾节点原文（当前正确率 ${s.quizAcc}%）`);
+    else if (!s.quizTotal) extra.push("做一次节点小测，确认这一周的掌握情况");
+    if (s.dr14 === 0 && s.joinsDays >= 14) extra.push("安排一次演练（演讲 / 客户培训）并复盘");
+    if (!s.activeAt) extra.push("补一条今日进展，说明做到哪一步");
+    extra.forEach(t => { if (out.length < 3 && out.indexOf(t) < 0) out.push(t); });
   }
+  if (!out.length) out.push("挑一个未闭环任务，今天更新一条进展");
   return [...new Set(out)].slice(0, 3);
 }
 /* 新人本人文本：今日/本周一句话 */
@@ -1492,8 +1501,8 @@ async function runScheduled(day, opts) {
     const withWeekly = isWeeklyDay(theDay) || !!(onlyTypes && onlyTypes.indexOf("weekly") >= 0);
     const st = mailState();
     const sentToday = (st.sentTo && Array.isArray(st.sentTo[theDay])) ? st.sentTo[theDay] : [];
-    /* 只补某一类内容（如补发周报）时不看「今日已发」，也不改写当天状态 */
-    if (!o.force && !onlyTypes && digestDone(st, theDay, withWeekly)) return { ok: true, skipped: "今日已发", withWeekly, day: theDay };
+    /* 只补某一类内容（如补发周报）或只发给指定邮箱验证时，不看「今日已发」，也不改写当天状态 */
+    if (!o.force && !o.onlyTo && !onlyTypes && digestDone(st, theDay, withWeekly)) return { ok: true, skipped: "今日已发", withWeekly, day: theDay };
     if (!o.onlyTo && !digestSubscribers(withWeekly).length && !mailTo().length) return { ok: true, skipped: "没有订阅收件人", withWeekly, day: theDay };
     const out = await sendDigestAll(theDay, {
       withWeekly, onlyTo: o.onlyTo, onlyTypes, trigger: o.trigger || "auto",
