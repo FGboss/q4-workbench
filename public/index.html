@@ -898,7 +898,7 @@ async function openAccounts(){
  const MAIL_TYPE_DEF=[["daily","整体日报"],["weekly","周报"],["personal","个人日报 / 汇总"],["risk","风险预警"],["login","登录提醒"],["issue","问题 / 诉求提醒"]];
  const mtypeName=k=>(MAIL_TYPE_DEF.find(t=>t[0]===k)||[k,k])[1];
  /* 内容按角色固定，管理端不再逐项勾选 */
- const fixedTypes=role=>role==="newbie"?["personal","weekly"]:["daily","personal","risk","weekly"];
+ const fixedTypes=role=>role==="newbie"?["personal","weekly"]:["daily","weekly"];
  const roleOpts=sel=>["admin","lead","mentor","newbie"].map(k=>`<option value="${k}" ${sel===k?"selected":""}>${ROLE_NAME[k]}</option>`).join("");
  const peopleOpts=(role,sel)=>`<option value="">— 未指定 —</option>`+users.filter(x=>x.role===role).map(x=>`<option value="${x.id}" ${sel===x.id?"selected":""}>${esc(x.name)}</option>`).join("");
  const readSub=u=>{
@@ -970,8 +970,8 @@ async function openAccounts(){
     <div style="margin-top:10px">
      <div class="muted" style="font-weight:700">接收内容（按角色固定，无需勾选）</div>
      <div style="margin-top:4px;line-height:1.9">${isNb
-       ?`本人：<b>个人学习汇总</b>（每工作日）+ <b>个人周报</b>（每周五），只统计本人数据。`
-       :`<b>整体日报</b> + <b>每位新人的个人汇总</b> + <b>风险预警</b>（有则附）+ <b>本周周报</b>（每周五），合并为 1 封；另收新人登录/问题提醒。`}</div>
+       ?`本人：<b>今日小结</b>（每工作日，含进展、卡点、下一步）+ <b>本周周报</b>（每周五，含与上周对比、下周 3 件事）；只统计本人数据。`
+       :`<b>导师/主管日报</b>（今日结论、必须处理的 3 件事、每位新人的进展与风险、待验收清单）+ <b>导师/主管周报</b>（每周五，含每人趋势、团队共性问题、下周带教动作），合并为 1 封；另收新人登录/问题提醒。`}</div>
      <div class="muted" style="margin-top:8px;font-weight:700">关注新人</div>
      ${isNb?`<div class="muted" style="margin-top:3px">仅本人（固定）：只统计并发送 ${esc(u.name)} 自己的数据，不会收到其他新人的信息。</div>`:
        `<div class="row" style="margin-top:4px;gap:8px;flex-wrap:wrap">
@@ -2296,11 +2296,30 @@ function renderMonitor(){
    <div class="row" style="justify-content:space-between;font-size:12.6px"><span>初级达标</span><span>${p.faeA1}/${p.faeT1}</span></div>
    <div class="bar"><i style="width:${p.faeJ}%"></i></div>
    <div class="row" style="justify-content:space-between;font-size:12.6px;margin-top:8px"><span>中1 可独立</span><span>${p.faeA2}/${p.faeT2}</span></div>
-   <div class="bar"><i style="width:${p.faeZ}%;background:var(--green)"></i></div></div>`;}).join("");
+   <div class="bar"><i style="width:${p.faeZ}%;background:var(--green)"></i></div>
+   ${isStaff()?`<div style="margin-top:10px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 10px">
+     <div class="muted" style="font-weight:700">给新人的下一步（最多 3 条，每行一条）</div>
+     <textarea data-mn="${id}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.3px" placeholder="留空 = 使用系统自动建议；填写后日报/周报优先展示你写的要求"></textarea>
+     <div class="row" style="margin-top:5px;align-items:center"><button class="btn sm" data-mnsave="${id}">保存</button><span class="muted" data-mnmsg="${id}"></span></div>
+   </div>`:""}</div>`;}).join("");
  document.getElementById("mRadar").innerHTML=ids.map(id=>{const c=faeCount(id);
   return `<div class="card pad"><h3>${WHO_NAME[id]} · 初级保底达成</h3>
    <div class="radarw" style="margin-top:6px">${radarSVG(c.per)}</div>
    <div class="muted" style="margin-top:6px">数值=各维度初级条目达标率（无初级条目的维度按自动达标计 100%）。</div></div>`;}).join("");
+
+ /* 导师给新人的下一步：读取已保存内容 + 保存 */
+ if(isStaff()){
+  apiGet("/api/next_steps").then(r=>{const map=(r&&r.map)||{};
+   ids.forEach(id=>{const t=document.querySelector(`[data-mn="${id}"]`);if(t)t.value=(map[id]&&map[id].text)||"";});}).catch(()=>{});
+  document.querySelectorAll("[data-mnsave]").forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.mnsave;const t=document.querySelector(`[data-mn="${id}"]`);
+   const msg=document.querySelector(`[data-mnmsg="${id}"]`);
+   b.disabled=true;if(msg)msg.textContent="保存中…";
+   try{const r=await apiPost("/api/next_steps",{id,text:(t&&t.value)||""});
+    if(msg)msg.innerHTML=r.ok?`<span class="tag ok">已保存，下封邮件生效</span>`:`<span class="tag no">${esc(r.msg||"保存失败")}</span>`;}
+   catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
+   b.disabled=false;});
+ }
 
  // 里程碑与预警（仅导师/主管）
  document.getElementById("mMilesSec").classList.toggle("hide",!isStaff());
@@ -2347,7 +2366,7 @@ async function renderMailBox(){
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　默认收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${s.lastSent?fmt(s.lastSent):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师/主管发「整体日报 + 每位新人的个人汇总 + 风险预警（有则附）」，给新人发「本人学习汇总」，合并为 <b>1 封</b>；<b>每周五 ${sch.hour}:00</b> 加发本周周报；登录提醒、问题/诉求提醒为即时单发。</div>
+     <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师/主管发「导师日报」（今日结论、必须处理的 3 件事、每位新人进展与风险、待验收清单），给新人发「今日小结」（进展、卡点、下一步）；<b>每周五 ${sch.hour}:00</b> 加发周报（导师版含趋势与带教动作，新人版含与上周对比与下周 3 件事）。</div>
      <div style="margin-top:6px">${state}${ts.isWeeklyDay&&!ts.done?' <span class="tag wt">今天周五，会加发周报</span>':""}</div>
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px;align-items:flex-start;flex-wrap:wrap">

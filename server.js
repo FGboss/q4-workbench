@@ -142,9 +142,13 @@ const hashPass = (p, salt) => sha("p|" + salt + "|" + p + "|" + APP_SECRET);
 const STAFF_MAIL_TYPES = ["daily", "weekly", "personal", "risk", "login", "issue"];
 const NEWBIE_MAIL_TYPES = ["personal", "weekly"];
 const defaultMailTypes = role => (role === "newbie" ? NEWBIE_MAIL_TYPES : STAFF_MAIL_TYPES).slice();
-/* 某角色是否接收某类邮件（唯一判定入口） */
+/* 某角色是否接收某类邮件（事件提醒用） */
 const roleAcceptsMail = (role, type) =>
   role === "newbie" ? (type === "personal" || type === "weekly") : true;
+/* 周期汇总里每个角色实际会收到的内容：
+   新人=本人今日小结 + 本人周报；导师/主管=导师日报（含每人情况、风险、待验收）+ 导师周报。
+   风险预警已经内嵌在导师日报里，不再单独占一节，避免重复。 */
+const roleDigestTypes = role => role === "newbie" ? ["personal", "weekly"] : ["daily", "weekly"];
 let MAIL_SEED_DIRTY = false;
 /* 首次升级时把已知的四位成员一次性配置好；只跑一次，之后管理员的手动修改不会被覆盖 */
 const MAIL_SEED = [
@@ -928,113 +932,218 @@ function userStats(u, days, S) {
     goal: goalProgress(u.id, snap.checkins, quizAll),
   };
 }
-/* 风险预警：所有报表共用；文案带日期/数字，避免“看起来像模板” */
-function riskItems(s, spanLabel) {
+/* 风险分级在新模板里统一由 riskOf() 计算（见下方邮件模板区），旧 riskItems 已下线 */
+
+
+/* =====================================================================
+   邮件内容：面向行动的四套模板（新人日报/周报、导师主管日报/周报）
+   所有数字在发送那一刻从实时数据聚合，无任何写死示例；无数据的段落自动隐藏。
+   ===================================================================== */
+const DAY_MS = 86400000;
+function tasksOf(u, S) {
   const out = [];
-  const nm = s.u.name;
-  const span = spanLabel || (s.days.length > 1 ? "本周" : "今日");
-  /* 账号当天新建的，当天还没动作属于正常，不算风险（避免刚拉进群就被报「未登录」） */
-  if (!s.activeAt && s.joinsDays >= 1) {
-    out.push(`${nm} ${span}无任何活动（未登录、未打卡、未做题、未更新记录）`);
-  } else if (s.loginAt && !s.activityAt) {
-    out.push(`${nm} ${span}仅登录，未打卡/做题/更新记录`);
-  }
-  if (s.overdue) out.push(`${nm} 有 ${s.overdue} 项任务/项目已超期`);
-  if (s.review >= 3) out.push(`${nm} 有 ${s.review} 项任务/项目待导师验收（验收积压会影响新人推进节奏）`);
-  if (s.ops >= 3) out.push(`${nm} 未闭环问题 ${s.ops} 条`);
-  if (s.quizTotal > 0 && s.quizAcc != null && s.quizAcc < 70) out.push(`${nm} ${span}小测正确率 ${s.quizAcc}%（${s.quizCorrect}/${s.quizTotal}，建议回顾 IMA 原文）`);
-  if (s.dr14 === 0 && s.joinsDays >= 14) out.push(`${nm} 近 14 天无演讲演练 / 客户现场培训记录`);
-  s.paces.forEach(p => {
-    if (p.over) out.push(`${nm} 产品地图 ${p.name}档已超期 ${-p.left} 天（还差 ${p.remain} 个节点）`);
-    else if (p.risk) out.push(`${nm} 产品地图 ${p.name}档仅剩 ${p.left} 天（还差 ${p.remain} 个节点，需日均 ${Math.ceil(p.remain / Math.max(1, p.left))} 个）`);
-  });
-  if (s.days.length === 1 && !s.activityAt && s.lastActiveDay) {
-    const idle = workdaysAfter(s.lastActiveDay, s.end);
-    if (idle >= 2) out.push(`${nm} 连续 ${idle} 个工作日无业务活动（上次 ${s.lastActiveDay}）`);
-  }
+  S.carriers.filter(c => c.who === u.id).forEach(c =>
+    (c.actions || []).filter(v => !v.del).forEach(v => out.push(Object.assign({}, v, { car: c.name, carId: c.id }))));
   return out;
 }
-const kindText = kinds => Object.entries(kinds || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(x => x[0]).join("、");
+const taskOpen = v => (v.st || 0) !== 2;
+function taskOverDays(v, day) {
+  const d = String(v.due || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || d >= day) return 0;
+  return Math.round((new Date(day + "T00:00:00Z") - new Date(d + "T00:00:00Z")) / DAY_MS);
+}
+const waitDays = t => { const ms = toMs(t); return ms ? Math.max(0, Math.floor((Date.now() - ms) / DAY_MS)) : 0; };
+const carNext = c => c.nextAt || c.nextDate || "";
+/* 某位新人的风险分级（红/黄/绿），规则按已确认阈值 */
+function riskOf(u, S, s, day) {
+  const acts = tasksOf(u, S), open = acts.filter(taskOpen);
+  const overdue = open.filter(v => taskOverDays(v, day) >= 1).sort((a, b) => taskOverDays(b, day) - taskOverDays(a, day));
+  const reviews = open.filter(v => v.cfm === 3).sort((a, b) => toMs(a.updatedAt) - toMs(b.updatedAt));
+  const maxOver = overdue.length ? taskOverDays(overdue[0], day) : 0;
+  const maxRev = reviews.length ? waitDays(reviews[0].updatedAt) : 0;
+  const idle = s.lastActiveDay ? workdaysAfter(s.lastActiveDay, day) : (s.joinsDays >= 1 ? 99 : 0);
+  const slowIssues = (S.issues || []).filter(x => x.who === u.id && (x.status || 0) < 2 && waitDays(x.createdAt) >= 2);
+  const carsLate = S.carriers.filter(c => c.who === u.id).filter(c => {
+    const d = carNext(c); if (!d || d >= day) return false;
+    const touch = Math.max(toMs(c.updatedAt), ...((c.actions || []).map(v => toMs(v.updatedAt))));
+    return !touch || Math.floor((Date.now() - touch) / DAY_MS) >= 3;
+  });
+  const red = [], yellow = [];
+  if (maxOver >= 3) red.push(`任务超期 ${maxOver} 天：${overdue[0].text}`);
+  if (maxRev >= 3) red.push(`待验收已等 ${maxRev} 天：${reviews[0].text}`);
+  if (idle >= 3) red.push(`连续 ${idle} 个工作日无任何动作`);
+  if (slowIssues.length) red.push(`问题「${String(slowIssues[0].text || "").slice(0, 30)}」已等 ${waitDays(slowIssues[0].createdAt)} 天未答复`);
+  if (carsLate.length) red.push(`客户「${carsLate[0].name}」跟进日已过 ${Math.abs(Math.round((new Date(carsLate[0].nextAt || carsLate[0].nextDate) - new Date(day)) / DAY_MS))} 天且无新进展`);
+  const stale = open.filter(v => v.cfm !== 3 && waitDays(v.updatedAt) > 5);
+  if (stale.length && maxOver < 3) yellow.push(`任务停滞 ${waitDays(stale[0].updatedAt)} 天：${stale[0].text}`);
+  if (s.quizTotal > 0 && s.quizAcc != null && s.quizAcc < 70) yellow.push(`小测正确率 ${s.quizAcc}%（${s.quizCorrect}/${s.quizTotal}）`);
+  if (s.dr14 === 0 && s.joinsDays >= 14) yellow.push("近 14 天无演练记录");
+  if (reviews.length && maxRev < 3) yellow.push(`待验收 ${reviews.length} 项`);
+  const noTaskCars = S.carriers.filter(c => c.who === u.id && !(c.actions || []).filter(v => !v.del).length);
+  if (noTaskCars.length) yellow.push(`${noTaskCars.length} 个客户档案下还没有任务/项目`);
+  if (idle === 2) yellow.push("连续 2 个工作日无动作");
+  return { level: red.length ? "red" : (yellow.length ? "yellow" : "green"), red, yellow, overdue, reviews, idle };
+}
+const LIGHT = {
+  red: { t: "需介入", c: "#B03A2E", bg: "#FDEDEA", bd: "#F3CFC9" },
+  yellow: { t: "需关注", c: "#A9691B", bg: "#FFFBF0", bd: "#F3E7C9" },
+  green: { t: "正常", c: "#3C6B1A", bg: "#F5FFF0", bd: "#CFEBD0" },
+};
+const lightTag = lv => { const L = LIGHT[lv]; return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${L.bg};border:1px solid ${L.bd};color:${L.c};font-size:11.5px;font-weight:700">${L.t}</span>`; };
+const mailBox = (title, inner, tone) => {
+  const L = LIGHT[tone || "green"];
+  return `<div style="margin-top:14px;background:${L.bg};border:1px solid ${L.bd};border-radius:8px;padding:10px 12px"><b style="color:${L.c}">${title}</b>${inner}</div>`;
+};
+const ul = (arr, color) => `<ul style="margin:5px 0 0 18px;padding:0;font-size:12.8px;color:${color || "#4A5568"}">${arr.map(t => `<li>${t}</li>`).join("")}</ul>`;
+/* 新人下一步：系统按「退回待改 → 超期 → 最近截止 → 客户跟进 → 学习短板」生成 */
+function nextStepsFor(u, S, s, day) {
+  const open = tasksOf(u, S).filter(taskOpen), out = [];
+  open.filter(v => v.cfm === 2).sort((a, b) => toMs(b.updatedAt) - toMs(a.updatedAt)).slice(0, 1)
+    .forEach(v => out.push(`按导师意见修改后重新提交：${v.text}`));
+  open.filter(v => taskOverDays(v, day) >= 1).sort((a, b) => taskOverDays(b, day) - taskOverDays(a, day)).slice(0, 1)
+    .forEach(v => out.push(`优先处理超期任务：${v.text}（已超 ${taskOverDays(v, day)} 天）`));
+  open.filter(v => v.due && v.due >= day).sort((a, b) => String(a.due).localeCompare(String(b.due))).slice(0, 1)
+    .forEach(v => out.push(`推进最近截止任务：${v.text}（${v.due} 前）`));
+  S.carriers.filter(c => c.who === u.id && carNext(c) && carNext(c) <= day).slice(0, 1)
+    .forEach(c => out.push(`跟进客户「${c.name}」（原计划 ${carNext(c)}）`));
+  if (!out.length) {
+    if (s.quizAcc != null && s.quizAcc < 70) out.push(`重做错题并回顾对应节点原文（当前正确率 ${s.quizAcc}%）`);
+    else if (s.dr14 === 0 && s.joinsDays >= 14) out.push("安排一次演练（演讲 / 客户培训），本周内完成并复盘");
+    else if (!s.activeAt) out.push("今天还没有记录，补一条进展说明做到哪一步");
+    else out.push("挑一个未闭环任务，今天更新一条进展");
+  }
+  return [...new Set(out)].slice(0, 3);
+}
+/* 新人本人文本：今日/本周一句话 */
+function oneLineNewbie(s, day, closedCount) {
+  const bits = [];
+  if (s.nodesNew) bits.push(`通关 ${s.nodesNew} 个节点`);
+  if (s.quizTotal > 0) bits.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
+  if (closedCount) bits.push(`闭环 ${closedCount} 项`);
+  if (s.carsIn) bits.push(`更新 ${s.carsIn} 个客户档案`);
+  if (!s.activeAt) return "今天还没有任何动作，先从一个小任务开始。";
+  if (!bits.length) return `今天有 ${s.kinds ? Object.values(s.kinds).reduce((a, b) => a + b, 0) : 0} 条业务动作，继续保持。`;
+  return "今天" + bits.join("、") + "。";
+}
 
-/* 工作日日报：按北京时间当天聚合，一次发一封 */
+/* ---------- 新人日报 ---------- */
+function buildNewbieDaily(u, day, S0) {
+  const S = S0 || snapshot();
+  const dayKey = day || bjKey(Date.now());
+  const s = userStats(u, [dayKey], S);
+  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const steps = mlines.length ? mlines.slice(0, 3) : nextStepsFor(u, S, s, dayKey);
+  const stepTitle = mlines.length ? "我的下一步（导师已确认）" : "我的下一步（系统建议）";
+  const open = tasksOf(u, S).filter(taskOpen);
+  const returned = open.filter(v => v.cfm === 2);
+  const blocked = open.filter(v => v.blocked);
+  const review = open.filter(v => v.cfm === 3);
+  const logs = [];
+  tasksOf(u, S).forEach(v => (v.log || []).filter(y => !y.del && y.by === u.id && bjKey(y.at) === dayKey)
+    .forEach(y => logs.push(`<b>${h(v.car)}</b> · ${h(v.text)}：${h(y.text)}`)));
+  const newNodeNames = s.newRecs.filter(x => x.nodeId).map(x => h(x.module || x.line || x.nodeId));
+  const closedToday = tasksOf(u, S).filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === dayKey);
+  const done = [];
+  closedToday.forEach(v => done.push(`闭环：${v.car} · ${v.text}`));
+  if (newNodeNames.length) done.push(`通关 ${newNodeNames.length} 个节点：${[...new Set(newNodeNames)].slice(0, 4).join("、")}`);
+  if (s.quizTotal > 0) done.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
+  logs.slice(0, 4).forEach(t => done.push(`进展：${t}`));
+  if (s.carsIn) done.push(`更新客户档案 ${s.carsIn} 个`);
+  if (s.revealsIn) done.push(`自查 ${s.revealsIn} 条`);
+  if (s.depositsIn) done.push(`知识沉淀 ${s.depositsIn} 篇`);
+  const blockItems = [];
+  blocked.forEach(v => blockItems.push(`<b>${h(v.text)}</b>：${h(v.blocked)}${v.need ? `（需要：${h(v.need)}）` : ""}`));
+  returned.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 被退回：${h((v.log || []).filter(y => /退回/.test(y.text || "")).slice(-1).map(y => y.text)[0] || "请按导师意见补充后重新提交")}`));
+  review.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 已提交验收，等导师确认`));
+  return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
+    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${dayKey}</span></div>
+    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLineNewbie(s, dayKey, closedToday.length)}</div>
+    ${mailBox("今日完成", done.length ? ul(done) : `<div style="font-size:12.5px;color:#7C8896">今天还没有可计入的记录</div>`, "green")}
+    ${blockItems.length ? mailBox("卡住的地方", ul(blockItems, "#8C2B1F"), "red") : ""}
+    ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
+  </div>`;
+}
+
+
+/* ---------- 导师/主管日报 ---------- */
 function buildDailyReport(day, opts) {
   const o = opts || {};
   const today = day || bjKey(Date.now());
   const S = snapshot();
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
-  const card = newbies.map(u => userStats(u, [today], S));
-  const needAtt = [];
-  card.forEach(c => riskItems(c).forEach(t => needAtt.push(t)));
+  const rows = newbies.map(u => {
+    const s = userStats(u, [today], S);
+    const risk = riskOf(u, S, s, today);
+    const steps = nextStepsFor(u, S, s, today);
+    const allTasks = tasksOf(u, S);
+    const closed = allTasks.filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === today);
+    const closedIds = new Set(closed.map(v => v.id));
+    const logs = [];
+    allTasks.forEach(v => { if (closedIds.has(v.id)) return;
+      (v.log || []).filter(y => !y.del && bjKey(y.at) === today).forEach(y => logs.push(`${v.car}·${v.text}：${y.text}`)); });
+    const newCars = S.carriers.filter(c => c.who === u.id && bjKey(c.createdAt) === today);
+    return { u, s, risk, steps, logs, closed, newCars };
+  });
+  const reds = rows.filter(x => x.risk.level === "red");
+  const yels = rows.filter(x => x.risk.level === "yellow");
+  const head = reds.length
+    ? `今天有 <b>${reds.length}</b> 人需要你介入（${reds.map(x => h(x.u.name)).join("、")}）${yels.length ? `，另有 ${yels.length} 人需关注` : ""}。`
+    : yels.length
+      ? `今天无人需要紧急介入，<b>${yels.length}</b> 人需关注（${yels.map(x => h(x.u.name)).join("、")}）。`
+      : "今天全部正常，无需额外介入。";
 
-  const rows = card.map(c => {
-    const mp = c.paces.map(p => `<span style="color:${p.over ? "#B03A2E" : p.risk ? "#A9691B" : "#7C8896"}">${p.name} ${p.d}/${p.goal}${p.over ? " 超期" : ""}${p.risk ? " 临期" : ""}</span>`).join("<br>");
-    const live = c.activityAt
-      ? `${bjHm(c.activityAt)}<div style="font-size:11.5px;color:#7C8896">${h(c.lastKind || "")}</div>`
-      : c.loginAt ? `${bjHm(c.loginAt)}<div style="font-size:11.5px;color:#A9691B">仅登录</div>` : "—";
-    return `<tr>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${live}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesDone}<span style="color:#7C8896">（今日 +${c.nodesNew}）</span>${mp ? `<div style="font-size:11.5px;margin-top:2px">${mp}</div>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.cumAcc != null ? `累计 ${c.cumAcc}%` : "—"}${c.quizTotal > 0 ? `<span style="color:#7C8896"> · 今日 ${c.quizAcc}%（${c.quizCorrect}/${c.quizTotal}）</span>` : `<span style="color:#7C8896"> · 今日无小测</span>`}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.open} 项未闭环${c.overdue ? `<span style="color:#B03A2E"> · 超期 ${c.overdue}</span>` : ""}${c.review ? `<span style="color:#A9691B"> · 待验收 ${c.review}</span>` : ""}<div style="font-size:11.5px;color:#7C8896">档案 ${c.cars}${c.carsIn ? ` · 今日动 ${c.carsIn}` : ""} · 已闭环 ${c.done}</div></td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.ops}${c.opsNew ? `<span style="color:#A9691B"> · 今日 +${c.opsNew}</span>` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
-      <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs}<span style="color:#7C8896"> 分/${c.hn} 条</span><div style="font-size:11.5px;color:#7C8896">自查 ${c.reveals}${c.revealsIn ? ` · 今日 ${c.revealsIn}` : ""}</div><div style="font-size:11.5px;color:#7C8896">沉淀 ${c.deposits}${c.depositsIn ? ` · 今日 ${c.depositsIn}` : ""}</div></td>
-    </tr>`; }).join("");
+  /* 今天必须处理的事：验收积压 > 超期 > 无动作 > 未答复问题 */
+  const todo = [];
+  rows.forEach(x => {
+    x.risk.reviews.forEach(v => todo.push({ p: 0, w: waitDays(v.updatedAt), who: x.u.name,
+      what: `验收「${v.text}」`, act: "今天给出结论：通过或退回，并写清原因", due: "今天" }));
+    x.risk.overdue.filter(v => taskOverDays(v, today) >= 3).forEach(v => todo.push({ p: 1, w: taskOverDays(v, today), who: x.u.name,
+      what: `「${v.text}」已超期 ${taskOverDays(v, today)} 天`, act: "约 10 分钟确认卡点，重排截止日", due: "今天" }));
+    if (x.risk.idle >= 3) todo.push({ p: 1, w: x.risk.idle, who: x.u.name,
+      what: `连续 ${x.risk.idle} 个工作日无动作`, act: "主动联系确认是否遇到困难", due: "今天" });
+  });
+  const slowIssues = (S.issues || []).filter(x => (x.status || 0) < 2 && newbies.some(u => u.id === x.who) && waitDays(x.createdAt) >= 2);
+  slowIssues.slice(0, 2).forEach(x => todo.push({ p: 1, w: waitDays(x.createdAt), who: nameOf(x.who),
+    what: `问题「${String(x.text || "").slice(0, 24)}」未答复`, act: "今天回复并给出方向", due: "今天" }));
+  const topTodo = todo.sort((a, b) => a.p - b.p || b.w - a.w).slice(0, 3);
 
-  const todayDetailHtml = card.filter(c => c.newRecs.length || c.retryRecs.length).map(c => {
-    const items = c.newRecs.map(x => `<li>${h(x.module || x.line || "—")}${x.total > 0 ? ` · 小测 ${x.correct}/${x.total}` : ""}${x.note ? ` · ${h(String(x.note).slice(0, 40))}` : ""}</li>`)
-      .concat(c.retryRecs.map(x => `<li>${h(x.module || x.line || "—")} · 重做小测 ${x.correct}/${x.total}</li>`));
-    return `<div style="margin-top:8px"><b style="color:#2C3E50">${h(c.u.name)}</b> 今日 ${items.length} 条学习记录：<ul style="margin:4px 0 0 18px;padding:0;font-size:12.5px;color:#4A5568">${items.join("")}</ul></div>`;
+  const cardHtml = rows.map(x => {
+    const prog = [];
+    x.closed.forEach(v => prog.push(`闭环：${v.text}`));
+    x.logs.slice(0, 2).forEach(t => prog.push(t));
+    x.newCars.slice(0, 1).forEach(c => prog.push(`新登记客户：${c.name}`));
+    if (x.s.nodesNew) prog.push(`通关 ${x.s.nodesNew} 个节点`);
+    if (x.s.quizTotal > 0) prog.push(`小测 ${x.s.quizCorrect}/${x.s.quizTotal}（${x.s.quizAcc}%）`);
+    const risks = x.risk.red.concat(x.risk.yellow).slice(0, 3);
+    return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px;margin-top:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="font-size:14.5px;font-weight:700;color:#17558F">${h(x.u.name)} ${lightTag(x.risk.level)}</div>
+        <div style="font-size:12px;color:#7C8896">今日动作：${x.s.activityAt ? bjHm(x.s.activityAt) + " · " + h(x.s.lastKind || "") : (x.s.loginAt ? "仅登录" : "无")}</div>
+      </div>
+      <div style="margin-top:6px;font-size:12.8px;color:#2C3E50"><b>关键进展：</b>${prog.length ? prog.slice(0, 3).map(h).join("；") : "今天暂无实质推进"}</div>
+      ${risks.length ? `<div style="margin-top:4px;font-size:12.8px;color:#8C2B1F"><b>风险：</b>${risks.map(h).join("；")}</div>` : ""}
+      <div style="margin-top:4px;font-size:12.8px;color:#1A5276"><b>建议下一步：</b>${h(x.steps[0] || "保持节奏，更新一条进展")}</div>
+    </div>`;
   }).join("");
 
-  const carrierLines = [];
-  const scopeIds = new Set(newbies.map(u => u.id));
-  S.carriers.filter(c => scopeIds.has(c.who)).forEach(c => {
-    const acts = (c.actions || []).filter(v => !v.del);
-    const open = acts.filter(v => (v.st || 0) !== 2);
-    carrierLines.push({
-      who: c.who, name: c.name, partner: c.partner || "—",
-      next: c.nextAt || c.nextDate || "—",
-      open: open.length, review: open.filter(v => v.cfm === 3).length,
-      done: acts.filter(v => (v.st || 0) === 2).length, total: acts.length
-    });
-  });
-  const carrierHtml = carrierLines.length
-    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">客户档案</th><th style="padding:6px 8px">销售搭档</th><th style="padding:6px 8px">下次跟进</th><th style="padding:6px 8px">任务/项目（未闭环/总）</th><th style="padding:6px 8px">待验收</th><th style="padding:6px 8px">已闭环</th></tr>${carrierLines.map(c => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(nameOf(c.who))}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.name)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.partner)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(c.next)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.open}/${c.total}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.review}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${c.done}</td></tr>`).join("")}</table>`
-    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无客户档案</p>";
+  const reviewRows = [];
+  rows.forEach(x => x.risk.reviews.forEach(v => reviewRows.push({ who: x.u.name, v })));
+  const reviewHtml = reviewRows.length
+    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">新人</th><th style="padding:6px 8px">任务/项目</th><th style="padding:6px 8px">已等待</th><th style="padding:6px 8px">你要做的</th></tr>${reviewRows.map(r => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(r.who)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(r.v.text)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:${waitDays(r.v.updatedAt) >= 3 ? "#B03A2E" : "#A9691B"}">${waitDays(r.v.updatedAt)} 天</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">确认是否达标；不达标请退回并写原因</td></tr>`).join("")}</table>`
+    : "";
+  const issueHtml = slowIssues.length
+    ? ul(slowIssues.slice(0, 5).map(x => `${h(nameOf(x.who))}：${h(String(x.text || "").slice(0, 50))}（已等 ${waitDays(x.createdAt)} 天）`), "#8C2B1F")
+    : "";
 
-  /* 高频错题只统计每节点首次交卷的错题；重做仅作练习，不重复累计 */
-  const wrongCount = {};
-  newbies.forEach(u => {
-    const mine = firstQuizPerNode(S.checkins.filter(x => x.who === u.id), S.quiz.filter(x => x.who === u.id));
-    mine.forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
-  });
-  const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const wrongHtml = topWrong.length
-    ? `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px"><tr style="background:#EDF4FA;text-align:left"><th style="padding:6px 8px">错题</th><th style="padding:6px 8px">答错次数</th></tr>${topWrong.map(([q, n]) => `<tr><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE">${h(q)}</td><td style="padding:6px 8px;border-bottom:1px solid #E3E8EE;color:#B03A2E">${n}</td></tr>`).join("")}</table>`
-    : "<p style=\"color:#7C8896;font-size:12.5px\">暂无错题记录</p>";
-
-  const html = `<p style="margin:0 0 10px"><b>${today}</b> 工作日整体进度${newbies.length ? "" : "（暂无新人账号）"}</p>
-     <table style="border-collapse:collapse;width:100%;font-size:13px">
-       <tr style="background:#EDF4FA;text-align:left">
-         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">今日活跃（最近动作）</th>
-         <th style="padding:8px 9px">地图打卡</th><th style="padding:8px 9px">小测正确率（累计/今日）</th><th style="padding:8px 9px">任务/项目</th>
-         <th style="padding:8px 9px">未闭环问题</th><th style="padding:8px 9px">近 14 天演练</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
-       ${rows}
-     </table>
-     ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8C2B1F">需要关注（${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
-      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">今日各项无明显阻塞。</p>`}
-     <div style="margin-top:14px;background:#F0F7FF;border:1px solid #CFE2F3;border-radius:8px;padding:10px 12px">
-       <b style="color:#1A5276">今日学习记录（通关节点 / 重做小测）</b>${todayDetailHtml || "<p style=\"color:#7C8896;font-size:12.5px;margin:6px 0 0\">今日暂无打卡或小测</p>"}</div>
-     <div style="margin-top:14px;background:#F5FFF0;border:1px solid #CFEBD0;border-radius:8px;padding:10px 12px">
-       <b style="color:#3C6B1A">客户档案与任务推进</b>${carrierHtml}</div>
-     <div style="margin-top:14px;background:#FFFBF0;border:1px solid #F3E7C9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8A6D1A">高频错题（本次统计范围）</b>${wrongHtml}</div>
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：今日活跃=当天有登录或任何业务动作（含打卡/小测/客户档案/任务/进展/问题/回复/演练/自查/沉淀）；打卡=已通关节点数（今日 +N 为当天首次通关）；小测正确率按每节点「首次交卷」成绩计算（重做记录完整留痕、单独展示，但不会抬高正确率）；客户档案只做登记、不闭环，待办/超期/已闭环均只统计档案下的任务/项目（已闭环=导师确认验收通过，历史已完成记录兼容）；演练=近 14 天；互助分由导师+主管双评认定。全部按北京时间自然日统计。</p>`;
-  return { today, card, needAtt, html };
+  const html = `<p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#0B3A63">${today} 导师 / 主管日报</p>
+     <div style="font-size:13.2px;color:#2C3E50">${head}${reviewRows.length ? ` 另有 <b>${reviewRows.length}</b> 项待你验收。` : ""}</div>
+     ${topTodo.length ? mailBox("今天必须处理的 " + topTodo.length + " 件事", `<table style="border-collapse:collapse;width:100%;font-size:12.6px;margin-top:6px"><tr style="text-align:left"><th style="padding:5px 6px">谁</th><th style="padding:5px 6px">什么事</th><th style="padding:5px 6px">建议动作</th><th style="padding:5px 6px">时限</th></tr>${topTodo.map(t => `<tr><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(t.who)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE">${h(t.what)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE">${h(t.act)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${t.due}</td></tr>`).join("")}</table>`, "yellow") : mailBox("今天必须处理的事", `<div style="font-size:12.5px;color:#3C6B1A">暂无，保持关注即可。</div>`, "green")}
+     ${mailBox("每位新人今天的情况", cardHtml || `<div style="font-size:12.5px;color:#7C8896">暂无新人账号</div>`, reds.length ? "red" : (yels.length ? "yellow" : "green"))}
+     ${reviewHtml ? mailBox("待验收清单（你确认后才闭环）", reviewHtml, "yellow") : ""}
+     ${issueHtml ? mailBox("等你答复的问题", issueHtml, "red") : ""}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：全部按北京时间自然日，数据取自工作台实时记录（打卡/小测/任务/进展/客户档案/问题/演练）。红灯=任务超期≥3天、待验收≥3天、连续≥3个工作日无动作、问题≥2天未答复、客户跟进过期且3天无新进展；黄灯=任务停滞>5天、小测<70%、近14天无演练、待验收1–2项、档案下无任务、连续2个工作日无动作。生成时间：${bjTime(Date.now())}。</p>`;
+  return { today, rows, html };
 }
 
 /* 周报周期：
@@ -1062,60 +1171,151 @@ function buildWeeklyReport(day, opts) {
   const S = snapshot();
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = o.newbieIds ? allNewbies.filter(u => o.newbieIds.indexOf(u.id) >= 0) : allNewbies;
-  const card = newbies.map(u => userStats(u, range.days, S));
-  const needAtt = [];
-  card.forEach(c => riskItems(c, rl).forEach(t => needAtt.push(t)));
-  const rows = card.map(c => `<tr>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE;font-weight:700">${h(c.u.name)}</td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.activeDays} 天<div style="font-size:11.5px;color:#7C8896">${h(kindText(c.kinds)) || "—"}</div></td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.nodesNew} 个<div style="font-size:11.5px;color:#7C8896">累计 ${c.nodesDone}${c.goal ? ` · 目标 ${c.goal.pct}%` : ""}</div></td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.quizCorrect}/${c.quizTotal}${c.quizAcc != null ? ` · ${c.quizAcc}%` : ""}</td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.dr14} 次${c.avg != null ? ` · 均分 ${c.avg}` : ""}</td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">档案 ${c.cars} 份（本周动 ${c.carsIn}）<div style="font-size:11.5px;color:#7C8896">新增任务 ${c.tasksIn} · 未闭环 ${c.open} · 待验收 ${c.review} · 已闭环 ${c.done}${c.overdue ? ` · 超期 ${c.overdue}` : ""}</div></td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.opsNew} 条<div style="font-size:11.5px;color:#7C8896">未闭环 ${c.ops}</div></td>
-     <td style="padding:8px 9px;border-bottom:1px solid #E3E8EE">${c.hs} 分/${c.hn} 条<div style="font-size:11.5px;color:#7C8896">自查 ${c.revealsIn} · 沉淀 ${c.depositsIn}</div></td>
-   </tr>`).join("");
-  const html = `<p style="margin:0 0 10px"><b>${range.start} ～ ${range.end}</b> 新人培养周报</p>
-     <table style="border-collapse:collapse;width:100%;font-size:13px">
-       <tr style="background:#EDF4FA;text-align:left">
-         <th style="padding:8px 9px">新人</th><th style="padding:8px 9px">活跃天数</th><th style="padding:8px 9px">${rl}通关</th>
-         <th style="padding:8px 9px">${rl}小测</th><th style="padding:8px 9px">演练（截至${range.current ? "今天" : "上周日"}）</th><th style="padding:8px 9px">客户档案 / 任务</th>
-         <th style="padding:8px 9px">新问题</th><th style="padding:8px 9px">互助/自查/沉淀</th></tr>
-       ${rows}
-     </table>
-     ${needAtt.length ? `<div style="margin-top:14px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:10px 12px">
-       <b style="color:#8C2B1F">需要关注（按${rl}数据，${needAtt.length} 条）</b><ul style="margin:6px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${needAtt.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`
-      : `<p style="margin-top:12px;color:#3C6B1A;font-size:13px">${rl}各项无明显阻塞。</p>`}
-     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径同日报：按北京时间自然日；活跃天数=${rl}一至周${range.current ? "五" : "日"}有登录或任何业务动作的天数；通关=${rl}首次通关节点；小测正确率按每节点${rl}最后一次作答汇总；客户档案只登记不闭环，闭环=${rl}经导师确认验收的任务/项目。</p>`;
-  return { range, card, needAtt, html };
+  /* 与上周「同期」对比：本周（周一至发送日）对应上周同样的工作日，避免周末拉低均值 */
+  const prevDays = [];
+  if (range.current) { for (let i = 7; i >= 3; i--) prevDays.push(dayAdd(range.start, -i)); }
+  else { for (let i = 7; i >= 1; i--) prevDays.push(dayAdd(range.start, -i)); }
+  const rows = newbies.map(u => {
+    const s = userStats(u, range.days, S);
+    const p = userStats(u, prevDays, S);
+    const risk = riskOf(u, S, s, range.end);
+    const acts = tasksOf(u, S);
+    const doneIn = acts.filter(v => (v.st || 0) === 2 && range.days.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
+    const steps = nextStepsFor(u, S, s, range.end);
+    return { u, s, p, risk, doneIn, steps };
+  });
+  const reds = rows.filter(x => x.risk.level === "red");
+  const yels = rows.filter(x => x.risk.level === "yellow");
+  const totalDone = rows.reduce((n, x) => n + x.doneIn.length, 0);
+  const head = reds.length
+    ? `${rl}有 <b>${reds.length}</b> 人需要介入（${reds.map(x => h(x.u.name)).join("、")}）${yels.length ? `，${yels.length} 人需关注` : ""}；共闭环 <b>${totalDone}</b> 项任务/项目。`
+    : yels.length
+      ? `${rl}无人需要紧急介入，<b>${yels.length}</b> 人需关注（${yels.map(x => h(x.u.name)).join("、")}）；共闭环 <b>${totalDone}</b> 项。`
+      : `${rl}整体正常，共闭环 <b>${totalDone}</b> 项任务/项目。`;
+
+  const arrow = (a, b) => {
+    if (a == null || b == null) return "";
+    if (a === b) return `<span style="color:#7C8896">持平</span>`;
+    return a > b ? `<span style="color:#3C6B1A">↑ ${a - b}</span>` : `<span style="color:#B03A2E">↓ ${b - a}</span>`;
+  };
+  const personBlocks = rows.map(x => {
+    const ach = [];
+    x.doneIn.forEach(v => ach.push(`闭环：${v.car} · ${v.text}`));
+    if (x.s.nodesNew) ach.push(`通关 ${x.s.nodesNew} 个节点（累计 ${x.s.nodesDone}）`);
+    if (x.s.quizTotal > 0) ach.push(`小测 ${x.s.quizCorrect}/${x.s.quizTotal}（${x.s.quizAcc}%）`);
+    if (x.s.carsIn) ach.push(`客户档案有动作 ${x.s.carsIn} 个`);
+    if (x.s.opsNew) ach.push(`新提问题/诉求 ${x.s.opsNew} 条`);
+    if (x.s.dr14) ach.push(`演练 ${x.s.dr14} 次${x.s.avg != null ? `（均分 ${x.s.avg}）` : ""}`);
+    const mentorAct = [];
+    if (x.risk.reviews.length) mentorAct.push(`本周完成 ${x.risk.reviews.length} 项验收并给具体意见`);
+    if (x.risk.idle >= 2) mentorAct.push("安排一次 1:1，确认卡点与资源");
+    if (x.s.quizAcc != null && x.s.quizAcc < 70) mentorAct.push("指定复习节点并抽查一遍");
+    if (x.s.dr14 === 0 && x.s.joinsDays >= 14) mentorAct.push("安排一次演练并当场点评");
+    if (S.carriers.some(c => c.who === x.u.id && !(c.actions || []).filter(v => !v.del).length)) mentorAct.push("带他把「有档案无任务」的客户拆出下一步");
+    if (!mentorAct.length) mentorAct.push("保持每周一次复盘，确认下周重点");
+    return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px;margin-top:10px">
+      <div style="font-size:14.5px;font-weight:700;color:#17558F">${h(x.u.name)} ${lightTag(x.risk.level)}</div>
+      <div style="margin-top:6px;font-size:12.8px;color:#2C3E50"><b>${rl}成果：</b>${ach.length ? ach.slice(0, 4).map(h).join("；") : "无闭环，学习/业务动作较少"}</div>
+      <div style="margin-top:4px;font-size:12.5px;color:#5C6772"><b>与上周对比：</b>活跃天数 ${x.s.activeDays} 天 ${arrow(x.s.activeDays, x.p.activeDays)}　·　通关 ${x.s.nodesNew} 个 ${arrow(x.s.nodesNew, x.p.nodesNew)}　·　小测 ${x.s.quizAcc != null ? x.s.quizAcc + "%" : "—"} ${arrow(x.s.quizAcc, x.p.quizAcc)}　·　闭环 ${x.doneIn.length} 项</div>
+      ${(x.risk.red.concat(x.risk.yellow)).length ? `<div style="margin-top:4px;font-size:12.8px;color:#8C2B1F"><b>风险：</b>${x.risk.red.concat(x.risk.yellow).slice(0, 3).map(h).join("；")}</div>` : ""}
+      <div style="margin-top:4px;font-size:12.8px;color:#1A5276"><b>下周重点：</b>${x.steps.map(h).join("；")}</div>
+      <div style="margin-top:4px;font-size:12.8px;color:#7A4C12"><b>建议我做什么：</b>${mentorAct.slice(0, 2).map(h).join("；")}</div>
+    </div>`;
+  }).join("");
+
+  /* 团队共性：高频错题、演练、档案质量、问题闭环率 */
+  const wrongCount = {};
+  newbies.forEach(u => {
+    firstQuizPerNode(S.checkins.filter(x => x.who === u.id), S.quiz.filter(x => x.who === u.id))
+      .forEach(x => (x.wrong || []).forEach(w => { wrongCount[w] = (wrongCount[w] || 0) + 1; }));
+  });
+  const topWrong = Object.entries(wrongCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const noTask = [], noNext = [];
+  S.carriers.filter(c => newbies.some(u => u.id === c.who)).forEach(c => {
+    if (!(c.actions || []).filter(v => !v.del).length) noTask.push(`${nameOf(c.who)}·${c.name}`);
+    if (!carNext(c)) noNext.push(`${nameOf(c.who)}·${c.name}`);
+  });
+  const allIssues = (S.issues || []).filter(x => newbies.some(u => u.id === x.who));
+  const closedIssues = allIssues.filter(x => (x.status || 0) === 2);
+  const drillAvgs = rows.map(x => x.s.avg).filter(v => v != null);
+  const teamBits = [];
+  if (topWrong.length) teamBits.push(`高频错题：${topWrong.map(([q, n]) => `${h(String(q).slice(0, 28))}（${n} 次）`).join("、")}`);
+  if (drillAvgs.length) teamBits.push(`演练均分：${Math.round(drillAvgs.reduce((a, b) => a + b, 0) / drillAvgs.length)} 分（${drillAvgs.length} 人有记录）`);
+  if (noTask.length) teamBits.push(`有档案但无任务：${noTask.slice(0, 4).map(h).join("、")}${noTask.length > 4 ? ` 等 ${noTask.length} 个` : ""}`);
+  if (noNext.length) teamBits.push(`未设下次跟进日：${noNext.slice(0, 4).map(h).join("、")}${noNext.length > 4 ? ` 等 ${noNext.length} 个` : ""}`);
+  if (allIssues.length) teamBits.push(`问题闭环率：${closedIssues.length}/${allIssues.length}（${Math.round(closedIssues.length * 100 / allIssues.length)}%）`);
+
+  const weekActions = [];
+  if (reds.length) weekActions.push(`逐个过一遍红灯项（${reds.map(x => x.u.name).join("、")}），当场定责任人与截止日`);
+  if (rows.some(x => x.risk.reviews.length)) weekActions.push("把待验收清零，验收意见写清「差什么、怎么改」");
+  if (rows.some(x => x.s.dr14 === 0)) weekActions.push("安排下周演练排期，至少每人 1 次");
+  if (noTask.length || noNext.length) weekActions.push("带着新人把「有档案无任务」「无下次跟进」的客户补齐下一步");
+  if (!weekActions.length) weekActions.push("保持每周复盘节奏，提前锁定下周 3 件事");
+
+  const decisions = [];
+  if (rows.every(x => x.doneIn.length === 0)) decisions.push("本周无人闭环，需确认客户机会是否足够、任务是否拆得过大");
+  if (rows.some(x => x.s.joinsDays > 30 && x.s.cars === 0)) decisions.push("有人入职超 30 天仍无客户档案，需确认分工");
+  if (reds.length >= 2) decisions.push("多人同时红灯，建议安排一次集中复盘");
+
+  const html = `<p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#0B3A63">${range.start} ～ ${range.end} 导师 / 主管周报</p>
+     <div style="font-size:13.2px;color:#2C3E50">${head}</div>
+     ${mailBox("每人本周情况", personBlocks || `<div style="font-size:12.5px;color:#7C8896">暂无新人账号</div>`, reds.length ? "red" : (yels.length ? "yellow" : "green"))}
+     ${teamBits.length ? mailBox("团队共性问题", ul(teamBits), "yellow") : ""}
+     ${mailBox("下周带教动作（建议 3 条）", `<ol style="margin:5px 0 0 18px;padding:0;font-size:12.8px;color:#1A5276">${weekActions.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "green")}
+     ${decisions.length ? mailBox("需要主管决策", ul(decisions, "#8C2B1F"), "red") : ""}
+     <p style="margin-top:12px;color:#5C6772;font-size:12px">口径：${range.start} 至 ${range.end}（北京时间自然日），与上周同期对比；闭环=导师确认验收通过的任务/项目；演练取近 14 天记录；全部来自工作台实时数据。生成时间：${bjTime(Date.now())}。</p>`;
+  return { range, rows, html };
 }
 
-/* 个人汇总：某位新人的当日概览 + 目标达成率 + 风险提示 */
-function personalSection(c) {
-  const g = c.goal;
-  const kinds = Object.entries(c.kinds || {}).map(([k, n]) => `${k} ${n}`).join(" · ") || "无业务动作";
-  const risks = riskItems(c);
-  return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
-    <div style="font-size:15px;font-weight:700;color:#17558F">${h(c.u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${c.end}</span></div>
-    <table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:8px">
-      <tr><td style="padding:5px 8px;color:#5C6772;width:110px">今日活跃</td><td style="padding:5px 8px">${c.activeAt ? bjHm(c.activeAt) + "（" + h(c.lastKind || "登录") + "）" : "无"}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">今日学习</td><td style="padding:5px 8px">通关 ${c.nodesNew} 个节点；小测 ${c.quizTotal > 0 ? c.quizCorrect + "/" + c.quizTotal + "（" + c.quizAcc + "%）" : "无"}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">累计进度</td><td style="padding:5px 8px">地图 ${c.nodesDone}/${g ? g.total : "—"} 个节点${g ? `（目标达成 ${g.pct}%）` : ""}；累计正确率 ${c.cumAcc != null ? c.cumAcc + "%" : "—"}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">业务动作</td><td style="padding:5px 8px">${h(kinds)}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">待办 / 问题</td><td style="padding:5px 8px">任务/项目：未闭环 ${c.open}（待验收 ${c.review} · 超期 ${c.overdue}）· 已闭环 ${c.done}；未闭环问题 ${c.ops}</td></tr>
-      <tr><td style="padding:5px 8px;color:#5C6772">演练 / 互助</td><td style="padding:5px 8px">近 14 天演练 ${c.dr14} 次${c.avg != null ? `（均分 ${c.avg}）` : ""}；互助 ${c.hs} 分/${c.hn} 条</td></tr>
-    </table>
-    ${risks.length ? `<div style="margin-top:8px;background:#FDEDEA;border:1px solid #F3CFC9;border-radius:8px;padding:8px 10px;color:#8C2B1F;font-size:12.5px"><b>风险提示</b><ul style="margin:4px 0 0 18px;padding:0">${risks.map(x => `<li>${h(x)}</li>`).join("")}</ul></div>`
-      : `<div style="margin-top:8px;color:#3C6B1A;font-size:12.5px">今日无明显风险。</div>`}
-  </div>`;
+/* ---------- 新人周报（发给本人） ---------- */
+function buildNewbieWeekly(u, day, S0) {
+  const S = S0 || snapshot();
+  const range = weekRangeFor(day || bjKey(Date.now()));
+  const s = userStats(u, range.days, S);
+  const prevDays = [];
+  if (range.current) { for (let i = 7; i >= 3; i--) prevDays.push(dayAdd(range.start, -i)); }
+  else { for (let i = 7; i >= 1; i--) prevDays.push(dayAdd(range.start, -i)); }
+  const p = userStats(u, prevDays, S);
+  const acts = tasksOf(u, S);
+  const doneIn = acts.filter(v => (v.st || 0) === 2 && range.days.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
+  const returned = acts.filter(v => taskOpen(v) && v.cfm === 2);
+  const blocked = acts.filter(v => taskOpen(v) && v.blocked);
+  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const steps = mlines.length ? mlines.slice(0, 3) : nextStepsFor(u, S, s, range.end);
+  const stepTitle = mlines.length ? "下周 3 件事（导师已确认）" : "下周 3 件事（系统建议）";
+  const ach = [];
+  doneIn.forEach(v => ach.push(`闭环：${v.car} · ${v.text}`));
+  if (s.nodesNew) ach.push(`通关 ${s.nodesNew} 个节点（累计 ${s.nodesDone}）`);
+  if (s.quizTotal > 0) ach.push(`小测 ${s.quizCorrect}/${s.quizTotal}（${s.quizAcc}%）`);
+  if (s.carsIn) ach.push(`客户档案有动作 ${s.carsIn} 个`);
+  if (s.opsNew) ach.push(`提出/跟进问题 ${s.opsNew} 条`);
+  if (s.dr14) ach.push(`演练 ${s.dr14} 次${s.avg != null ? `（均分 ${s.avg}）` : ""}`);
+  if (s.depositsIn) ach.push(`沉淀 ${s.depositsIn} 篇`);
+  const cmp = [`<tr><td style="padding:5px 8px;color:#5C6772">活跃天数</td><td style="padding:5px 8px">${s.activeDays} 天</td><td style="padding:5px 8px;color:#7C8896">${p.activeDays} 天</td></tr>`,
+    `<tr><td style="padding:5px 8px;color:#5C6772">通关节点</td><td style="padding:5px 8px">${s.nodesNew} 个</td><td style="padding:5px 8px;color:#7C8896">${p.nodesNew} 个</td></tr>`,
+    `<tr><td style="padding:5px 8px;color:#5C6772">小测正确率</td><td style="padding:5px 8px">${s.quizAcc != null ? s.quizAcc + "%" : "—"}</td><td style="padding:5px 8px;color:#7C8896">${p.quizAcc != null ? p.quizAcc + "%" : "—"}</td></tr>`,
+    `<tr><td style="padding:5px 8px;color:#5C6772">演练次数</td><td style="padding:5px 8px">${s.dr14} 次</td><td style="padding:5px 8px;color:#7C8896">—</td></tr>`].join("");
+  const blockItems = [];
+  blocked.forEach(v => blockItems.push(`<b>${h(v.text)}</b>：${h(v.blocked)}`));
+  returned.forEach(v => blockItems.push(`<b>${h(v.text)}</b> 被退回，待修改后重新提交`));
+  return { range, html: `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
+    <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${range.start} ～ ${range.end}</span></div>
+    <div style="margin-top:6px;font-size:13px;color:#2C3E50">${doneIn.length || s.nodesNew || s.quizTotal ? `本周闭环 ${doneIn.length} 项、通关 ${s.nodesNew} 个节点、小测 ${s.quizAcc != null ? s.quizAcc + "%" : "—"}。` : "本周记录较少，下周先从一个小目标开始。"}</div>
+    ${mailBox("本周成果", ach.length ? ul(ach) : `<div style="font-size:12.5px;color:#7C8896">本周还没有闭环或学习记录</div>`, "green")}
+    ${mailBox("与上周对比", `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:4px"><tr style="text-align:left"><td style="padding:5px 8px;color:#7C8896">指标</td><td style="padding:5px 8px;color:#7C8896">本周</td><td style="padding:5px 8px;color:#7C8896">上周</td></tr>${cmp}</table>`, "yellow")}
+    ${blockItems.length ? mailBox("本周卡点", ul(blockItems, "#8C2B1F"), "red") : ""}
+    ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
+   </div>` };
 }
+
+/* 个人汇总：新人日报的合并版本（导师侧已不再单独发送，保留给手动预览/补发） */
 function buildPersonalReport(users, day) {
   const S = snapshot();
   const today = day || bjKey(Date.now());
-  const list = (users || []).map(u => userStats(u, [today], S));
-  const html = `<p style="margin:0 0 6px"><b>${today}</b> 个人学习汇总</p>
-    <p style="color:#5C6772;font-size:12.5px">包含当日活跃、学习记录、目标达成率与风险提示，数据以工作台实际记录为准（北京时间）。</p>
-    ${list.map(personalSection).join("") || "<p style=\"color:#7C8896\">暂无新人数据</p>"}`;
+  const list = users || [];
+  const html = `<p style="margin:0 0 6px"><b>${today}</b> 新人个人汇总</p>
+    <p style="color:#5C6772;font-size:12.5px">每位新人的当日进展、卡点与下一步；数据以工作台实时记录为准（北京时间）。</p>
+    ${list.map(u => buildNewbieDaily(u, today, S)).join("") || "<p style=\"color:#7C8896\">暂无新人数据</p>"}`;
   return { today, list, html };
 }
 
@@ -1123,11 +1323,15 @@ function buildPersonalReport(users, day) {
 function buildRiskReport(users, day) {
   const theDay = day || bjKey(Date.now());
   const S = snapshot();
-  const list = (users || []).map(u => userStats(u, [theDay], S)).map(c => ({ c, risks: riskItems(c) })).filter(x => x.risks.length);
+  const list = (users || []).map(u => {
+    const s = userStats(u, [theDay], S);
+    const r = riskOf(u, S, s, theDay);
+    return { u, s, r, rs: r.red.concat(r.yellow) };
+  }).filter(x => x.rs.length);
   if (!list.length) return null;
   const html = `<p style="margin:0 0 8px"><b>${theDay}</b> 风险预警（仅列有风险的新人）</p>
-    ${list.map(({ c, risks }) => `<div style="margin-top:10px"><b>${h(c.u.name)}</b><ul style="margin:4px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${risks.map(x => `<li>${h(x)}</li>`).join("")}</ul></div>`).join("")}
-    <p style="margin-top:12px;color:#5C6772;font-size:12px">统计口径与日报一致（北京时间自然日）。</p>`;
+    ${list.map(x => `<div style="margin-top:10px"><b>${h(x.u.name)}</b> ${lightTag(x.r.level)}<ul style="margin:4px 0 0 18px;padding:0;color:#8C2B1F;font-size:13px">${x.rs.map(t => `<li>${h(t)}</li>`).join("")}</ul></div>`).join("")}
+    <p style="margin-top:12px;color:#5C6772;font-size:12px">统计口径与日报一致（北京时间自然日），阈值见日报底部。</p>`;
   return { html, count: list.length, list };
 }
 /* ---------- 合并汇总：同一账号勾选的多项内容 → 只发 1 封 ----------
@@ -1136,48 +1340,60 @@ function buildRiskReport(users, day) {
 function digestSubscribers(withWeekly) {
   const alive = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
   const map = new Map();
-  const add = (email, types, scope) => {
+  const add = (email, types, scope, role) => {
     if (!validEmail(email)) return;
     let e = map.get(email);
-    if (!e) { e = { email, types: new Set(), all: false, ids: new Set() }; map.set(email, e); }
+    if (!e) { e = { email, role: role || "staff", types: new Set(), all: false, ids: new Set() }; map.set(email, e); }
     types.forEach(t => e.types.add(t));
     if (scope === "all" || scope == null) e.all = true;
     else (scope || []).forEach(id => { if (alive.has(id)) e.ids.add(id); });
   };
   (USERS.users || []).forEach(u => {
     if (!u.active || !validEmail(u.email) || u.mailAuto === false) return;
-    const types = DIGEST_TYPES.filter(t => roleAcceptsMail(u.role, t) && (withWeekly || t !== "weekly"));
+    const types = roleDigestTypes(u.role).filter(t => withWeekly || t !== "weekly");
     if (!types.length) return;
     const scope = u.role === "newbie" ? [u.id]
       : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope : []));
-    add(u.email, types, scope);
+    add(u.email, types, scope, u.role);
   });
   /* 兼容旧版邮件中心的收件人规则；同一邮箱自动合并类型与关注范围，避免重复发 */
   getMailCfg().rules.forEach(r => {
     if (r.enabled === false) return;
     const types = (r.types || []).filter(t => DIGEST_TYPES.indexOf(t) >= 0 && (withWeekly || t !== "weekly"));
     if (!types.length) return;
-    add(r.email, types, r.scope);
+    add(r.email, types, r.scope, "staff");
   });
-  return [...map.values()].map(e => ({ email: e.email, types: e.types, ids: e.all ? null : [...e.ids] }))
+  return [...map.values()].map(e => ({ email: e.email, role: e.role, types: e.types, ids: e.all ? null : [...e.ids] }))
     .filter(e => e.ids === null || e.ids.length);
 }
 function buildDigestParts(theDay, target) {
   const ids = target.ids;
+  const isNewbie = target.role === "newbie";
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = ids === null ? allNewbies : allNewbies.filter(u => ids.indexOf(u.id) >= 0);
   const parts = [];
   if (target.types.has("daily")) {
     const r = buildDailyReport(theDay, { newbieIds: ids === null ? undefined : ids });
-    parts.push({ key: "daily", label: "整体日报", short: "整体日报", html: r.html });
-  }
-  if (target.types.has("weekly")) {
-    const r = buildWeeklyReport(theDay, { newbieIds: ids === null ? undefined : ids });
-    parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+    parts.push({ key: "daily", label: "导师 / 主管日报", short: "日报", html: r.html });
   }
   if (target.types.has("personal") && newbies.length) {
-    const r = buildPersonalReport(newbies, theDay);
-    parts.push({ key: "personal", label: "个人汇总（目标达成率 / 风险）", short: "个人汇总", html: r.html });
+    if (isNewbie) {
+      const u = newbies[0];
+      parts.push({ key: "personal", label: `今日小结 · ${u.name}`, short: "今日小结", html: buildNewbieDaily(u, theDay) });
+    } else {
+      const r = buildPersonalReport(newbies, theDay);
+      parts.push({ key: "personal", label: "每位新人的个人汇总", short: "个人汇总", html: r.html });
+    }
+  }
+  if (target.types.has("weekly")) {
+    if (isNewbie && newbies.length) {
+      const u = newbies[0];
+      const r = buildNewbieWeekly(u, theDay);
+      parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+    } else {
+      const r = buildWeeklyReport(theDay, { newbieIds: ids === null ? undefined : ids });
+      parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+    }
   }
   if (target.types.has("risk")) {
     const r = buildRiskReport(newbies, theDay);
@@ -1214,9 +1430,13 @@ async function sendDigestAll(day, opts) {
   const note = onlyTypes
     ? `手动补发 · ${withWeekly ? "本周周报" : "指定内容"} · ${theDay}。`
     : `自动发送 · 工作日 ${cfg.reportHour}:00 · 按角色固定内容合并为 1 封（登录 / 问题提醒为即时单发）${withWeekly ? " · 周五含本周周报" : ""}。`;
+  const onlyUser = onlyTo ? (USERS.users || []).find(u => String(u.email || "").toLowerCase() === onlyTo) : null;
+  const onlyRole = onlyUser ? onlyUser.role : "staff";
+  const onlyIds = onlyUser && onlyUser.role === "newbie" ? [onlyUser.id] : null;
   const targets = onlyTo
-    ? [{ email: onlyTo, types: pick(new Set(DIGEST_TYPES.filter(t => withWeekly || t !== "weekly"))), ids: null }]
-    : digestSubscribers(withWeekly).map(t => ({ email: t.email, types: pick(t.types), ids: t.ids }))
+    ? [{ email: onlyTo, role: onlyRole, ids: onlyIds,
+      types: pick(new Set(roleDigestTypes(onlyRole).filter(t => withWeekly || t !== "weekly"))) }]
+    : digestSubscribers(withWeekly).map(t => ({ email: t.email, role: t.role, types: pick(t.types), ids: t.ids }))
       .filter(t => t.types.size && !skip.has(t.email.toLowerCase()));
   const results = [];
   if (!targets.length) {
@@ -1225,8 +1445,8 @@ async function sendDigestAll(day, opts) {
     /* 没有任何自动订阅时保留兜底：给 ALERT_TO 发一封完整汇总 */
     const fb = mailTo();
     if (!fb.length) return { ok: true, to: [], skipped: true, results, msg: "没有自动订阅收件人" };
-    const types = new Set(["daily", "personal", "risk"].concat(withWeekly ? ["weekly"] : []));
-    const parts = buildDigestParts(theDay, { types, ids: null });
+    const types = pick(new Set(["daily"].concat(withWeekly ? ["weekly"] : [])));
+    const parts = buildDigestParts(theDay, { types, ids: null, role: "staff" });
     const subject = digestSubject(theDay, parts);
     const x = await sendMail(subject, renderDigest(parts), note, { to: fb, kind: "digest", trigger: o.trigger || "" });
     return Object.assign({ to: fb, subject, merged: true, results: [Object.assign({ to: fb }, x)] }, x);
@@ -1325,8 +1545,8 @@ function reportOf(type, day, ids) {
       note: "手动发送 · 仅列有风险的新人。" };
   }
   const r = buildDailyReport(theDay, { newbieIds: scope });
-  return { subject: `【每日进度】${r.today} 新人培养整体进度`, html: r.html,
-    note: `手动发送 · 工作日 ${getMailCfg().reportHour}:00 汇总。` };
+  return { subject: `【导师日报】${r.today} 新人培养进展与风险`, html: r.html,
+    note: `手动发送 · 工作日 ${getMailCfg().reportHour}:00 自动发送。` };
 }
 /* 供 GitHub Actions 定时任务拉取日报（只生成内容，不在服务端发送；Render 免费实例会休眠，定时器不可靠） */
 function reportPayload() {
@@ -1783,6 +2003,26 @@ app.post("/api/mail_report", async (req, res) => {
   res.status(r.ok ? 200 : 400).json(r);
 });
 
+/* ---------- 导师给新人的「下一步」：系统建议 + 导师可覆盖 ---------- */
+app.get("/api/next_steps", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const map = {};
+  (USERS.users || []).filter(u => u.role === "newbie").forEach(u => {
+    map[u.id] = { text: u.mentorNext || "", by: u.mentorNextBy || "", at: u.mentorNextAt || 0 };
+  });
+  res.json({ ok: true, map });
+});
+app.post("/api/next_steps", (req, res) => {
+  const me = requireStaff(req, res); if (!me) return;
+  const b = req.body || {};
+  const u = findUser(String(b.id || ""));
+  if (!u || u.role !== "newbie") return res.status(404).json({ ok: false, msg: "新人账号不存在" });
+  const text = String(b.text || "").trim().slice(0, 600);
+  u.mentorNext = text; u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  USERS.changed = true; saveUsers();
+  res.json({ ok: true, text });
+});
+
 /* ---------- 邮件基础配置 / 订阅查询（配置入口统一在「账号管理」） ---------- */
 function mailCfgPayload() {
   const cfg = getMailCfg();
@@ -1818,6 +2058,18 @@ app.get("/api/mail_preview", (req, res) => {
   if (!MAIL_TYPE_NAME[type]) return res.status(400).json({ ok: false, msg: "未知的邮件类型" });
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || "")) ? String(req.query.day) : bjKey(Date.now());
   const ids = String(req.query.ids || "").split(",").map(x => x.trim()).filter(Boolean);
+  /* 按某位新人的视角预览（新人日报/周报），便于导师对照检查 */
+  const asU = req.query.id ? findUser(String(req.query.id)) : null;
+  if (req.query.as === "newbie" && asU && asU.role === "newbie") {
+    if (type === "weekly") {
+      const r = buildNewbieWeekly(asU, day);
+      const subject = `【周报】${r.range.start}～${r.range.end} ${asU.name}`;
+      return res.json({ ok: true, day, subject, html: mailShell(subject, r.html, "新人周报预览") });
+    }
+    const inner = buildNewbieDaily(asU, day);
+    const subject = `【今日小结】${day} ${asU.name}`;
+    return res.json({ ok: true, day, subject, html: mailShell(subject, inner, "新人日报预览") });
+  }
   const r = reportOf(type, day, ids);
   if (!r) return res.json({ ok: true, empty: true, day, subject: "无内容", html: mailShell("无内容", "<p>当前没有符合条件的内容（例如今日无风险项）。</p>", "预览") });
   res.json({ ok: true, day, subject: r.subject, html: mailShell(r.subject, r.html, r.note) });
@@ -1851,10 +2103,10 @@ app.post("/api/mail_send_user", async (req, res) => {
   if (!validEmail(u.email)) return res.status(400).json({ ok: false, msg: "该账号还没有填写有效邮箱" });
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || "")) ? String(b.day) : bjKey(Date.now());
   /* 内容按角色固定，不接受前端指定类型 */
-  const digestTypes = DIGEST_TYPES.filter(t => roleAcceptsMail(u.role, t));
+  const digestTypes = roleDigestTypes(u.role);
   if (!digestTypes.length) return res.status(400).json({ ok: false, msg: "该角色没有可手动发送的周期内容" });
   const ids = u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? null : (u.mailScope || []));
-  const parts = buildDigestParts(day, { email: u.email, types: new Set(digestTypes), ids });
+  const parts = buildDigestParts(day, { email: u.email, role: u.role, types: new Set(digestTypes), ids });
   if (!parts.length) return res.json({ ok: true, skipped: true, msg: "当日无符合条件的内容，未发送", to: [] });
   const subject = digestSubject(day, parts);
   const x = await sendMail(subject, renderDigest(parts),
@@ -1885,6 +2137,20 @@ app.get("/api/daily_ping", async (req, res) => {
   const toOverride = String(req.query.to || "").trim().toLowerCase();
   const force = String(req.query.force || "") === "1";
   const weeklyOnly = String(req.query.weekly || "") === "1";
+  /* 验证用：?as=newbie&id=<新人>&to=<邮箱> 把该新人的日报/周报单独发到指定邮箱，不影响任何人 */
+  const asNewbie = String(req.query.as || "") === "newbie" ? findUser(String(req.query.id || "")) : null;
+  if (asNewbie && asNewbie.role === "newbie" && validEmail(toOverride)) {
+    const parts = [];
+    if (weeklyOnly) {
+      const r = buildNewbieWeekly(asNewbie, key);
+      parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+    } else {
+      parts.push({ key: "personal", label: `今日小结 · ${asNewbie.name}`, short: "今日小结", html: buildNewbieDaily(asNewbie, key) });
+    }
+    const subject = digestSubject(key, parts);
+    const x = await sendMail(subject, renderDigest(parts), "验证邮件 · 仅发给指定邮箱", { to: [toOverride], kind: "test", trigger: "verify" });
+    return res.json({ ok: !!x.ok, msg: x.msg || "", to: [toOverride], day: key, channel: x.channel || "", subject });
+  }
   if (!toOverride && !qDay && !force) {
     if (wd === 0 || wd === 6) return res.json({ ok: true, skipped: "周末" });
     if (hour < cfg.reportHour) return res.json({ ok: true, skipped: "未到 " + cfg.reportHour + ":00", hour, now: bjTime(Date.now()) });
