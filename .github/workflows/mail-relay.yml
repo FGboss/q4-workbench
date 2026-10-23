@@ -26,9 +26,10 @@ on:
     - cron: "20 11 * * 1-5"
   workflow_dispatch:
 
-concurrency:
-  group: mail-relay
-  cancel-in-progress: false
+# 注意：不要加 concurrency group。
+# 服务端一次汇总会同时触发多个收件人的发信任务（每人 1 封）；
+# GitHub 的 concurrency 只保留「1 个运行中 + 1 个等待」，其余会被自动取消，
+# 曾导致 4 个收件人里 2 个没收到。每个收件人任务相互独立，直接并行即可。
 
 jobs:
   send:
