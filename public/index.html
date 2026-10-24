@@ -2295,10 +2295,14 @@ function radarSVG(per){
   ${labs}</svg>`;
 }
 /* 导师给新人的下一步：模块级缓存 + 重绘（避免每次渲染都请求、避免覆盖正在输入的内容） */
-let MN={},MN_T=0;
+let MN={},MN_T=0,MNDRAFT={};
 function paintMN(id,o){
  const t=document.querySelector(`[data-mn="${id}"]`);
- if(t&&document.activeElement!==t&&t.dataset.dirty!=="1"){t.value=(o&&o.text)||"";t.dataset.dirty="";}
+ if(t&&document.activeElement!==t){
+  /* 有未保存草稿时优先恢复草稿，防止后台重绘把正在写的内容冲掉 */
+  if(MNDRAFT[id]!==undefined)t.value=MNDRAFT[id];
+  else{t.value=(o&&o.text)||"";t.dataset.dirty="";}
+ }
  const meta=document.querySelector(`[data-mnmeta="${id}"]`);
  if(meta){
   const filled=!!(o&&o.text);
@@ -2371,7 +2375,7 @@ function renderMonitor(){
  if(isStaff()){
   loadMN(false);
   document.querySelectorAll("[data-mn]").forEach(t=>{
-   t.addEventListener("input",()=>{t.dataset.dirty="1";});
+   t.addEventListener("input",()=>{MNDRAFT[t.dataset.mn]=t.value;t.dataset.dirty="1";});
   });
   document.querySelectorAll("[data-mnsave]").forEach(b=>b.onclick=async()=>{
    const id=b.dataset.mnsave;const t=document.querySelector(`[data-mn="${id}"]`);
@@ -2381,8 +2385,9 @@ function renderMonitor(){
     const r=await apiPost("/api/next_steps",{id,text:(t&&t.value)||""});
     const d=(r&&r.data)||{};
     if(d.ok){
-      if(t)t.dataset.dirty="";
-      MN[id]=d.map;paintMN(id,d.map);
+       delete MNDRAFT[id];
+       if(t){t.dataset.dirty="";t.value=(d.map&&d.map.text)||"";}
+       MN[id]=d.map;paintMN(id,d.map);
      if(msg)msg.innerHTML=d.unchanged?`<span class="tag ok">内容未变</span>`:`<span class="tag ok">已保存 · 下封邮件与新人首页同步生效</span>`;
     }else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"保存失败")}</span>`;
    }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
@@ -2393,7 +2398,7 @@ function renderMonitor(){
    try{
     const r=await apiPost("/api/next_steps",{id,op:"undo"});
     const d=(r&&r.data)||{};
-    if(d.ok){const t=document.querySelector(`[data-mn="${id}"]`);if(t)t.dataset.dirty="";MN[id]=d.map;paintMN(id,d.map);
+    if(d.ok){delete MNDRAFT[id];const t=document.querySelector(`[data-mn="${id}"]`);if(t){t.dataset.dirty="";t.value=(d.map&&d.map.text)||"";}MN[id]=d.map;paintMN(id,d.map);
      if(msg)msg.innerHTML=`<span class="tag ok">已撤销到上一版</span>`;}
     else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"撤销失败")}</span>`;
    }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
@@ -2405,7 +2410,7 @@ function renderMonitor(){
    try{
     const r=await apiPost("/api/next_steps",{id,op:"clear"});
     const d=(r&&r.data)||{};
-    if(d.ok){const t=document.querySelector(`[data-mn="${id}"]`);if(t){t.value="";t.dataset.dirty="";}MN[id]=d.map;paintMN(id,d.map);
+    if(d.ok){delete MNDRAFT[id];const t=document.querySelector(`[data-mn="${id}"]`);if(t){t.value="";t.dataset.dirty="";}MN[id]=d.map;paintMN(id,d.map);
      if(msg)msg.innerHTML=`<span class="tag ok">已清空 · 可撤销</span>`;}
     else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"清空失败")}</span>`;
    }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
