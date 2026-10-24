@@ -353,6 +353,10 @@
 <div class="wrap">
 
   <div id="tab-plan">
+    <section id="mreqSec" class="hide">
+      <h2>导师给我的要求 <span class="h">导师针对你进度写的下一步；与邮件里的「导师评价」同源，改了立刻同步</span></h2>
+      <div class="card pad" id="mentorReq"></div>
+    </section>
     <section id="passSec">
       <h2>我的成长护照 <span class="h">你的段位、下一站、连续天数与徽章 —— 今天再进一格就够</span></h2>
       <div id="passport"></div>
@@ -481,7 +485,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v7.0 · 2026.10.22　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v7.1 · 2026.10.24　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -1125,11 +1129,31 @@ function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.
    目的：让新人打开就想「今天再进一格」，而不是当成负担。
    只讲三件事：我在哪一段 · 下一站是什么（就一个）· 我攒了什么（连续天数 / 徽章 / 被点评反馈） */
 function nextNodeOf(who){const done=ciDone(who);return NODES.find(n=>!done.has(n.id))||null;}
+/* 新人首页展示导师写的要求（与导师评价同源，不必等邮件） */
+let MREQ_T=0;
+function renderMentorReq(force){
+ const sec=document.getElementById("mreqSec");
+ if(!sec)return;
+ if(!isNew()){sec.classList.add("hide");return;}
+ if(!force&&Date.now()-MREQ_T<15000)return;
+ apiGet("/api/my_next_steps").then(r=>{
+  const d=(r&&r.data)||{};MREQ_T=Date.now();
+  if(!d.ok||!d.text){sec.classList.add("hide");return;}
+  const lines=String(d.text).split(/\n+/).map(x=>x.replace(/^\s*\d+[.、)]\s*/,"").trim()).filter(Boolean);
+  const box=document.getElementById("mentorReq");
+  if(!box)return;
+  box.innerHTML=`<div class="muted" style="font-size:12px">${esc(d.byName||"导师")} · ${fmt(d.at)}</div>
+   <ol style="margin:8px 0 0 18px;padding:0;line-height:1.8">${lines.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>
+   <div class="muted" style="margin-top:8px;font-size:11.8px">完成情况会在日报里同步给导师，有疑问到「② 协助」发起求助。</div>`;
+  sec.classList.remove("hide");
+ }).catch(()=>{});
+}
 function renderPassport(){
  const sec=document.getElementById("passSec");
  if(!sec)return;
  if(!isNew()){sec.classList.add("hide");return;}
  sec.classList.remove("hide");
+ renderMentorReq(false);
  const who=WHO,st=ciStats(who),LVS=LEVELS,total=TOTAL_NODES;
  const nn=nextNodeOf(who);
  const nnL=nn?LVS.find(x=>x.k===nn.level):null;
@@ -2270,6 +2294,32 @@ function radarSVG(per){
   <polygon points="${pts.map(p=>p.join(",")).join(" ")}" fill="rgba(59,124,176,.28)" stroke="#17558F" stroke-width="2"/>
   ${labs}</svg>`;
 }
+/* 导师给新人的下一步：模块级缓存 + 重绘（避免每次渲染都请求、避免覆盖正在输入的内容） */
+let MN={},MN_T=0;
+function paintMN(id,o){
+ const t=document.querySelector(`[data-mn="${id}"]`);
+ if(t&&document.activeElement!==t&&t.dataset.dirty!=="1"){t.value=(o&&o.text)||"";t.dataset.dirty="";}
+ const meta=document.querySelector(`[data-mnmeta="${id}"]`);
+ if(meta){
+  const filled=!!(o&&o.text);
+  meta.textContent=filled?`上次：${WHO_NAME[o.by]||o.by||"—"} · ${fmt(o.at)}${o.histN?` · 历史 ${o.histN} 版`:""}`:"尚未填写（留空 = 系统自动建议）";
+ }
+ const hb=document.querySelector(`[data-mnhistbox="${id}"]`);
+ if(hb&&o&&o.hist){
+  const rows=o.hist.slice().reverse().map(h=>`<div>· ${fmt(h.at)} ${esc(WHO_NAME[h.by]||h.by||"—")}：${esc(String(h.text||"").replace(/\n+/g," / ").slice(0,120))}</div>`).join("");
+  hb.innerHTML=rows||"暂无历史版本";hb.style.display="block";
+ }
+}
+function loadMN(force){
+ if(!isStaff())return;
+ const ids=ppl();
+ if(!force&&Date.now()-MN_T<10000){ids.forEach(id=>paintMN(id,MN[id]));return;}
+ apiGet("/api/next_steps").then(r=>{
+  const map=(r.data&&r.data.map)||{};
+  MN=map;MN_T=Date.now();
+  ids.forEach(id=>paintMN(id,MN[id]));
+ }).catch(()=>{});
+}
 function renderMonitor(){
  const S=stats();const ids=ppl();
  const card=(DOC.cards.list||[]).filter(x=>!x.del).length,q=(DOC.quotes.list||[]).filter(x=>!x.del).length;
@@ -2298,27 +2348,74 @@ function renderMonitor(){
    <div class="row" style="justify-content:space-between;font-size:12.6px;margin-top:8px"><span>中1 可独立</span><span>${p.faeA2}/${p.faeT2}</span></div>
    <div class="bar"><i style="width:${p.faeZ}%;background:var(--green)"></i></div>
    ${isStaff()?`<div style="margin-top:10px;background:#F7F9FB;border:1px solid var(--line);border-radius:10px;padding:8px 10px">
-     <div class="muted" style="font-weight:700">给新人的下一步（最多 3 条，每行一条）</div>
-     <textarea data-mn="${id}" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.3px" placeholder="留空 = 使用系统自动建议；填写后日报/周报优先展示你写的要求"></textarea>
-     <div class="row" style="margin-top:5px;align-items:center"><button class="btn sm" data-mnsave="${id}">保存</button><span class="muted" data-mnmsg="${id}"></span></div>
+     <div class="row" style="justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+       <div class="muted" style="font-weight:700">导师给新人的下一步（评价，最多 600 字，每行一条）</div>
+       <span class="muted" data-mnmeta="${id}" style="font-size:11.6px"></span>
+     </div>
+     <textarea data-mn="${id}" maxlength="600" style="width:100%;min-height:54px;margin-top:4px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.3px" placeholder="留空 = 使用系统自动建议；填写后日报/周报优先展示你写的要求"></textarea>
+     <div class="row" style="margin-top:5px;align-items:center;flex-wrap:wrap;gap:6px">
+       <button class="btn sm" data-mnsave="${id}">保存</button>
+       <button class="btn sm gh" data-mnundo="${id}" title="恢复到上一版内容">撤销上次</button>
+       <button class="btn sm gh" data-mnclear="${id}" title="删除当前评价，回到系统自动建议">清空</button>
+       <button class="btn sm gh" data-mnhist="${id}" title="查看最近 10 版改动">历史</button>
+       <span class="muted" data-mnmsg="${id}"></span>
+     </div>
+     <div class="muted" data-mnhistbox="${id}" style="display:none;margin-top:6px;font-size:11.8px;line-height:1.7"></div>
    </div>`:""}</div>`;}).join("");
  document.getElementById("mRadar").innerHTML=ids.map(id=>{const c=faeCount(id);
   return `<div class="card pad"><h3>${WHO_NAME[id]} · 初级保底达成</h3>
    <div class="radarw" style="margin-top:6px">${radarSVG(c.per)}</div>
    <div class="muted" style="margin-top:6px">数值=各维度初级条目达标率（无初级条目的维度按自动达标计 100%）。</div></div>`;}).join("");
 
- /* 导师给新人的下一步：读取已保存内容 + 保存 */
+ /* 导师给新人的下一步：保存 / 撤销 / 清空 / 历史 */
  if(isStaff()){
-  apiGet("/api/next_steps").then(r=>{const map=(r&&r.map)||{};
-   ids.forEach(id=>{const t=document.querySelector(`[data-mn="${id}"]`);if(t)t.value=(map[id]&&map[id].text)||"";});}).catch(()=>{});
+  loadMN(false);
+  document.querySelectorAll("[data-mn]").forEach(t=>{
+   t.addEventListener("input",()=>{t.dataset.dirty="1";});
+  });
   document.querySelectorAll("[data-mnsave]").forEach(b=>b.onclick=async()=>{
    const id=b.dataset.mnsave;const t=document.querySelector(`[data-mn="${id}"]`);
    const msg=document.querySelector(`[data-mnmsg="${id}"]`);
    b.disabled=true;if(msg)msg.textContent="保存中…";
-   try{const r=await apiPost("/api/next_steps",{id,text:(t&&t.value)||""});
-    if(msg)msg.innerHTML=r.ok?`<span class="tag ok">已保存，下封邮件生效</span>`:`<span class="tag no">${esc(r.msg||"保存失败")}</span>`;}
-   catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
+   try{
+    const r=await apiPost("/api/next_steps",{id,text:(t&&t.value)||""});
+    const d=(r&&r.data)||{};
+    if(d.ok){
+      if(t)t.dataset.dirty="";
+      MN[id]=d.map;paintMN(id,d.map);
+     if(msg)msg.innerHTML=d.unchanged?`<span class="tag ok">内容未变</span>`:`<span class="tag ok">已保存 · 下封邮件与新人首页同步生效</span>`;
+    }else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"保存失败")}</span>`;
+   }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
    b.disabled=false;});
+  document.querySelectorAll("[data-mnundo]").forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.mnundo;const msg=document.querySelector(`[data-mnmsg="${id}"]`);
+   b.disabled=true;if(msg)msg.textContent="撤销中…";
+   try{
+    const r=await apiPost("/api/next_steps",{id,op:"undo"});
+    const d=(r&&r.data)||{};
+    if(d.ok){const t=document.querySelector(`[data-mn="${id}"]`);if(t)t.dataset.dirty="";MN[id]=d.map;paintMN(id,d.map);
+     if(msg)msg.innerHTML=`<span class="tag ok">已撤销到上一版</span>`;}
+    else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"撤销失败")}</span>`;
+   }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
+   b.disabled=false;});
+  document.querySelectorAll("[data-mnclear]").forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.mnclear;const msg=document.querySelector(`[data-mnmsg="${id}"]`);
+   if(!confirm("清空后该新人将回到「系统自动建议」，可用「撤销上次」恢复。确定清空？"))return;
+   b.disabled=true;if(msg)msg.textContent="清空中…";
+   try{
+    const r=await apiPost("/api/next_steps",{id,op:"clear"});
+    const d=(r&&r.data)||{};
+    if(d.ok){const t=document.querySelector(`[data-mn="${id}"]`);if(t){t.value="";t.dataset.dirty="";}MN[id]=d.map;paintMN(id,d.map);
+     if(msg)msg.innerHTML=`<span class="tag ok">已清空 · 可撤销</span>`;}
+    else if(msg)msg.innerHTML=`<span class="tag no">${esc(d.msg||"清空失败")}</span>`;
+   }catch(e){if(msg)msg.innerHTML=`<span class="tag no">请求失败</span>`;}
+   b.disabled=false;});
+  document.querySelectorAll("[data-mnhist]").forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.mnhist;const box=document.querySelector(`[data-mnhistbox="${id}"]`);
+   if(box&&box.style.display!=="none"){box.style.display="none";return;}
+   try{const r=await apiGet(`/api/next_steps?hist=${encodeURIComponent(id)}`);
+    const map=(r.data&&r.data.map)||{};MN[id]=map[id];paintMN(id,map[id]);}catch(e){}
+   if(box)box.style.display="block";});
  }
 
  // 里程碑与预警（仅导师/主管）
@@ -2384,16 +2481,16 @@ async function renderMailBox(){
  </details>`;
  const msg=m=>{const x=document.getElementById("mailMsg");if(x)x.innerHTML=m;};
  const tb=document.getElementById("mailTestBtn");if(tb)tb.onclick=async()=>{tb.disabled=true;msg("发送中…");
-  try{const r=await apiPost("/api/mail_test",{});msg(r.ok?`<span class="tag ok">已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  try{const r=await apiPost("/api/mail_test",{});const d=(r&&r.data)||{};msg(d.ok?`<span class="tag ok">已发送</span> → ${(d.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(d.msg||"")}`);if(d.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}tb.disabled=false;};
  const sb=document.getElementById("mailSelfBtn");if(sb)sb.onclick=async()=>{sb.disabled=true;msg("生成并发送中…");
-  try{const r=await apiPost("/api/mail_report?self=1&force=1",{});msg(r.ok?`<span class="tag ok">已发送（仅你本人）</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  try{const r=await apiPost("/api/mail_report?self=1&force=1",{});const d=(r&&r.data)||{};msg(d.ok?`<span class="tag ok">已发送（仅你本人）</span> → ${(d.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(d.msg||"")}`);if(d.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}sb.disabled=false;};
  const wb=document.getElementById("mailWeekBtn");if(wb)wb.onclick=async()=>{wb.disabled=true;msg("生成周报并发送中…");
-  try{const r=await apiPost("/api/mail_report?self=1&force=1&weekly=1",{});msg(r.ok?`<span class="tag ok">周报已发送（仅你本人）</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  try{const r=await apiPost("/api/mail_report?self=1&force=1&weekly=1",{});const d=(r&&r.data)||{};msg(d.ok?`<span class="tag ok">周报已发送（仅你本人）</span> → ${(d.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(d.msg||"")}`);if(d.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}wb.disabled=false;};
  const rb=document.getElementById("mailRepBtn");if(rb)rb.onclick=async()=>{if(!confirm("会给全部自动订阅的导师/主管/新人各发一封今日汇总，确定？"))return;rb.disabled=true;msg("汇总并发送中…");
-  try{const r=await apiPost("/api/mail_report?force=1",{});msg(r.ok?`<span class="tag ok">今日邮件已发送</span> → ${(r.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(r.msg||"")}`);if(r.ok)setTimeout(renderMailBox,600);}
+  try{const r=await apiPost("/api/mail_report?force=1",{});const d=(r&&r.data)||{};msg(d.ok?`<span class="tag ok">今日邮件已发送</span> → ${(d.to||[]).map(esc).join("、")}`:`<span class="tag no">未发送</span> ${esc(d.msg||"")}`);if(d.ok)setTimeout(renderMailBox,600);}
   catch(e){msg('<span class="tag no">请求失败</span>');}rb.disabled=false;};
  const cb=document.getElementById("mailCfgBtn");if(cb)cb.onclick=()=>openAccounts();
 }

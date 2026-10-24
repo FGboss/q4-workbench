@@ -2109,11 +2109,29 @@ app.post("/api/mail_report", async (req, res) => {
 });
 
 /* ---------- 导师给新人的「下一步」：系统建议 + 导师可覆盖 ---------- */
+/* 导师给新人的下一步（评价）：支持保存 / 撤销 / 清空 / 查看历史。
+   历史最多留 10 版，便于误改后恢复；正文上限 600 字。 */
+const NEXT_MAX = 600, NEXT_HIST_MAX = 10;
+function nextHistOf(u) { return Array.isArray(u.mentorNextHist) ? u.mentorNextHist : []; }
+function archiveNext(u, by) {
+  const prev = String(u.mentorNext || "").trim();
+  if (!prev) return;
+  const h = nextHistOf(u).slice();
+  h.push({ text: prev, by: u.mentorNextBy || by || "", at: u.mentorNextAt || Date.now() });
+  u.mentorNextHist = h.slice(-NEXT_HIST_MAX);
+}
+function nextPayload(u, withHist) {
+  const o = { text: u.mentorNext || "", by: u.mentorNextBy || "", at: u.mentorNextAt || 0,
+    histN: nextHistOf(u).length };
+  if (withHist) o.hist = nextHistOf(u);
+  return o;
+}
 app.get("/api/next_steps", (req, res) => {
   if (!requireStaff(req, res)) return;
+  const histId = String((req.query && req.query.hist) || "");
   const map = {};
   (USERS.users || []).filter(u => u.role === "newbie").forEach(u => {
-    map[u.id] = { text: u.mentorNext || "", by: u.mentorNextBy || "", at: u.mentorNextAt || 0 };
+    map[u.id] = nextPayload(u, histId && histId === u.id);
   });
   res.json({ ok: true, map });
 });
@@ -2122,10 +2140,32 @@ app.post("/api/next_steps", (req, res) => {
   const b = req.body || {};
   const u = findUser(String(b.id || ""));
   if (!u || u.role !== "newbie") return res.status(404).json({ ok: false, msg: "新人账号不存在" });
-  const text = String(b.text || "").trim().slice(0, 600);
-  u.mentorNext = text; u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  const op = String(b.op || "save");
+  if (op === "undo") {
+    const h = nextHistOf(u);
+    if (!h.length) return res.status(400).json({ ok: false, msg: "没有可撤销的记录", map: nextPayload(u, true) });
+    const last = h[h.length - 1];
+    u.mentorNextHist = h.slice(0, -1);
+    u.mentorNext = String(last.text || "").slice(0, NEXT_MAX);
+    u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  } else {
+    const text = op === "clear" ? "" : String(b.text || "").trim().slice(0, NEXT_MAX);
+    if (text === String(u.mentorNext || "").slice(0, NEXT_MAX)) {
+      return res.json({ ok: true, unchanged: true, map: nextPayload(u, true) });
+    }
+    archiveNext(u, me.id);
+    u.mentorNext = text; u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  }
   USERS.changed = true; saveUsers();
-  res.json({ ok: true, text });
+  res.json({ ok: true, map: nextPayload(u, true) });
+});
+/* 本人读取：新人也能在自己首页看到导师给的要求（不必等邮件） */
+app.get("/api/my_next_steps", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  if (me.role !== "newbie" || !me.mentorNext) return res.json({ ok: true, text: "", byName: "", at: 0 });
+  const by = findUser(me.mentorNextBy);
+  res.json({ ok: true, text: me.mentorNext, byName: by ? by.name : "", at: me.mentorNextAt || 0 });
 });
 
 /* ---------- 邮件基础配置 / 订阅查询（配置入口统一在「账号管理」） ---------- */
