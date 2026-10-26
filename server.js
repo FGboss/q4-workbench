@@ -114,6 +114,11 @@ const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
 /* ---------- 账号体系（超级管理员分配权限） ---------- */
 const ROLES = ["admin", "lead", "mentor", "newbie"];
 const ROLE_NAME = { admin: "超级管理员", lead: "主管", mentor: "导师", newbie: "新人" };
+/* 业务线：只用于「谁带谁」和邮件分发，不改变任何业务数据与权限。
+   用 role + track 表达「技术主管 / 销售主管」，不新增角色，避免权限逻辑分叉。 */
+const TRACKS = [["tech", "技术"], ["sales", "销售"], ["all", "全部"]];
+const TRACK_NAME = { tech: "技术", sales: "销售", all: "全部", "": "未设置" };
+const validTrack = t => (TRACK_NAME[String(t || "")] ? String(t) : "");
 
 // 首次部署预置账号（结构与演示数据一致）。
 // · admin：固定初始密码 admin123（公开文档，首次登录必须立即改密）
@@ -235,6 +240,15 @@ function ensureUsers() {
     if (!u.mailTypes.length) u.mailTypes = defaultMailTypes(u.role);
     if (u.mailScope === undefined) u.mailScope = u.role === "newbie" ? [u.id] : "all";
     if (u.role === "newbie") u.mailScope = [u.id];
+    /* 业务线：老数据不改，只补字段；导师/主管默认「全部」，新人留空等管理员在「团队关系」里设置 */
+    if (!("track" in u) || !TRACK_NAME[String(u.track || "")]) u.track = u.role === "newbie" ? "" : "all";
+    if (u.role === "newbie" && u.track === "all") u.track = "";
+    /* 收件范围模式：老账号一律保留现状（custom），不擅自改变已有邮件行为；
+       新建的导师/主管默认 auto，跟着「团队关系」走。 */
+    if (!("mailScopeMode" in u) || ["self", "auto", "custom"].indexOf(u.mailScopeMode) < 0) {
+      u.mailScopeMode = u.role === "newbie" ? "self" : "custom";
+    }
+    if (u.role === "newbie") u.mailScopeMode = "self";
     /* 推送方式：自动=按设定时间自动发；手动=只在账号管理里手动发送（默认自动） */
     if (typeof u.mailAuto !== "boolean") u.mailAuto = true;
   });
@@ -249,6 +263,32 @@ const findByInvite = t => (USERS.users || []).find(u => u.invite && u.invite ===
 const findByWecom = w => (USERS.users || []).find(u => u.wecom && u.wecom === String(w || "")) || null;
 const pubUser = u => ({ id: u.id, username: u.username, name: u.name, role: u.role,
   active: u.active, activated: !!u.activated, mustReset: !!u.mustReset, wecom: u.wecom || "", pwless: !!u.pwless });
+
+/* 收件范围自动推导：谁带的新人，就收谁的内容。
+   · 超管永远全量，避免被关系表挡掉；
+   · 导师/主管只看自己名下（mentorId 或 leadId 指向自己）的新人；
+   · 名下没人时就是空数组 —— 一封都不发，比误发全量更安全。 */
+function autoScopeFor(u) {
+  if (u.role === "newbie") return [u.id];
+  if (u.role === "admin") return "all";
+  return (USERS.users || []).filter(n => n.role === "newbie" && n.active !== false &&
+    (n.mentorId === u.id || n.leadId === u.id)).map(n => n.id);
+}
+/* 只重算「自动」模式的账号；自定义模式的 mailScope 原样保留 */
+function applyAutoScopes() {
+  (USERS.users || []).forEach(u => {
+    if (u.role === "newbie" || u.mailScopeMode !== "auto") return;
+    u.mailScope = autoScopeFor(u);
+  });
+}
+/* 角色变化后清理悬空关系：不再是导师/主管的人，不再被新人引用 */
+function dropDanglingRelation(id, newRole) {
+  (USERS.users || []).forEach(n => {
+    if (n.role !== "newbie") return;
+    if (newRole !== "mentor" && n.mentorId === id) n.mentorId = "";
+    if (newRole !== "lead" && n.leadId === id) n.leadId = "";
+  });
+}
 
 /* 一次性安全迁移：早期版本用过的弱默认密码（仓库里公开可读），启动时强制换成随机密码并打印到日志，
    避免任何人凭已知密码冒用他人身份。已自行改过密码的账号不受影响。 */
@@ -1546,8 +1586,11 @@ async function sendDigestAll(day, opts) {
   if (!targets.length) {
     if (skip.size) return { ok: true, to: [], skipped: true, results, msg: "今日收件人均已发送" };
     if (onlyTypes) return { ok: true, to: [], skipped: true, results, msg: "没有可发送的收件人" };
-    /* 没有任何自动订阅时保留兜底：给 ALERT_TO 发一封完整汇总 */
-    const fb = mailTo();
+    /* 兜底只给「还没有任何导师/主管邮箱」的早期部署用。
+       只要已有导师/主管邮箱，就说明订阅范围是人为设定的（手动 / 名下暂无新人），
+       不能再广播给全体，否则「自动跟随关系、名下没人」会变成收到所有人的邮件。 */
+    const hasStaffEmail = (USERS.users || []).some(u => u.role !== "newbie" && u.active && validEmail(u.email));
+    const fb = hasStaffEmail ? [] : mailTo();
     if (!fb.length) return { ok: true, to: [], skipped: true, results, msg: "没有自动订阅收件人" };
     const types = pick(new Set(["daily"].concat(withWeekly ? ["weekly"] : [])));
     const parts = buildDigestParts(theDay, { types, ids: null, role: "staff" });
@@ -1917,6 +1960,7 @@ app.get("/api/users", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ ok: true, teamPasscode: USERS.teamPasscode || "",
     users: (USERS.users || []).map(u => Object.assign(pubUser(u), { email: u.email || "", mentorId: u.mentorId || "", leadId: u.leadId || "",
+      track: u.track || "", mailScopeMode: u.mailScopeMode || (u.role === "newbie" ? "self" : "custom"),
       mailTypes: Array.isArray(u.mailTypes) ? u.mailTypes.slice() : defaultMailTypes(u.role),
       mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : "all")),
       mailAuto: u.mailAuto !== false,
@@ -1947,8 +1991,13 @@ app.post("/api/users", (req, res) => {
   const id = uid();
   const email = String(b.email || "").trim();
   if (email && !validEmail(email)) return res.status(400).json({ ok: false, msg: "邮箱格式不正确" });
-  /* 新账号自带默认邮件订阅：新人只收自己的个人日报/周报；导师/主管收整体汇总 */
-  const subs = { email, mailTypes: defaultMailTypes(role), mailScope: role === "newbie" ? [id] : "all", mailAuto: true };
+  /* 新账号自带默认邮件订阅：新人只收自己的个人日报/周报；导师/主管默认「自动跟随团队关系」 */
+  const track = role === "newbie" ? (validTrack(b.track) === "all" ? "" : validTrack(b.track)) : (validTrack(b.track) || "all");
+  const subs = {
+    email, mailTypes: defaultMailTypes(role), mailAuto: true, track,
+    mailScopeMode: role === "newbie" ? "self" : "auto",
+    mailScope: role === "newbie" ? [id] : [],
+  };
   let u;
   if (password) {
     if (password.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
@@ -1957,8 +2006,9 @@ app.post("/api/users", (req, res) => {
     // 不设密码 → 生成邀请链接，由本人自己设密码（管理员无需记录任何口令）
     u = Object.assign({ id, username, name, role, salt, pass: "", active: true, activated: false, invite: newInvite(), mustReset: false, wecom: "", pwless: false, createdAt: Date.now() }, subs);
   }
-  USERS.users.push(u); USERS.changed = true; saveUsers();
-  res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "" }) });
+  USERS.users.push(u); USERS.changed = true; applyAutoScopes(); saveUsers();
+  res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "", track: u.track,
+    mailScopeMode: u.mailScopeMode, mailScope: u.mailScope }) });
 });
 
 app.post("/api/user_update", (req, res) => {
@@ -1969,14 +2019,27 @@ app.post("/api/user_update", (req, res) => {
   if (b.name != null && String(b.name).trim()) u.name = String(b.name).trim();
   if (b.role != null && ROLES.indexOf(b.role) >= 0) {
     if (u.id === me.id && b.role !== "admin") return res.status(400).json({ ok: false, msg: "不能取消自己的超级管理员角色" });
-    if (u.role === "newbie" && b.role !== "newbie") { /* 允许转岗，不改动历史数据 */ }
+    const oldRole = u.role;
     u.role = b.role;
+    /* 角色变了就清理悬空关系，避免「已不是导师的人」还挂在新人名下 */
+    if (oldRole !== b.role) dropDanglingRelation(u.id, b.role);
+    if (u.role === "newbie") {
+      u.mailScopeMode = "self"; u.mailScope = [u.id];
+      if (u.track === "all") u.track = "";
+    } else {
+      if (u.mailScopeMode === "self") u.mailScopeMode = "auto";
+      if (!u.track) u.track = "all";
+    }
   }
   if (b.active != null) {
     if (u.id === me.id && !b.active) return res.status(400).json({ ok: false, msg: "不能停用当前登录账号" });
     u.active = !!b.active;
   }
   if (b.wecom != null) u.wecom = String(b.wecom).trim();
+  if (b.track != null) {
+    const t = validTrack(b.track);
+    u.track = u.role === "newbie" ? (t === "all" ? "" : t) : (t || "all");
+  }
   if (b.email != null) {
     const em = String(b.email).trim();
     if (em && !validEmail(em)) return res.status(400).json({ ok: false, msg: "邮箱格式不正确" });
@@ -1985,6 +2048,10 @@ app.post("/api/user_update", (req, res) => {
   /* 邮件范围：内容按角色固定，不可逐项勾选；这里只维护「关注哪些新人」与是否自动推送。
      新人固定本人；导师/主管默认全部新人，也可只勾自己带的几位。 */
   if (b.mailAuto != null) u.mailAuto = !!b.mailAuto;
+  if (b.mailScopeMode != null) {
+    const m = String(b.mailScopeMode);
+    if (["auto", "custom"].indexOf(m) >= 0) u.mailScopeMode = u.role === "newbie" ? "self" : m;
+  }
   if (b.mailScope != null) {
     if (u.role === "newbie") u.mailScope = [u.id];
     else if (b.mailScope === "all") u.mailScope = "all";
@@ -2001,8 +2068,11 @@ app.post("/api/user_update", (req, res) => {
     if (np.length < 4) return res.status(400).json({ ok: false, msg: "密码至少 4 位" });
     u.salt = newSalt(); u.pass = hashPass(np, u.salt); u.activated = true; u.invite = null; u.mustReset = true;
   }
+  applyAutoScopes();
   USERS.changed = true; saveUsers();
-  res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "" }) });
+  res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "",
+    track: u.track || "", mailScopeMode: u.mailScopeMode || "custom",
+    mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : [])) }) });
 });
 
 /* 重新生成邀请链接（等于重置：本人再次设密码即可，无需管理员记口令） */
@@ -2025,8 +2095,46 @@ app.post("/api/user_delete", (req, res) => {
   if (u.role === "admin" && (USERS.users || []).filter(x => x.role === "admin").length <= 1)
     return res.status(400).json({ ok: false, msg: "至少保留一个超级管理员" });
   USERS.users = USERS.users.filter(x => x.id !== id);
+  /* 删人后清理悬空关系，避免新人还挂在一个已不存在的导师/主管名下 */
+  (USERS.users || []).forEach(n => {
+    if (n.mentorId === id) n.mentorId = "";
+    if (n.leadId === id) n.leadId = "";
+  });
+  applyAutoScopes();
   USERS.changed = true; saveUsers();
   res.json({ ok: true });
+});
+
+/* ---------- 团队关系：一张表维护「新人 → 业务线 / 直属导师 / 直属主管」 ----------
+   只写关系字段；导师/主管若是「自动跟随关系」，同步重算收件范围。
+   「自定义」范围的账号完全不受影响，历史配置不会被覆盖。 */
+app.post("/api/team_relations", (req, res) => {
+  const me = requireAdmin(req, res); if (!me) return;
+  const b = req.body || {};
+  let n = 0;
+  /* autoIds：把这些导师/主管切到「自动跟随关系」（可选） */
+  (Array.isArray(b.autoIds) ? b.autoIds : []).map(String).forEach(id => {
+    const u = findUser(id);
+    if (u && u.role !== "newbie") { u.mailScopeMode = "auto"; n++; }
+  });
+  (Array.isArray(b.items) ? b.items : []).forEach(it => {
+    const u = findUser(String((it && it.id) || ""));
+    if (!u || u.role !== "newbie") return;
+    if (it.track != null) { const t = validTrack(it.track); u.track = t === "all" ? "" : t; n++; }
+    if (it.mentorId != null) {
+      const m = findUser(String(it.mentorId || ""));
+      u.mentorId = (m && m.role === "mentor" && m.active !== false) ? m.id : "";
+      n++;
+    }
+    if (it.leadId != null) {
+      const l = findUser(String(it.leadId || ""));
+      u.leadId = (l && l.role === "lead" && l.active !== false) ? l.id : "";
+      n++;
+    }
+  });
+  applyAutoScopes();
+  USERS.changed = true; saveUsers();
+  res.json({ ok: true, changed: n });
 });
 
 /* 本人改密码（免口令用户无需原密码，直接补设一个密码以便换设备登录） */
