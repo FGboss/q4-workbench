@@ -14,7 +14,6 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const zlib = require("zlib");
-
 const PORT = process.env.PORT || 3000;
 const APP_SECRET = process.env.APP_SECRET || "q4-workbench-2026";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -2050,6 +2049,87 @@ function requireStaff(req, res) {
   if (["lead", "mentor", "admin"].indexOf(me.role) < 0) { res.status(403).json({ ok: false, msg: "仅导师 / 主管 / 超管可用" }); return null; }
   return me;
 }
+
+/* =====================================================================
+   平台 AI 判断层（只读）
+   · 读全量数据 → 编译快照 → 模型给判断 → 校验闸门 → 落盘
+   · 不做任何写操作：不改任务、不改评价、不改风险灯、不发邮件
+   · 没配模型 / 模型超时 / 输出不合格，都自动退化成规则版，页面不空白
+   ===================================================================== */
+const BRAIN_FILE = path.join(DATA_DIR, "brain_state.json");
+const BRAIN_TTL_MS = +(process.env.BRAIN_TTL_MS || 6 * 3600000);
+const brainSnap = require("./brain/snapshot");
+const brainThink = require("./brain/think");
+const brainVerify = require("./brain/verify");
+const brainFallback = require("./brain/fallback");
+
+let BRAIN = readJson(BRAIN_FILE, null);
+let brainInFlight = null;
+let brainLastAt = 0;
+
+function brainBuildSnap(day) {
+  const S = snapshot();
+  return brainSnap.build({
+    day, users: USERS.users || [], S,
+    helpers: { userStats, riskOf, tasksOf, taskOpen, taskOverDays, waitDays, carNext, bjKey },
+  });
+}
+
+async function runBrain(trigger) {
+  if (brainInFlight) return brainInFlight;
+  brainLastAt = Date.now();
+  const day = bjKey(Date.now());
+  brainInFlight = (async () => {
+    const snap = brainBuildSnap(day);
+    let data = null, source = "rules", model = "";
+    if (brainThink.enabled()) {
+      try {
+        const r = await brainThink.think(snap);
+        const v = brainVerify.verify(r.raw, snap);
+        if (v && v.data && v.data.focus.length) { data = v.data; source = "model"; model = r.model; }
+        else console.log("[brain] 模型输出未通过校验，本轮改用规则版");
+      } catch (e) { console.log("[brain] 模型不可用：" + e.message); }
+    }
+    if (!data) { data = brainFallback.build(snap); source = "rules"; }
+    BRAIN = Object.assign({ v: 1, asOf: Date.now(), day, source, model, trigger, team: snap.team, refs: snap.refs }, data);
+    try { writeJson(BRAIN_FILE, BRAIN); } catch (e) { console.log("[brain] 落盘失败：" + e.message); }
+    return BRAIN;
+  })().catch(e => { console.log("[brain] 运行失败：" + e.message); return BRAIN; })
+    .finally(() => { brainInFlight = null; });
+  return brainInFlight;
+}
+
+/* 后台兜底刷新：实例醒着时每 30 分钟看一次，过期才重算（免费实例休眠时靠访问触发） */
+function startBrainTimer() {
+  setInterval(() => {
+    try {
+      if (brainInFlight) return;
+      if (Date.now() - ((BRAIN && BRAIN.asOf) || 0) < BRAIN_TTL_MS) return;
+      const hasStaff = (USERS.users || []).some(u => ["lead", "mentor", "admin"].indexOf(u.role) >= 0 && u.active !== false);
+      if (!hasStaff) return;
+      runBrain("timer");
+    } catch (e) {}
+  }, 30 * 60000);
+}
+
+app.get("/api/brain_latest", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const stale = !BRAIN || Date.now() - (BRAIN.asOf || 0) > BRAIN_TTL_MS;
+  if (stale && !brainInFlight && Date.now() - brainLastAt > 60000) runBrain("auto");
+  res.json({
+    ok: true, brain: BRAIN, running: !!brainInFlight, stale,
+    enabled: brainThink.enabled(), model: brainThink.modelName(), ttl: BRAIN_TTL_MS,
+    day: bjKey(Date.now()),
+  });
+});
+
+app.post("/api/brain_run", async (req, res) => {
+  const me = requireStaff(req, res); if (!me) return;
+  if (brainInFlight) return res.json({ ok: true, running: true, brain: BRAIN, enabled: brainThink.enabled() });
+  const b = await runBrain("manual:" + me.id);
+  res.json({ ok: !!b, brain: b || null, enabled: brainThink.enabled(), model: brainThink.modelName() });
+});
+
 app.get("/api/mail_status", (req, res) => {
   if (!requireStaff(req, res)) return;
   const cfg = getMailCfg();
@@ -2370,6 +2450,8 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
     console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报 / 周五 " + REPORT_HOUR + ":00 周报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
     startDailyReportTimer();
+    startBrainTimer();
+    console.log(`AI 判断层： ${brainThink.enabled() ? "已启用 · " + brainThink.modelName() : "未配置模型（使用规则版，页面照常可用）"}`);
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
   });

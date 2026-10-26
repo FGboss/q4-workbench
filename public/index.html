@@ -352,6 +352,8 @@
 
 <div class="wrap">
 
+  <div id="brainBar" class="hide"></div>
+
   <div id="tab-plan">
     <section id="mreqSec" class="hide">
       <h2>导师给我的要求 <span class="h">导师针对你进度写的下一步；与邮件里的「导师评价」同源，改了立刻同步</span></h2>
@@ -435,6 +437,10 @@
   </div>
 
   <div id="tab-monitor" class="hide">
+    <section id="brainSec">
+      <h2>AI 判断 · 今日优先级 <span class="h">只做判断和排序，不改任何数据 · 依据是平台实时数据，不是模板 · 没配模型时自动用规则版</span></h2>
+      <div id="brainBox"></div>
+    </section>
     <section>
       <h2>成长看板 <span class="h">自动聚合前四块数据</span></h2>
       <div class="grid4" id="mStats"></div>
@@ -485,7 +491,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v7.1 · 2026.10.24　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
+    <div style="margin-top:5px"><b>版本：</b>v7.2 · 2026.10.25　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ AI 判断层（全局优先级，只读不改数据）+ 邮件订阅统一在账号管理（QQ 邮箱 / 企业微信 / Brevo / Resend）</div>
   </footer>
 </div>
 </div>
@@ -844,13 +850,14 @@ function resetGate(){
  document.querySelectorAll("#gLoginPane .btn,#gRegPane .btn").forEach(b=>b.disabled=false);
  setGMsg("");
 }
-const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","helpBoard","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mailBox","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl"];
+const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","helpBoard","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mailBox","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl","brainBar","brainBox"];
 function logout(){
  if(!confirm("退出并回到登录页？（服务器数据不受影响）"))return;
  if(dirty&&ONLINE&&TOKEN){try{push();}catch(e){}}   // 后台补传最后一笔改动，不等待
  if(sse){try{sse.close();}catch(e){}}
  clearTimeout(pushTimer);clearTimeout(pullTimer);
  sse=null;ONLINE=false;TOKEN="";WHO="";MY_ROLE="";MY_PWLESS=false;dirty=false;busy=false;
+ try{BRAIN=null;BRAIN_T=0;}catch(e){}
  try{localStorage.removeItem(LS_TOKEN);localStorage.removeItem(LS_WHO);}catch(e){}
  try{history.replaceState(null,"",location.pathname);}catch(e){}
  DOC=emptyDoc();
@@ -1119,7 +1126,7 @@ const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[
 let _rPend=null;
 function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
 function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
-function render(){if(!WHO)return;_queueRender(TAB);}
+function render(){if(!WHO)return;if(isStaff())loadBrain(false);_queueRender(TAB);}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
  render();
@@ -2324,8 +2331,101 @@ function loadMN(force){
   ids.forEach(id=>paintMN(id,MN[id]));
  }).catch(()=>{});
 }
+/* ---------- AI 判断层（只读）：全局判断 + 把控页优先级重排 ----------
+   只消费后端算好的判断，不在前端做任何推断；后端不可用时保持上一次结果，不空白。 */
+let BRAIN=null,BRAIN_T=0,BRAIN_RUNNING=false,BRAIN_RETRY=0;
+const BRAIN_LV={
+ red:{c:"var(--red-d)",bg:"var(--red-l)",bd:"#F3CFC9",t:"需介入"},
+ yellow:{c:"var(--amber-d)",bg:"var(--amber-l)",bd:"#F3E7C9",t:"需关注"},
+ green:{c:"var(--green-d)",bg:"var(--green-l)",bd:"#CFEBD0",t:"正常"}};
+const BRAIN_ST={tight:BRAIN_LV.red,steady:BRAIN_LV.yellow,loose:BRAIN_LV.green};
+function brainOrder(ids){
+ if(!BRAIN||!Array.isArray(BRAIN.focus)||!BRAIN.focus.length)return ids;
+ const rank={};BRAIN.focus.forEach((f,i)=>{rank[f.id]=i;});
+ return ids.slice().sort((a,b)=>(rank[a]==null?999:rank[a])-(rank[b]==null?999:rank[b]));
+}
+function brainFocus(id){return (BRAIN&&(BRAIN.focus||[]).find(x=>x.id===id))||null;}
+function brainRank(id){if(!BRAIN)return -1;return (BRAIN.focus||[]).findIndex(x=>x.id===id);}
+function brainRef(r){const m=(BRAIN&&BRAIN.refs)||{};return m[r]||String(r||"");}
+
+function loadBrain(force){
+ if(!isStaff())return;
+ if(!force&&Date.now()-BRAIN_T<120000){renderBrainBar();return;}
+ apiGet("/api/brain_latest").then(r=>{
+  const d=(r&&r.data)||{};
+  const had=!!BRAIN;
+  if(d.ok&&d.brain){BRAIN=d.brain;BRAIN_T=Date.now();BRAIN_RETRY=0;}
+  BRAIN_RUNNING=!!d.running;
+  renderBrainBar();renderBrain();
+  if(!had&&BRAIN&&TAB==="monitor"){_queueRender("monitor");return;}
+  if(BRAIN_RUNNING&&BRAIN_RETRY<6){BRAIN_RETRY++;setTimeout(()=>loadBrain(true),6000);}
+ }).catch(()=>{});
+}
+function renderBrainBar(){
+ const el=document.getElementById("brainBar");if(!el)return;
+ if(!isStaff()||!BRAIN){el.classList.add("hide");el.innerHTML="";return;}
+ const g=BRAIN.global||{},L=BRAIN_ST[g.state]||BRAIN_ST.steady,first=(BRAIN.focus||[])[0];
+ el.classList.remove("hide");
+ el.innerHTML='<div class="card" style="border-left:4px solid '+L.c+';padding:14px 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
+  +'<div style="flex:1;min-width:250px">'
+  +'<div class="muted" style="font-size:12.2px;font-weight:700;letter-spacing:.3px">AI 主管 · '+L.t+(BRAIN.source==="model"?"":" · 规则版")+'</div>'
+  +'<div style="font-size:14.6px;font-weight:700;margin-top:3px;line-height:1.6">'+esc(g.headline||"暂无判断")+'</div>'
+  +(first?'<div class="muted" style="margin-top:3px;font-size:12.6px">先处理：<b>'+esc(first.name)+'</b> — '+esc(first.verdict||"")+'</div>':"")
+  +'</div><button class="btn sm" id="brainGo">看优先级</button></div>';
+ const go=document.getElementById("brainGo");
+ if(go)go.onclick=()=>{const b=document.querySelector('#tabs button[data-tab="monitor"]');if(b)b.click();};
+}
+function renderBrain(){
+ const sec=document.getElementById("brainSec"),box=document.getElementById("brainBox");
+ if(!box||!sec)return;
+ if(!isStaff()){sec.classList.add("hide");return;}
+ sec.classList.remove("hide");
+ if(!BRAIN){box.innerHTML='<div class="card pad"><span class="muted">正在生成判断…（首次稍慢，之后走缓存）</span></div>';return;}
+ const g=BRAIN.global||{},L=BRAIN_ST[g.state]||BRAIN_ST.steady;
+ const focus=(BRAIN.focus||[]).map((f,i)=>{
+  const lv=BRAIN_LV[f.level]||BRAIN_LV.green;
+  const ev=(f.evidence||[]).map(x=>'<span class="muted" style="display:inline-block;background:var(--grey-l);border-radius:999px;padding:1px 9px;margin:3px 5px 0 0;font-size:11.6px">'+esc(brainRef(x))+'</span>').join("");
+  return '<div class="card pad" style="margin-top:10px;border-left:3px solid '+lv.c+'">'
+   +'<div class="row" style="justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+   +'<h3><span class="tag" style="background:'+lv.bg+';color:'+lv.c+';margin-right:7px">优先 '+(i+1)+'</span>'+esc(f.name)+'</h3>'
+   +'<span class="muted" style="font-size:12.4px">'+esc(f.verdict||"")+'</span></div>'
+   +(f.why&&f.why!==f.verdict?'<div class="muted" style="margin-top:6px">'+esc(f.why)+'</div>':"")
+   +((f.next||[]).length?'<ol style="margin:8px 0 0 20px;padding:0;font-size:13.2px;line-height:1.9">'+(f.next||[]).map(x=>'<li>'+esc(x)+'</li>').join("")+'</ol>':"")
+   +(ev?'<div style="margin-top:8px">'+ev+'</div>':"")
+   +'</div>';
+ }).join("");
+ const others=(BRAIN.others||[]).length?'<div style="margin-top:6px">'+(BRAIN.others||[]).map(o=>'<div class="muted">· <b>'+esc(o.name)+'</b> '+esc(o.oneLine||"")+'</div>').join("")+'</div>':"";
+ const blocks=[];
+ if((BRAIN.cross||[]).length)blocks.push(["跨人共性",(BRAIN.cross||[]).map(c=>'<div class="muted">· '+esc(c.text)+'</div>').join("")]);
+ if((BRAIN.dataGaps||[]).length)blocks.push(["数据缺口",(BRAIN.dataGaps||[]).map(c=>'<div class="muted">· '+esc(c.text)+'</div>').join("")]);
+ if((BRAIN.excluded||[]).length)blocks.push(["看到了但没提",(BRAIN.excluded||[]).map(c=>'<div class="muted">· '+esc(c.what)+'：'+esc(c.because||"")+'</div>').join("")]);
+ box.innerHTML='<div class="card pad" style="border-left:4px solid '+L.c+'">'
+  +'<div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+  +'<div style="flex:1;min-width:260px"><div class="muted" style="font-size:12.2px;font-weight:700">'+L.t+' · '
+  +(BRAIN.source==="model"?"模型判断 · "+esc(BRAIN.model||""):"规则判断（未配置模型或模型暂不可用）")+'</div>'
+  +'<div style="font-size:15.4px;font-weight:700;margin-top:4px;line-height:1.6">'+esc(g.headline||"")+'</div>'
+  +((g.why||[]).length?'<div class="muted" style="margin-top:6px">'+(g.why||[]).map(x=>'· '+esc(x)).join("　")+'</div>':"")
+  +'</div><button class="btn sm gh" id="brainRe">重新判断</button></div>'
+  +(BRAIN_RUNNING?'<div class="muted" style="margin-top:8px;font-size:12.2px">正在更新…</div>':"")
+  +'<div class="muted" style="margin-top:8px;font-size:11.8px">判断时间 '+fmt(BRAIN.asOf)+' · 只读，不改任何数据</div>'
+  +'</div>'
+  +focus
+  +(others?'<div class="card pad" style="margin-top:12px"><h3>其余人</h3>'+others+'</div>':"")
+  +(blocks.length?'<div class="grid3" style="margin-top:12px">'+blocks.map(b=>'<div class="card pad"><h3 style="font-size:14.4px">'+b[0]+'</h3>'+b[1]+'</div>').join("")+'</div>':"");
+ const re=document.getElementById("brainRe");
+ if(re)re.onclick=()=>{
+  re.disabled=true;re.textContent="判断中…";
+  apiPost("/api/brain_run",{}).then(r=>{
+   const d=(r&&r.data)||{};
+   if(d.brain){BRAIN=d.brain;BRAIN_T=Date.now();}
+   renderMonitor();renderBrainBar();
+  }).catch(()=>{re.disabled=false;re.textContent="重新判断";});
+ };
+}
+
 function renderMonitor(){
- const S=stats();const ids=ppl();
+ const S=stats();const ids=brainOrder(ppl());
+ loadBrain(false);renderBrain();
  const card=(DOC.cards.list||[]).filter(x=>!x.del).length,q=(DOC.quotes.list||[]).filter(x=>!x.del).length;
  const allCar=S.C.length,allTask=ids.reduce((n,id)=>n+S.per[id].tasks,0),
   doneTask=ids.reduce((n,id)=>n+S.per[id].doneTasks,0),reviewTask=ids.reduce((n,id)=>n+S.per[id].reviewTasks,0),
@@ -2338,8 +2438,9 @@ function renderMonitor(){
   statCard(new Set(S.CK.map(x=>x.nodeId).filter(Boolean)).size,"已完成节点"),statCard(S.D.filter(x=>x.score).length,"已评分演练"),
   statCard(S.DP.length,"知识沉淀"),statCard(S.DP.filter(x=>x.star).length,"沉淀加精")
  ].map(x=>x).join("");
- document.getElementById("mPeople").innerHTML=ids.map(id=>{const p=S.per[id];
-  return `<div class="card pad"><h3>${WHO_NAME[id]}</h3>
+ document.getElementById("mPeople").innerHTML=ids.map(id=>{const p=S.per[id];const bf=brainFocus(id);const blv=bf?(BRAIN_LV[bf.level]||BRAIN_LV.green):null;const brk=brainRank(id);
+ return `<div class="card pad"><h3>${WHO_NAME[id]}${bf?`<span class="tag" style="background:${blv.bg};color:${blv.c};margin-left:7px;font-size:11.6px">优先 ${brk+1}</span>`:""}</h3>
+  ${bf&&bf.verdict?`<div class="muted" style="margin-top:4px;font-size:12.4px">AI：${esc(bf.verdict)}</div>`:""}
    <div class="muted" style="margin-top:6px">客户档案：登记 ${p.carrier} 份 · 任务/项目 ${p.tasks} 项（未闭环 ${p.openTasks} · 待验收 ${p.reviewTasks} · 已闭环 ${p.doneTasks}${p.overdueTasks?` · 超期 ${p.overdueTasks}`:""}）</div>
    <div class="bar"><i style="width:${p.tasks?Math.round(p.doneTasks/p.tasks*100):0}%"></i></div>
    <div class="muted" style="margin-top:9px">问题记录：共 ${p.issue} · 待答复 ${p.pending} · 已闭环 ${p.issueClosed}</div>
