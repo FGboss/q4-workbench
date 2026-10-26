@@ -255,8 +255,10 @@ function ensureUsers() {
   if (!USERS.mailSeedV || USERS.mailSeedV < 4) applyMailSeed();
   writeJson(USERS_FILE, USERS);
 }
-/* 账号变更：本地落盘 +（若配了 GitHub）同步到仓库，避免重启丢账号 */
-function saveUsers() { writeJson(USERS_FILE, USERS); sbPushUsers(); if (GH_ON) ghPushUsers(); }
+/* 账号变更：本地落盘 + 云端同步（串行合并，见 pushUsersSoon） */
+function saveUsers() { writeJson(USERS_FILE, USERS); pushUsersSoon(); }
+/* 关键标记（如「今日已发」）必须等云端真的写完再返回，休眠唤醒后不会丢 */
+function saveUsersNow() { writeJson(USERS_FILE, USERS); return pushUsersNow(); }
 const findUser = id => (USERS.users || []).find(u => u.id === id) || null;
 const findByUsername = n => (USERS.users || []).find(u => u.username === String(n || "").trim().toLowerCase()) || null;
 const findByInvite = t => (USERS.users || []).find(u => u.invite && u.invite === String(t || "")) || null;
@@ -1611,6 +1613,13 @@ async function sendDigestAll(day, opts) {
    周报日若只发过日报、周报还没发，仍要继续补一次（不会重复日报，sentTo 会兜住）。 */
 function digestDone(st, key, withWeekly) {
   if (st.lastDigest === key) return true;
+  /* 二次兜底：云端只保住「已成功收件人」、标记却丢了（旧版并发写库会留下这种残缺快照）。
+     当天所有订阅者都已在 sentTo 里就视为已发，顺手把标记补回，避免又被唤醒补发一次。 */
+  const sent = (st.sentTo && Array.isArray(st.sentTo[key]) ? st.sentTo[key] : []).map(x => String(x).toLowerCase());
+  const subs = digestSubscribers(withWeekly);
+  if (sent.length && subs.length && subs.every(t => sent.indexOf(String(t.email).toLowerCase()) >= 0)) {
+    st.lastDigest = key; saveUsers(); return true;
+  }
   if (st.lastDaily === key || st.lastPersonal === key || st.lastRisk === key) {
     if (!withWeekly) { st.lastDigest = key; saveUsers(); return true; }
     if (st.lastWeekly === key || st.weeklyDay === key) { st.lastDigest = key; saveUsers(); return true; }
@@ -1658,7 +1667,8 @@ async function runScheduled(day, opts) {
       st2.tries[theDay] = (st2.tries[theDay] || 0) + 1;
       st2.lastFail = { at: Date.now(), day: theDay, msg: (failed[0] && failed[0].msg) || out.msg || "发送失败" };
     }
-    saveUsers();
+    /* 「今日已发」必须在云端落库后才算数：免费实例随时会休眠，内存和本地盘都会清空 */
+    await saveUsersNow();
     return Object.assign({ ok: out.ok, day: theDay, withWeekly, sentTo: st2.sentTo[theDay], failed: failed.length }, out);
   } finally { scheduledLock = false; }
 }
@@ -1811,8 +1821,44 @@ async function sbPullDoc() {
     if (d) { DOC = normDoc(d); console.log("[sbPullDoc] loaded from Supabase"); }
   } catch (e) { console.error("[sbPullDoc]", e.message); }
 }
-async function sbPushUsers() { if (!SB_ON || !USERS) return; try { await sbPut("users", USERS); } catch (e) { console.error("[sbPushUsers]", e.message); } }
-async function sbPushDoc() { if (!SB_ON || !DOC) return; try { await sbPut("state", DOC); } catch (e) { console.error("[sbPushDoc]", e.message); } }
+/* ---------- 状态写库：串行 + 合并 ----------
+   以前每次保存都各自发一个 upsert，多个请求并发、完成顺序不确定：旧快照可能后到，
+   把新快照盖掉。免费实例休眠唤醒后从云端拉回的就是这种残缺快照 —— 「今日已发」标记
+   因此丢失，补发定时器在实例被唤醒的那一刻又重发了一遍日报（2026-10-26 一天三次）。
+   现在同一时刻只允许 1 个写入在途，期间的改动合并成一次补写；最后落库的一定是最新快照。 */
+function serialWriter(task) {
+  let busy = false, dirty = false, waiters = [];
+  async function run() {
+    busy = true;
+    try {
+      while (dirty) {
+        dirty = false;
+        for (let i = 0; i < 2; i++) {   // 失败重试 1 次；仍失败只记日志，不阻塞后续写入
+          try { await task(); break; }
+          catch (e) { console.error("[push]", e.message); }
+        }
+      }
+    } finally {
+      busy = false;
+      if (dirty) run();
+      else { const ws = waiters; waiters = []; ws.forEach(fn => fn()); }
+    }
+  }
+  return {
+    kick() { dirty = true; if (!busy) run(); },
+    flush() { dirty = true; return new Promise(res => { waiters.push(res); if (!busy) run(); }); },
+  };
+}
+const usersWriter = serialWriter(async () => {
+  if (SB_ON) await sbPut("users", USERS);
+  if (GH_ON) await ghPushUsers();
+});
+const docWriter = serialWriter(async () => {
+  if (SB_ON) await sbPut("state", DOC);
+  if (GH_ON) await ghPush();
+});
+function pushUsersSoon() { usersWriter.kick(); }
+function pushUsersNow() { return usersWriter.flush(); }
 
 /* ---------- 企业微信（可选）：换取 access_token / userid ---------- */
 let WX_TOKEN = { v: "", exp: 0 };
@@ -1931,8 +1977,7 @@ app.post("/api/save", async (req, res) => {
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
   broadcast();
-  sbPushDoc();
-  ghPush();
+  docWriter.kick();
   /* 新人新发的问题 / 诉求 → 立即邮件提醒导师、主管 */
   try {
     const fresh = ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && !oldIds.has(x.id) && findUser(x.who) && findUser(x.who).role === "newbie");
