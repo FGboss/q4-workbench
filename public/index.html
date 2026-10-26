@@ -491,7 +491,7 @@
 
   <footer>
     <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
-    <div style="margin-top:5px"><b>版本：</b>v7.3 · 2026.10.25　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ AI 判断层（全局优先级，只读不改数据）+ 账号管理（团队关系 / 业务线 / 邮件范围自动跟随）</div>
+    <div style="margin-top:5px"><b>版本：</b>v7.4 · 2026.10.25　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ AI 判断层（全局优先级，只读不改数据）+ 账号管理（团队关系 / 业务线 / 邮件范围自动跟随）+ 登录不再发提醒（仅问题/诉求即时提醒）</div>
   </footer>
 </div>
 </div>
@@ -926,7 +926,7 @@ async function openAccounts(){
  const personOpts=(list,sel,emptyHint)=>
   `<option value="">— 未指定 —</option>`+list.map(x=>`<option value="${x.id}" ${sel===x.id?"selected":""} ${x.active?"":"disabled"}>${esc(x.name)}${x.track&&x.track!=="all"?"（"+tName(x.track)+"）":""}${x.active?"":"（已停用）"}</option>`).join("")
   +(list.length?"":`<option value="" disabled>${emptyHint}</option>`);
- const MAIL_TYPE_DEF=[["daily","整体日报"],["weekly","周报"],["personal","个人日报 / 汇总"],["risk","风险预警"],["login","登录提醒"],["issue","问题 / 诉求提醒"]];
+ const MAIL_TYPE_DEF=[["daily","整体日报"],["weekly","周报"],["personal","个人日报 / 汇总"],["risk","风险预警"],["issue","问题 / 诉求提醒"]];
  const mtypeName=k=>(MAIL_TYPE_DEF.find(t=>t[0]===k)||[k,k])[1];
  /* 内容按角色固定，管理端不再逐项勾选 */
  const fixedTypes=role=>role==="newbie"?["personal","weekly"]:["daily","weekly"];

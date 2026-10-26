@@ -141,9 +141,8 @@ const hashPass = (p, salt) => sha("p|" + salt + "|" + p + "|" + APP_SECRET);
    · 新人：个人学习汇总（每日）+ 个人周报（每周五），范围固定为本人；
    · 导师/主管：整体日报 + 每位新人的个人汇总 + 风险预警 + 本周周报（每周五），范围默认全部新人，
      后续新增导师时可在账号管理里勾选「只关注自己带的几位新人」；
-   · 登录提醒 / 问题提醒：只发给导师/主管，属即时单发。
-   发送时一律按 role 推导内容，账号上历史遗留的 mailTypes 不再参与判断。 */
-const STAFF_MAIL_TYPES = ["daily", "weekly", "personal", "risk", "login", "issue"];
+   · 登录不提醒：登录只作为「今天有没有动作」的统计口径，不发任何邮件。 */
+const STAFF_MAIL_TYPES = ["daily", "weekly", "personal", "risk", "issue"];
 const NEWBIE_MAIL_TYPES = ["personal", "weekly"];
 const defaultMailTypes = role => (role === "newbie" ? NEWBIE_MAIL_TYPES : STAFF_MAIL_TYPES).slice();
 /* 某角色是否接收某类邮件（事件提醒用） */
@@ -237,6 +236,7 @@ function ensureUsers() {
     /* 邮件订阅：旧账号没有配置时按角色补默认值，已有配置一律保留 */
     if (!Array.isArray(u.mailTypes)) u.mailTypes = defaultMailTypes(u.role);
     if (u.role === "newbie") u.mailTypes = u.mailTypes.filter(t => NEWBIE_MAIL_TYPES.indexOf(t) >= 0);
+    else u.mailTypes = u.mailTypes.filter(t => t !== "login");   // 登录提醒已下线，清掉历史选项
     if (!u.mailTypes.length) u.mailTypes = defaultMailTypes(u.role);
     if (u.mailScope === undefined) u.mailScope = u.role === "newbie" ? [u.id] : "all";
     if (u.role === "newbie") u.mailScope = [u.id];
@@ -456,12 +456,13 @@ function staffEmailsFor(newbieId, type) {
 
 /* ---------- 邮件中心配置（超管可在网站内维护，随账号数据一起持久化） ----------
    规则 = 一个人 + 邮箱 + 订阅内容 + 关注的新人范围。
-   · 订阅内容：daily 整体日报 / weekly 周报 / personal 个人汇总 / risk 风险预警 / login 登录提醒 / issue 问题提醒
+   · 订阅内容：daily 整体日报 / weekly 周报 / personal 个人汇总 / risk 风险预警 / issue 问题提醒
+     （登录不再发提醒，只用于「今天有没有动作」的统计）
    · 关注新人：all=全部；或 [新人id...]=只看这几位（日报、周报、个人汇总、风险预警都按此过滤）
    没有配置任何规则时，完全保持原有行为（发给 ALERT_TO + 已填邮箱的导师/主管），不影响已跑通流程。 */
 const MAIL_TYPES = [
   ["daily", "整体日报"], ["weekly", "周报"], ["personal", "个人汇总"],
-  ["risk", "风险预警"], ["login", "登录提醒"], ["issue", "问题 / 诉求提醒"],
+  ["risk", "风险预警"], ["issue", "问题 / 诉求提醒"],
 ];
 const MAIL_TYPE_NAME = MAIL_TYPES.reduce((o, x) => (o[x[0]] = x[1], o), {});
 /* 可汇总的周期内容：同一账号勾选的多项合并为 1 封邮件一次发完。
@@ -682,24 +683,16 @@ async function sendMailRaw(subject, inner, note, opts) {
   }
 }
 
-/* 新人登录：记录登录轨迹 + 立即邮件提醒导师/主管（同一人 30 分钟内不重复轰炸） */
+/* 新人登录：只记录登录轨迹，用于「今日是否有动作」的统计。
+   不发任何邮件 —— 培养不是监视，登录一次发一封只会变成噪音。 */
 function recordLogin(u) {
   const now = Date.now();
   MS.logins = ((MS.logins || []).concat([{ id: u.id, name: u.name, at: now }])).slice(-400);
-  const last = MS.lastLogin[u.id] || 0;
   MS.lastLogin[u.id] = now;
   /* 登录时间同时写入账号库（持久化到 Supabase / GitHub），免费实例重启后不会丢 */
   u.lastLoginAt = now;
   USERS.changed = true;
   saveMS(); saveUsers();
-  if (!MAIL_ON || now - last < 30 * 60000) return;
-  const d = bj(now);
-  const wk = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getUTCDay()];
-  sendMail(`【登录提醒】${u.name} 已登录工作台`,
-    `<p><b>${h(u.name)}</b>（新人）刚登录了工作台。</p>
-     <p>时间：${bjTime(now)} ${wk}</p>
-     <p style="color:#5C6772;font-size:13px">若长时间无进展，可主动在「协助」或「把控」里看一眼他的问题与待办。</p>`,
-    "登录提醒 · 自动发送", { to: [...new Set(staffEmailsFor(u.id, "login").concat(ruleEmails("login", u.id, { autoOnly: true })))] });
 }
 
 /* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
@@ -1554,7 +1547,7 @@ function renderDigest(parts) {
   const nav = parts.map(p => p.label).join(" · ");
   return `<div style="background:#EDF4FA;border:1px solid #CFE2F3;border-radius:8px;padding:9px 12px;font-size:12.5px;color:#1A5276">
       <b>本封汇总（1 封）</b>：${h(nav)}
-      <div style="color:#5C6772;font-size:11.8px;margin-top:2px">内容按角色固定并合并为一封；登录提醒 / 问题提醒为即时单发。</div>
+      <div style="color:#5C6772;font-size:11.8px;margin-top:2px">内容按角色固定并合并为一封；问题 / 诉求提醒为即时单发（登录不发提醒）。</div>
     </div>
     ${parts.map((p, i) => `<div style="${i ? "margin-top:22px;padding-top:16px;border-top:2px solid #E3E8EE;" : "margin-top:14px;"}">
       <div style="font-size:15px;font-weight:700;color:#0B3A63;margin-bottom:6px">${i + 1}. ${h(p.label)}</div>
