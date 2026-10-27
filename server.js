@@ -1002,12 +1002,19 @@ function riskOf(u, S, s, day) {
     const touch = Math.max(toMs(c.updatedAt), ...((c.actions || []).map(v => toMs(v.updatedAt))));
     return !touch || Math.floor((Date.now() - touch) / DAY_MS) >= 3;
   });
+  /* 客户阶段目标日已过但还有未闭环任务：和页面预警同一口径 */
+  const goalLate = S.carriers.filter(c => c.who === u.id).filter(c => {
+    const g = String(c.goalAt || "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(g) || g >= day) return false;
+    return (c.actions || []).filter(v => !v.del && taskOpen(v)).length > 0;
+  });
   const red = [], yellow = [];
   if (maxOver >= 3) red.push(`任务超期 ${maxOver} 天：${overdue[0].text}`);
   if (maxRev >= 3) red.push(`待验收已等 ${maxRev} 天：${reviews[0].text}`);
   if (idle >= 3) red.push(`连续 ${idle} 个工作日无任何动作`);
   if (slowIssues.length) red.push(`问题「${String(slowIssues[0].text || "").slice(0, 30)}」已等 ${waitDays(slowIssues[0].createdAt)} 天未答复`);
   if (carsLate.length) red.push(`客户「${carsLate[0].name}」跟进日已过 ${Math.abs(Math.round((new Date(carsLate[0].nextAt || carsLate[0].nextDate) - new Date(day)) / DAY_MS))} 天且无新进展`);
+  if (goalLate.length) red.push(`客户「${goalLate[0].name}」阶段目标日 ${String(goalLate[0].goalAt).slice(0, 10)} 已过，仍有未闭环任务`);
   const stale = open.filter(v => v.cfm !== 3 && waitDays(v.updatedAt) > 5);
   if (stale.length && maxOver < 3) yellow.push(`任务停滞 ${waitDays(stale[0].updatedAt)} 天：${stale[0].text}`);
   if (s.quizTotal > 0 && s.quizAcc != null && s.quizAcc < 70) yellow.push(`小测正确率 ${s.quizAcc}%（${s.quizCorrect}/${s.quizTotal}）`);
@@ -2355,9 +2362,10 @@ function nextPayload(u, withHist) {
 app.get("/api/next_steps", (req, res) => {
   if (!requireStaff(req, res)) return;
   const histId = String((req.query && req.query.hist) || "");
+  const all = histId === "all";
   const map = {};
   (USERS.users || []).filter(u => u.role === "newbie").forEach(u => {
-    map[u.id] = nextPayload(u, histId && histId === u.id);
+    map[u.id] = nextPayload(u, all || (histId && histId === u.id));
   });
   res.json({ ok: true, map });
 });
@@ -2374,6 +2382,20 @@ app.post("/api/next_steps", (req, res) => {
     u.mentorNextHist = h.slice(0, -1);
     u.mentorNext = String(last.text || "").slice(0, NEXT_MAX);
     u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  } else if (op === "restore" || op === "delhist") {
+    /* 针对某一历史版本单独操作：恢复指定版 / 删除指定版。
+       以前只能「撤销上一次」，想回到第 3 版或删掉某条错误记录做不到。 */
+    const h = nextHistOf(u).slice();
+    if (!h.length) return res.status(400).json({ ok: false, msg: "没有历史版本", map: nextPayload(u, true) });
+    const idx = Math.max(0, Math.min(h.length - 1, Math.floor(Number(b.index)) || 0));
+    const target = h[idx];
+    h.splice(idx, 1);
+    u.mentorNextHist = h;
+    if (op === "restore") {
+      archiveNext(u, me.id);        // 当前内容先压回历史，可再撤销
+      u.mentorNext = String(target.text || "").slice(0, NEXT_MAX);
+      u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+    }
   } else {
     const text = op === "clear" ? "" : String(b.text || "").trim().slice(0, NEXT_MAX);
     if (text === String(u.mentorNext || "").slice(0, NEXT_MAX)) {
@@ -2392,6 +2414,50 @@ app.get("/api/my_next_steps", (req, res) => {
   if (me.role !== "newbie" || !me.mentorNext) return res.json({ ok: true, text: "", byName: "", at: 0 });
   const by = findUser(me.mentorNextBy);
   res.json({ ok: true, text: me.mentorNext, byName: by ? by.name : "", at: me.mentorNextAt || 0 });
+});
+
+/* ---------- 风险汇总：页面 / 日报 / AI 共用同一套口径 ----------
+   以前「把控 → 里程碑与预警」是前端自己写死的 5 条规则，和日报、AI 判断用的
+   riskOf() 是两套口径 —— 于是日报里写着「客户跟进逾期」，页面上却看不到。
+   现在全部由这里输出，前端只负责展示，不再自己算一套。 */
+function customerRisks(u, S, day) {
+  const out = [];
+  S.carriers.filter(c => c.who === u.id).forEach(c => {
+    const acts = (c.actions || []).filter(v => !v.del);
+    const open = acts.filter(taskOpen);
+    const over = open.filter(v => taskOverDays(v, day) >= 1)
+      .sort((a, b) => taskOverDays(b, day) - taskOverDays(a, day));
+    const next = carNext(c);
+    const goalAt = String(c.goalAt || "").slice(0, 10);
+    const touch = Math.max(toMs(c.updatedAt), ...acts.map(v => toMs(v.updatedAt)));
+    const idle = waitDays(touch || c.createdAt);
+    const push = (lv, msg) => out.push({ car: c.name, lv, msg });
+    if (!acts.length) push("yellow", "只有客户档案，还没有任务 / 项目");
+    if (!next) push("yellow", "未设下次跟进日");
+    if (!goalAt) push("yellow", "未设阶段目标完成日");
+    if (over.length) push("red", `${over.length} 项任务超期，最长 ${taskOverDays(over[0], day)} 天：${String(over[0].text || "").slice(0, 30)}`);
+    const noDue = open.filter(v => !String(v.due || "").trim());
+    if (noDue.length) push("yellow", `${noDue.length} 项未闭环任务没有截止日`);
+    const stale = open.filter(v => v.cfm !== 3 && waitDays(v.updatedAt) >= 7);
+    if (stale.length && !over.length) push("yellow", `${stale.length} 项任务 7 天以上没更新`);
+    if (idle >= 7 && acts.length) push("yellow", `客户 ${idle} 天没有新进展`);
+  });
+  return out;
+}
+app.get("/api/risk", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const S = snapshot();
+  const day = bjKey(Date.now());
+  const people = {};
+  let red = 0, yellow = 0, green = 0;
+  (USERS.users || []).filter(u => u.role === "newbie" && u.active).forEach(u => {
+    const s = userStats(u, [day], S);
+    const r = riskOf(u, S, s, day);
+    if (r.level === "red") red++; else if (r.level === "yellow") yellow++; else green++;
+    people[u.id] = { name: u.name, level: r.level, red: r.red, yellow: r.yellow,
+      customers: customerRisks(u, S, day), idleDays: r.idle };
+  });
+  res.json({ ok: true, day, team: { total: red + yellow + green, red, yellow, green }, people });
 });
 
 /* ---------- 邮件基础配置 / 订阅查询（配置入口统一在「账号管理」） ---------- */
