@@ -362,7 +362,6 @@
       <div class="row" style="margin-top:12px;justify-content:center">
         <button class="btn gh sm hide" id="gWx">企业微信扫码登录</button>
         <button class="btn gh sm" id="gHint">登录 / 注册说明</button>
-        <button class="btn gh sm" id="gLocal">本地演示模式（无需服务器）</button>
       </div>
     </div>
 
@@ -391,16 +390,7 @@
     <div id="gMsg" class="muted" style="margin-top:16px"></div>
 
     <div id="gNoSrv" class="hide" style="margin-top:16px;text-align:left;background:var(--amber-l);border:1px solid #E8D3AE;border-radius:12px;padding:13px 15px;font-size:13px;color:var(--amber-d);line-height:1.75">
-      <b>未连接服务器</b>：当前页面是离线预览（或服务未启动），<b>登录 / 注册用不了</b>——这不是账号或密码的问题。<br>
-      只想先看流程 → 点下方「<b>本地演示模式</b>」；要正式使用 → 先启动服务再登录。
-    </div>
-
-    <div id="gLocalBox" class="hide" style="margin-top:16px;text-align:left">
-      <div class="form">
-        <label>本地演示模式（不连服务器、数据只存本机，用于预览）—— 选一个演示身份：</label>
-        <select id="gLocalWho"><option value="lead">主管</option><option value="mentor">导师</option><option value="zhan">詹祥雨</option><option value="tong">童伟桀</option></select>
-      </div>
-      <div class="btns" style="margin-top:12px"><button class="btn gh" id="gLocalGo">进入本地模式</button></div>
+      <b>未连接服务器</b>：登录 / 注册暂时用不了 —— 这不是账号或密码的问题。请先确认服务已启动、地址正确后刷新页面。
     </div>
   </div>
 </div>
@@ -585,7 +575,7 @@
   </div>
 
   <footer>
-    <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。本地演示模式下数据只存各自浏览器、不共享。</div>
+    <div><b>说明：</b>数据保存在服务器上（唯一数据源），四端实时同步；身份由账号 + 密码锁定。</div>
     <div style="margin-top:5px"><b>版本：</b>v7.4 · 2026.10.25　·　在线协作（账号/邀请链接/企业微信可选）· 规划/协助/帮扶/把控/复盘 五环节 + 学习打卡（学-测-用，答题实时落库）+ 客户档案与任务闭环 + 双维评分 + 互助支招 + 导师评价（可撤销/清空/历史）+ AI 判断层（全局优先级，只读不改数据）+ 账号管理（团队关系 / 业务线 / 邮件范围自动跟随）+ 登录不再发提醒（仅问题/诉求即时提醒）</div>
   </footer>
 </div>
@@ -603,7 +593,7 @@
    同步：改动本地合并 → 700ms 防抖提交服务器；SSE 收到变更 → 拉取并合并 → 自动刷新
    合并：按 id + updatedAt，软删除（tombstone），多端不互相覆盖
    =================================================================== */
-const LS_TOKEN="q5.token", LS_WHO="q5.who", LS_LOCAL="q5.doc";
+const LS_TOKEN="q5.token", LS_WHO="q5.who";
 
 /* 身份：账号由服务器管理（超级管理员建号 + 分配角色）；角色决定权限 */
 const ROLE_NAME={admin:"超级管理员",lead:"主管",mentor:"导师",newbie:"新人"};
@@ -715,19 +705,6 @@ function seedDoc(){const t=nowT();return {v:5,t,
    {id:uid(),name:"能力差距诊断问卷",note:"对照 FAE 找短板",link:"",updatedAt:t}]},
  cards:{t,list:[]}, quotes:{t,list:[]}, deposits:{t,list:[]}, reveals:{t,list:[]},
  triggers:{t,list:[]}, fae:{t,map:{}}, reviews:{t,map:{}}};}
-/* 本地演示模式下额外塞 2 条「示例问题」，让责任看板/必回清单一眼能看到效果（服务器数据不受影响） */
-function demoDoc(){const d=seedDoc(),tt=nowT(),H=3600000;
- d.issues={t:tt,list:[
-  {id:uid(),who:"tong",type:"issue",by:"tong",proj:"【示例】商场 P2.5 项目",cat:"硬件/显示",
-   text:"现场模组局部黑屏，重启接收卡后偶发复现。",status:1,chk:"已查排线与电源",blk:"怀疑接收卡供电纹波",need:"硬件同事",
-   createdAt:tt-3*H,updatedAt:tt-1*H,
-   replies:[{id:uid(),by:"mentor",text:"先量接收卡电源纹波、再看排线接触，点检表在工具包里。",at:tt-1*H}]},
-  {id:uid(),who:"zhan",type:"issue",by:"zhan",proj:"【示例】学校礼堂屏",cat:"软件/配置",
-   text:"亮度自动调节策略冲突，白天画面过曝。",status:0,
-   createdAt:tt-10*H,updatedAt:tt-10*H,replies:[]}
- ]};
- return d;}
-
 /* ---------- 状态 ---------- */
 let DOC=emptyDoc();
 let WHO="", MY_ROLE="", TOKEN="", ONLINE=false, MY_PWLESS=false;
@@ -773,10 +750,8 @@ async function apiPost(p,body){const r=await fetch(p,{method:"POST",headers:apiH
 function setSync(state,msg){const d=document.getElementById("syncDot"),t=document.getElementById("syncTxt");
  if(!d)return;d.className="dot"+(state==="warn"?" warn":state==="err"?" err":"");
  t.textContent=msg||(state==="ok"?"已同步 · "+fmt(nowT()):state==="err"?"离线（本地已存）":state);}
-function lsSave(){try{localStorage.setItem(LS_LOCAL,JSON.stringify(DOC));}catch(e){}}
-/* 本地改动：立刻写本机 localStorage（绝不丢），界面即时反馈「已保存」；
-   网络同步全部放到后台异步进行，不阻塞任何操作。 */
-function touch(){DOC.t=nowT();dirty=true;lsSave();setSync("warn","已保存 · 后台同步中…");schedulePush();}
+/* 本地改动：界面即时反馈「已保存」，网络同步放到后台异步进行，不阻塞任何操作。 */
+function touch(){DOC.t=nowT();dirty=true;setSync("warn","已保存 · 后台同步中…");schedulePush();}
 function schedulePush(){clearTimeout(pushTimer);pushTimer=setTimeout(push,450);}
 
 async function push(){
@@ -787,7 +762,7 @@ async function push(){
   const r=await apiPost("/api/save",{doc:DOC});
   if(r.data&&r.data.ok){
    const merged=mergeDoc(DOC,norm(r.data.doc));
-   if(JSON.stringify(merged)!==JSON.stringify(DOC)){DOC=merged;lsSave();render();}
+   if(JSON.stringify(merged)!==JSON.stringify(DOC)){DOC=merged;render();}
    setSync("ok");
   }else{dirty=true;setSync("err",(r.data&&r.data.msg)||"保存失败");}
  }catch(e){dirty=true;setSync("err","离线（本地已保存，联网后自动补传）");}
@@ -808,7 +783,7 @@ function applyRemote(remote,mode){
  const r=norm(remote);
  const merged=mode==="replace"?r:mergeDoc(DOC,r);
  const changed=JSON.stringify(merged)!==JSON.stringify(DOC);
- if(changed){DOC=merged;lsSave();render();}
+ if(changed){DOC=merged;render();}
 }
 /* SSE：任一端写入 → 服务器广播 → 其它端拉取并合并（不覆盖未提交的本地改动） */
 function connectSSE(){
@@ -825,18 +800,17 @@ function onRemoteSignal(){clearTimeout(pullTimer);pullTimer=setTimeout(()=>{if(!
 
 /* ---------- 身份 ---------- */
 function setGMsg(m){const e=document.getElementById("gMsg");if(e)e.innerHTML=m||"";}
-/* 未连上服务器时，直接在登录门说清楚，并把本地演示入口摆出来 */
+/* 未连上服务器时，直接在登录门说清楚 */
 function reflectGateServer(){
  const box=document.getElementById("gNoSrv");if(!box)return;
- if(SERVER_OK===false){box.classList.remove("hide");
-  const lb=document.getElementById("gLocalBox");if(lb)lb.classList.remove("hide");}
+ if(SERVER_OK===false){box.classList.remove("hide");}
  else box.classList.add("hide");
 }
 function showGate(msg){document.getElementById("gate").classList.remove("hide");document.getElementById("app").classList.add("hide");setGMsg(msg);}
 function showApp(){document.getElementById("gate").classList.add("hide");document.getElementById("app").classList.remove("hide");
  const rn=ROLE_NAME[MY_ROLE]||"";
  document.getElementById("idWho").textContent=(WHO_NAME[WHO]||"—")+(rn&&rn!==(WHO_NAME[WHO]||"")?" · "+rn:"");
- document.getElementById("idLock").textContent=ONLINE?"在线 · 身份已锁定":"本地演示模式";
+ document.getElementById("idLock").textContent=ONLINE?"在线 · 身份已锁定":"未登录";
  const lb=document.getElementById("linksBtn");lb.textContent=(ONLINE&&isAdmin())?"账号管理":"使用说明";lb.classList.remove("hide");
  render();}
 
@@ -850,7 +824,7 @@ async function doLogin(username,password){
   await enterSession(r.data.token,r.data.user);
  }catch(e){
   SERVER_OK=false;reflectGateServer();
-  setGMsg("服务器未连接，账号密码登录用不了（不是账号/密码的问题）。请用下方「本地演示模式」先预览，或先启动 server.js。");
+  setGMsg("服务器未连接，账号密码登录用不了（不是账号/密码的问题）。请先启动 server.js 或确认地址。");
   btns.forEach(b=>b.disabled=false);
  }
 }
@@ -868,7 +842,7 @@ async function doRegister(name,username,password,password2){
   await enterSession(r.data.token,r.data.user);
  }catch(e){
   SERVER_OK=false;reflectGateServer();
-  setGMsg("服务器未连接，注册用不了。可先用下方「本地演示模式」预览，或先启动 server.js。");
+  setGMsg("服务器未连接，注册用不了。请先启动 server.js 或确认地址。");
   btns.forEach(b=>b.disabled=false);
  }
 }
@@ -878,8 +852,8 @@ async function enterSession(tok,user){
  try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
  const [st,c]=await Promise.all([apiGet("/api/state"),apiGet("/api/config")]);
  if(c&&c.data&&c.data.users)applyAccounts(c.data.users);
- if(st.data&&st.data.ok&&st.data.doc){DOC=norm(st.data.doc);lsSave();}
- else{DOC=seedDoc();lsSave();await push();}
+ if(st.data&&st.data.ok&&st.data.doc){DOC=norm(st.data.doc);}
+ else{DOC=seedDoc();await push();}
  connectSSE();showApp();setSync("ok");
 }
 /* 邀请激活：本人点开链接 → 必须设置一个自己的密码（不再有免密码进入） */
@@ -919,18 +893,6 @@ async function doActivate(){
 }
 /* 企业微信扫码登录（服务器配置后启用） */
 function doWecom(){location.href="/api/wecom_login";}
-function localMode(who){
- ONLINE=false;TOKEN="";WHO=who||"lead";
- MY_ROLE=who==="lead"?"lead":who==="mentor"?"mentor":who==="admin"?"admin":"newbie";
- try{localStorage.removeItem(LS_TOKEN);}catch(e){}
- try{localStorage.setItem(LS_WHO,who);}catch(e){}
- try{const s=localStorage.getItem(LS_LOCAL);if(s)DOC=norm(JSON.parse(s));else{DOC=demoDoc();}}
- catch(e){DOC=demoDoc();}
- // 本地演示：无论缓存如何，都保证「责任看板/必回队列」有示例数据可看
- if(!((DOC.issues&&DOC.issues.list||[]).length)){const d=demoDoc();DOC.issues=d.issues;DOC.t=nowT();}
- lsSave();
- showApp();setSync("warn","本地演示模式 · 数据只存本机");
-}
 /* 退出登录：若有未同步的改动，先「后台补传」（不等待结果，既不丢数据也不拖慢退出）；
    随后就地清空状态、切回登录页 —— 不再整页 reload，退出瞬间完成。 */
 function resetGate(){
@@ -938,7 +900,6 @@ function resetGate(){
  const rp=document.getElementById("gRegPane");if(rp)rp.classList.add("hide");
  const iv=document.getElementById("gInvitePane");if(iv)iv.classList.add("hide");
  const hb=document.getElementById("gHintBox");if(hb)hb.classList.add("hide");
- const lb=document.getElementById("gLocalBox");if(lb)lb.classList.add("hide");
  const ns=document.getElementById("gNoSrv");if(ns)ns.classList.add("hide");
  const tl=document.getElementById("gTabLogin"),tr=document.getElementById("gTabReg");
  if(tl)tl.classList.add("on");if(tr)tr.classList.remove("on");
@@ -3565,9 +3526,6 @@ function bindStatic(){
    "· <b>每人一个账号、一份密码</b>，登录后只能进入自己的身份，无法冒用他人；<br>"+
    "· 忘记密码：联系超级管理员重置。超级管理员的初始账号见部署说明，首次登录后请立即改密。";
  };
- document.getElementById("gLocal").onclick=()=>{const b=document.getElementById("gLocalBox");b.classList.toggle("hide");
-  if(!b.classList.contains("hide"))document.getElementById("gHintBox").classList.add("hide");};
- document.getElementById("gLocalGo").onclick=()=>localMode(document.getElementById("gLocalWho").value);
  document.getElementById("ovl").onclick=e=>{if(e.target.id==="ovl")closeOvl();};
 }
 /* 用已有令牌建立会话（企业微信回调 ?token= / 本机缓存令牌）：并行拉取，进入更快 */
@@ -3582,7 +3540,7 @@ async function enterByToken(t){
  if(c.data&&c.data.users)applyAccounts(c.data.users);
  try{localStorage.setItem(LS_TOKEN,TOKEN);localStorage.setItem(LS_WHO,WHO);}catch(e){}
  try{history.replaceState(null,"",location.pathname);}catch(e){}
- if(st.data.doc){DOC=norm(st.data.doc);lsSave();}else{DOC=seedDoc();lsSave();await push();}
+ if(st.data.doc){DOC=norm(st.data.doc);}else{DOC=seedDoc();await push();}
  connectSSE();showApp();setSync("ok");
 }
 /* 登录前取一次配置：启用企业微信时显示扫码入口 + 预载账号姓名 */
