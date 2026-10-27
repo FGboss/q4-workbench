@@ -1078,7 +1078,7 @@ function buildNewbieDaily(u, day, S0) {
   const open = allTasks.filter(taskOpen);
   const returned = open.filter(v => v.cfm === 2);
   const blocked = open.filter(v => v.blocked);
-  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const mlines = latestEvalText(u, "daily").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
   const steps = nextStepsFor(u, S, s, dayKey);
   const stepTitle = "我的下一步（按优先级）";
 
@@ -1162,7 +1162,7 @@ function buildDailyReport(day, opts) {
     const open = allTasks.filter(taskOpen);
     const blocked = open.filter(v => v.blocked);
     const returned = open.filter(v => v.cfm === 2);
-    const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+    const mlines = latestEvalText(u, "daily").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
     /* 今日一句话：与新人日报同口径 */
     const bits = [];
     if (closed.length) bits.push(`闭环 ${closed.length} 项（${closed.map(v => v.text).slice(0, 2).join("、")}）`);
@@ -1397,7 +1397,7 @@ function buildNewbieWeekly(u, day, S0) {
   const prevDone = acts.filter(v => (v.st || 0) === 2 && prevDays.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
   const returned = acts.filter(v => taskOpen(v) && v.cfm === 2);
   const blocked = acts.filter(v => taskOpen(v) && v.blocked);
-  const mlines = String(u.mentorNext || "").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const mlines = latestEvalText(u, "weekly").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
   const steps = nextStepsFor(u, S, s, range.end);
   const stepTitle = "下周 3 件事（系统建议）";
 
@@ -2341,32 +2341,38 @@ app.post("/api/mail_report", async (req, res) => {
   res.status(r.ok ? 200 : 400).json(r);
 });
 
-/* ---------- 导师给新人的「下一步」：系统建议 + 导师可覆盖 ---------- */
-/* 导师给新人的下一步（评价）：支持保存 / 撤销 / 清空 / 查看历史。
-   历史最多留 10 版，便于误改后恢复；正文上限 600 字。 */
-const NEXT_MAX = 600, NEXT_HIST_MAX = 10;
-function nextHistOf(u) { return Array.isArray(u.mentorNextHist) ? u.mentorNextHist : []; }
-function archiveNext(u, by) {
-  const prev = String(u.mentorNext || "").trim();
-  if (!prev) return;
-  const h = nextHistOf(u).slice();
-  h.push({ text: prev, by: u.mentorNextBy || by || "", at: u.mentorNextAt || Date.now() });
-  u.mentorNextHist = h.slice(-NEXT_HIST_MAX);
+/* ---------- 导师评价：日评价 / 周评价两条线 ----------
+   · 日评价 → 下一封日报用；周评价 → 下一封周报用；
+   · 每条独立留痕，可单独编辑 / 删除，不再用「覆盖 + 历史版本」那套；
+   · 旧版单条 mentorNext 作为兼容兜底（没有对应类型的新评价时继续用它，
+     不需要数据迁移，也不会把老数据丢掉）。 */
+const NEXT_MAX = 600, NEXT_KEEP = 40;
+function evalsOf(u) {
+  if (Array.isArray(u.mentorEvals)) return u.mentorEvals;
+  if (String(u.mentorNext || "").trim()) {
+    return [{ id: "legacy", kind: "daily", text: u.mentorNext, by: u.mentorNextBy || "", at: u.mentorNextAt || 0, legacy: true }];
+  }
+  return [];
 }
-function nextPayload(u, withHist) {
-  const o = { text: u.mentorNext || "", by: u.mentorNextBy || "", at: u.mentorNextAt || 0,
-    histN: nextHistOf(u).length };
-  if (withHist) o.hist = nextHistOf(u);
-  return o;
+function latestEval(u, kind) {
+  const list = evalsOf(u).filter(e => !kind || e.kind === kind);
+  if (!list.length) return null;
+  return list.slice().sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+}
+function latestEvalText(u, kind) {
+  const e = (kind && latestEval(u, kind)) || latestEval(u, "");
+  return e ? String(e.text || "") : "";
+}
+function evalPayload(u) {
+  return evalsOf(u).slice().sort((a, b) => (b.at || 0) - (a.at || 0)).map(e => ({
+    id: e.id || "", kind: e.kind === "weekly" ? "weekly" : "daily",
+    text: e.text || "", by: e.by || "", at: e.at || 0, legacy: !!e.legacy,
+  }));
 }
 app.get("/api/next_steps", (req, res) => {
   if (!requireStaff(req, res)) return;
-  const histId = String((req.query && req.query.hist) || "");
-  const all = histId === "all";
   const map = {};
-  (USERS.users || []).filter(u => u.role === "newbie").forEach(u => {
-    map[u.id] = nextPayload(u, all || (histId && histId === u.id));
-  });
+  (USERS.users || []).filter(u => u.role === "newbie").forEach(u => { map[u.id] = { evals: evalPayload(u) }; });
   res.json({ ok: true, map });
 });
 app.post("/api/next_steps", (req, res) => {
@@ -2374,46 +2380,41 @@ app.post("/api/next_steps", (req, res) => {
   const b = req.body || {};
   const u = findUser(String(b.id || ""));
   if (!u || u.role !== "newbie") return res.status(404).json({ ok: false, msg: "新人账号不存在" });
-  const op = String(b.op || "save");
-  if (op === "undo") {
-    const h = nextHistOf(u);
-    if (!h.length) return res.status(400).json({ ok: false, msg: "没有可撤销的记录", map: nextPayload(u, true) });
-    const last = h[h.length - 1];
-    u.mentorNextHist = h.slice(0, -1);
-    u.mentorNext = String(last.text || "").slice(0, NEXT_MAX);
-    u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
-  } else if (op === "restore" || op === "delhist") {
-    /* 针对某一历史版本单独操作：恢复指定版 / 删除指定版。
-       以前只能「撤销上一次」，想回到第 3 版或删掉某条错误记录做不到。 */
-    const h = nextHistOf(u).slice();
-    if (!h.length) return res.status(400).json({ ok: false, msg: "没有历史版本", map: nextPayload(u, true) });
-    const idx = Math.max(0, Math.min(h.length - 1, Math.floor(Number(b.index)) || 0));
-    const target = h[idx];
-    h.splice(idx, 1);
-    u.mentorNextHist = h;
-    if (op === "restore") {
-      archiveNext(u, me.id);        // 当前内容先压回历史，可再撤销
-      u.mentorNext = String(target.text || "").slice(0, NEXT_MAX);
-      u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+  const op = String(b.op || "add");
+  const list = Array.isArray(u.mentorEvals) ? u.mentorEvals.slice() : [];
+  const text = String(b.text || "").trim().slice(0, NEXT_MAX);
+  if (op === "add") {
+    if (!text) return res.status(400).json({ ok: false, msg: "评价内容不能为空" });
+    list.push({ id: uid(), kind: b.kind === "weekly" ? "weekly" : "daily", text, by: me.id, at: Date.now() });
+    u.mentorEvals = list.slice(-NEXT_KEEP);
+  } else if (op === "update") {
+    if (!text) return res.status(400).json({ ok: false, msg: "评价内容不能为空" });
+    const eid = String(b.evalId || "");
+    if (eid === "legacy") { u.mentorNext = text; u.mentorNextBy = me.id; u.mentorNextAt = Date.now(); }
+    else {
+      const e = list.find(x => x.id === eid);
+      if (!e) return res.status(404).json({ ok: false, msg: "评价不存在" });
+      e.text = text; e.by = me.id; e.at = Date.now();
+      u.mentorEvals = list;
     }
+  } else if (op === "del") {
+    const eid = String(b.evalId || "");
+    if (eid === "legacy") { u.mentorNext = ""; u.mentorNextBy = ""; u.mentorNextAt = 0; }
+    else u.mentorEvals = list.filter(x => x.id !== eid);
   } else {
-    const text = op === "clear" ? "" : String(b.text || "").trim().slice(0, NEXT_MAX);
-    if (text === String(u.mentorNext || "").slice(0, NEXT_MAX)) {
-      return res.json({ ok: true, unchanged: true, map: nextPayload(u, true) });
-    }
-    archiveNext(u, me.id);
-    u.mentorNext = text; u.mentorNextBy = me.id; u.mentorNextAt = Date.now();
+    return res.status(400).json({ ok: false, msg: "不支持的操作" });
   }
   USERS.changed = true; saveUsers();
-  res.json({ ok: true, map: nextPayload(u, true) });
+  res.json({ ok: true, evals: evalPayload(u) });
 });
-/* 本人读取：新人也能在自己首页看到导师给的要求（不必等邮件） */
+/* 本人读取：新人也能在自己首页看到最新的导师评价（不必等邮件） */
 app.get("/api/my_next_steps", (req, res) => {
   const me = tokenFromReq(req);
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
-  if (me.role !== "newbie" || !me.mentorNext) return res.json({ ok: true, text: "", byName: "", at: 0 });
-  const by = findUser(me.mentorNextBy);
-  res.json({ ok: true, text: me.mentorNext, byName: by ? by.name : "", at: me.mentorNextAt || 0 });
+  const e = me.role === "newbie" ? latestEval(me, "") : null;
+  if (!e) return res.json({ ok: true, text: "", byName: "", at: 0, kind: "" });
+  const by = findUser(e.by);
+  res.json({ ok: true, text: e.text, byName: by ? by.name : "", at: e.at || 0, kind: e.kind || "" });
 });
 
 /* ---------- 风险汇总：页面 / 日报 / AI 共用同一套口径 ----------
