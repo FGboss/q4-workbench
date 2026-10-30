@@ -2638,6 +2638,176 @@ app.get("/api/events", (req, res) => {
   req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
 });
 
+/* ---------- 题库修订层 ----------
+   题面 / 选项 / 答案的修订不改原 public/bank.js，而是加载时叠加一份 bank.fix.json。
+   这样：① 原文件保持 IMA 生成物的原样，方便追溯；② 修订有版本、有出处；
+        ③ 前端拿到的是修订后的题库，新作答按新答案判分；
+        ④ 历史作答不改记录，由前端按「旧答案或新答案命中都算对」重算（只升不降）。 */
+const BANK_FIX_FILE = path.join(__dirname, "bank.fix.json");
+const BANK_SRC_FILE = path.join(__dirname, "public", "bank.js");
+let BANK_FIX = { version: 0, fixes: [] };
+try {
+  const raw = fs.readFileSync(BANK_FIX_FILE, "utf8");
+  const o = JSON.parse(raw);
+  if (o && Array.isArray(o.fixes)) BANK_FIX = o;
+} catch (e) { if (e.code !== "ENOENT") console.error("[bank.fix]", e.message); }
+
+function patchedBankSource() {
+  let src = "";
+  try { src = fs.readFileSync(BANK_SRC_FILE, "utf8"); } catch (e) { return ""; }
+  const sandbox = { window: {} };
+  try { require("vm").runInNewContext(src, sandbox, { timeout: 3000 }); } catch (e) { return ""; }
+  const bank = sandbox.window && sandbox.window.BANK;
+  if (!bank) return "";
+  BANK_DATA = bank;
+  const byId = {};
+  (bank.levels || []).forEach(L => (L.nodes || []).forEach(n => { byId[n.id] = n; }));
+  (BANK_FIX.fixes || []).forEach(f => {
+    const n = byId[f.nodeId];
+    if (!n) return;
+    if (Array.isArray(f.pt)) n.pt = f.pt;
+    if (typeof f.qi === "number" && Array.isArray(n.qz) && n.qz[f.qi]) {
+      const q = n.qz[f.qi];
+      if (f.q) q.q = f.q;
+      if (Array.isArray(f.o)) q.o = f.o;
+      if (typeof f.a === "number") q.a = f.a;
+      if (f.w) q.w = f.w;
+      /* oa = 修订前的答案下标，前端据此保证历史作答「只升不降」 */
+      if (typeof f.oldA === "number") q.oa = f.oldA;
+    }
+  });
+  return "window.BANK = " + JSON.stringify(bank) + ";\n";
+}
+let BANK_DATA = null;
+const BANK_PATCHED = patchedBankSource();
+if (BANK_PATCHED) {
+  app.get("/bank.js", (req, res) => {
+    res.type("application/javascript").send(BANK_PATCHED);
+  });
+}
+
+/* ---------- 错题复练（变式题） ----------
+   原则：
+   · 只读历史作答，绝不改写 DOC.quiz，复练成绩单独记在 DOC.retests；
+   · 变式题默认 pending，导师/主管审核通过后才进复练卷；
+   · 组卷接口只下发题干和选项，答案留在服务端判，避免再次泄露答案。 */
+const VARIANT_FILE = path.join(__dirname, "bank.variants.json");
+let VARIANTS = [];
+try {
+  const o = JSON.parse(fs.readFileSync(VARIANT_FILE, "utf8"));
+  if (o && Array.isArray(o.variants)) VARIANTS = o.variants;
+} catch (e) { if (e.code !== "ENOENT") console.error("[variants]", e.message); }
+
+function bankNode(id) {
+  if (!BANK_DATA) return null;
+  for (const L of BANK_DATA.levels || []) for (const n of L.nodes || []) if (n.id === id) return n;
+  return null;
+}
+function effVariant(id) {
+  const v = VARIANTS.filter(x => x.id === id)[0];
+  if (!v) return null;
+  const st = (DOC && DOC.varState && DOC.varState[id]) || {};
+  return Object.assign({}, v, st);
+}
+function approvedVariants(key) {
+  return VARIANTS.filter(v => v.key === key).map(v => effVariant(v.id)).filter(v => v && v.status === "approved");
+}
+function wrongBook(who) {
+  const out = {};
+  const list = (DOC && DOC.quiz && DOC.quiz.list) || [];
+  list.filter(x => !x.del && x.who === who && x.status === "done").forEach(a => {
+    const nd = bankNode(a.nodeId);
+    if (!nd || !Array.isArray(a.answers)) return;
+    nd.qz.forEach((q, i) => {
+      const v = a.answers[i];
+      if (v == null || v < 0) return;
+      if (v === q.a || (q.oa != null && v === q.oa)) return;
+      const k = a.nodeId + "." + i;
+      const o = out[k] || (out[k] = { key: k, nodeId: a.nodeId, qi: i, wrong: 0, last: 0 });
+      o.wrong++; o.last = Math.max(o.last, a.finishedAt || a.updatedAt || 0);
+    });
+  });
+  return out;
+}
+function retestPasses(who) {
+  const out = {};
+  ((DOC && DOC.retests && DOC.retests.list) || []).forEach(r => {
+    if (r.who !== who) return;
+    (r.items || []).forEach(it => { if (it.ok) out[it.key] = (out[it.key] || 0) + 1; });
+  });
+  return out;
+}
+function persistDoc() {
+  ensureDir(); writeJson(STATE_FILE, DOC);
+  broadcast(); docWriter.kick();
+}
+const isStaffRole = me => !!me && ["admin", "lead", "mentor"].includes(me.role);
+
+app.get("/api/variants", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!isStaffRole(me)) return res.status(403).json({ ok: false, msg: "仅导师/主管可操作" });
+  res.json({ ok: true, list: VARIANTS.map(v => effVariant(v.id)) });
+});
+app.post("/api/variants/review", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!isStaffRole(me)) return res.status(403).json({ ok: false, msg: "仅导师/主管可操作" });
+  const b = req.body || {}, id = String(b.id || ""), action = String(b.action || "");
+  if (!VARIANTS.some(v => v.id === id)) return res.status(404).json({ ok: false, msg: "变式题不存在" });
+  if (!["approve", "reject", "reset"].includes(action)) return res.status(400).json({ ok: false, msg: "不支持的操作" });
+  DOC.varState = DOC.varState || {};
+  if (action === "reset") delete DOC.varState[id];
+  else DOC.varState[id] = { status: action === "approve" ? "approved" : "rejected", by: me.id, at: Date.now() };
+  persistDoc();
+  res.json({ ok: true, list: VARIANTS.map(v => effVariant(v.id)) });
+});
+app.get("/api/retest", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录" });
+  let who = String((req.query && req.query.who) || "");
+  if (!who) who = me.id;
+  else if (who !== me.id && !isStaffRole(me)) return res.status(403).json({ ok: false, msg: "无权查看" });
+  const book = wrongBook(who), passes = retestPasses(who);
+  const items = [];
+  Object.values(book).sort((a, b) => b.wrong - a.wrong || b.last - a.last).forEach(o => {
+    if ((passes[o.key] || 0) >= 2) return;
+    const vs = approvedVariants(o.key);
+    if (!vs.length) return;
+    const v = vs[0], nd = bankNode(o.nodeId);
+    items.push({ key: o.key, vid: v.id, nodeId: o.nodeId, nodeTitle: nd ? nd.t : "", qi: o.qi,
+      q: v.q, o: v.o, wrong: o.wrong });
+  });
+  res.json({ ok: true, who, wrongKinds: Object.keys(book).length,
+    passedKinds: Object.keys(passes).filter(k => passes[k] >= 2).length,
+    pendingVariants: VARIANTS.filter(v => effVariant(v.id).status === "pending").length,
+    total: items.length, items: items.slice(0, 5) });
+});
+app.post("/api/retest/submit", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录" });
+  const b = req.body || {};
+  let who = me.id;
+  if (b.who && String(b.who) !== me.id) {
+    if (!isStaffRole(me)) return res.status(403).json({ ok: false, msg: "无权操作" });
+    who = String(b.who);
+  }
+  const answers = Array.isArray(b.answers) ? b.answers : [];
+  if (!answers.length) return res.status(400).json({ ok: false, msg: "没有作答" });
+  const detail = []; let correct = 0;
+  answers.forEach(x => {
+    const v = effVariant(String(x.vid || ""));
+    if (!v || v.status !== "approved") return;
+    const ok = Number(x.oi) === v.a;
+    if (ok) correct++;
+    detail.push({ key: v.key, vid: v.id, oi: Number(x.oi), ok, a: v.a, w: v.w });
+  });
+  if (!detail.length) return res.status(400).json({ ok: false, msg: "复练题状态异常" });
+  DOC.retests = DOC.retests || { t: 0, list: [] };
+  DOC.retests.list.push({ id: uid(), who, at: Date.now(), items: detail, total: detail.length, correct });
+  DOC.retests.t = Date.now();
+  persistDoc();
+  res.json({ ok: true, result: { correct, total: detail.length }, detail });
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 /* 未匹配的 /api/* 一律 404（不进入 SPA 兜底），避免已下线的接口被静态页"顶包" */
 app.use("/api", (req, res) => res.status(404).json({ ok: false, msg: "接口不存在" }));

@@ -285,10 +285,15 @@
   .lrow:first-child{border-top:none}
   .lrow .lt{flex:1;min-width:0;word-break:break-word}
   .lrow .lm{flex:none;color:var(--ink3);font-size:11.8px;white-space:nowrap}
-  /* 客户档案折叠 */
-  .carToggle{display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;
-    text-align:left;flex:1;min-width:0;cursor:pointer;font-family:inherit}
-  .carToggle .arw{font-size:11px;color:var(--ink3);flex:none}
+  /* 客户档案折叠：整个标题区可点，右侧带明确的「展开 / 收起」按钮 */
+  .carToggle{display:flex;align-items:center;gap:9px;background:none;border:none;padding:5px 8px;
+    margin:-5px -8px;border-radius:9px;text-align:left;flex:1;min-width:0;cursor:pointer;font-family:inherit}
+  .carToggle:hover{background:var(--blue-l)}
+  .carToggle .arw{width:22px;height:22px;line-height:20px;text-align:center;flex:none;
+    border:1px solid var(--line);border-radius:7px;background:#fff;font-size:12px;color:var(--ink2)}
+  .carToggle .ctBtn{flex:none;border:1px solid var(--line);background:#fff;border-radius:7px;
+    padding:2px 9px;font-size:11.8px;color:var(--ink3)}
+  .carToggle:hover .ctBtn{border-color:var(--blue-m);color:var(--blue-d)}
   /* 里程碑矩阵 */
   .mtx{width:100%;border-collapse:collapse;font-size:12.7px}
   .mtx th,.mtx td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:center}
@@ -491,6 +496,7 @@
     <section>
       <h2>产品地图打卡 · 学—测—用 <span class="h">按 IMA 知识库出题：学 1 个节点 → 5 题随堂小测（系统自动判卷）→ 写 ≤50 字笔记 + 1 个场景联想；自由节奏，按期完成整级（青铜 24 / 白银 18 / 黄金 12）</span></h2>
       <div id="ciDemo"></div>
+      <div class="card pad" style="margin-top:12px"><div id="retestBox"></div></div>
       <div class="card pad" style="margin-top:12px"><div class="grid2" id="ciBlk"></div></div>
       <div class="card pad" style="margin-top:12px"><div id="ciForm"></div></div>
     </section>
@@ -542,6 +548,9 @@
     <section>
       <h2>每人进度 <span class="h">客户档案 / 任务闭环 / 问题 / 演练 / 产品地图</span></h2>
       <div class="grid2" id="mPeople"></div>
+    </section>
+    <section id="varReviewSec">
+      <div class="card pad"><div id="varReview"></div></div>
     </section>
     <section>
       <h2>能力雷达 <span class="h">8 维度 · 全部按平台真实数据自动计算（客户维护 / 任务闭环 / 产品掌握 / 问题闭环 / 资料沉淀 / 演练表达 / 月度复判 / 技术评级）；FAE 打勾只作为「复盘」里的岗位标准证据，不再直接决定雷达</span></h2>
@@ -908,7 +917,7 @@ function resetGate(){
  document.querySelectorAll("#gLoginPane .btn,#gRegPane .btn").forEach(b=>b.disabled=false);
  setGMsg("");
 }
-const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","helpBoard","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mailBox","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl","brainBar","brainBox"];
+const CLEAR_IDS=["passport","planGoal","planRail","planPeople","carrierTop","carrierBlk","quickBox","helpBoard","issueFilter","issueCount","issueList","drillBlk","drillHist","kitList","kitForm","knoBody","trigList","trigForm","mStats","dutyAgg","dutyBlk","mailBox","mPeople","mRadar","mMiles","rvTabs","rvList","faeBar","faeList","finalTbl","brainBar","brainBox","retestBox","varReview"];
 function logout(){
  if(!confirm("退出并回到登录页？（服务器数据不受影响）"))return;
  if(dirty&&ONLINE&&TOKEN){try{push();}catch(e){}}   // 后台补传最后一笔改动，不等待
@@ -1350,7 +1359,7 @@ function renderPassport(){
  const best=myDrills.some(x=>x.score==="优秀");
  const closedT=(DOC.carriers.list||[]).filter(x=>!x.del&&x.who===who)
   .reduce((n,x)=>n+(x.actions||[]).filter(v=>!v.del&&(v.st||0)===2).length,0);
- const perfect=ciList(who).some(x=>x.total&&x.correct===x.total);
+ const perfect=ciList(who).some(x=>{const g=gradeRec(x);return g.total&&g.correct===g.total;});
  const badges=[
   {ic:"🚀",n:"启航",on:st.streak>=7,note:"连续 7 天打卡"},
   {ic:"🥉",n:"青铜领航",on:(st.lv.bronze||0)>=24,note:"完成青铜整级 24 节点"},
@@ -1517,7 +1526,7 @@ function renderCarriers(){
    const iss=carIssues(x);
    return `<div class="carHead">
     <div class="taskTop">
-      <button class="carToggle" data-ctog="${x.id}"><span class="arw">${open?"▾":"▸"}</span><span class="carName">${esc(x.name)}</span></button>
+      <button class="carToggle" data-ctog="${x.id}" title="${open?"收起任务与表单":"展开任务与表单"}"><span class="arw">${open?"▾":"▸"}</span><span class="carName">${esc(x.name)}</span><span class="ctBtn">${open?"收起":"展开"}</span></button>
       <span class="taskTags">${iss.slice(0,2).map(t=>`<span class="tag ${/超期|已过/.test(t)?"no":"wt"}">${esc(t)}</span>`).join("")}
       <span class="tag ${h.open?"gy":"ok"}">闭环 ${h.done}/${h.done+h.open}</span>
       ${canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:""}</span>
@@ -1625,7 +1634,7 @@ function renderCarriers(){
    :`<div class="muted" style="margin-top:8px">${a.length?"筛选后没有匹配的客户档案":"还没有客户档案 —— 分到客户/项目后先建一份档案，再往下加任务"}</div>`;
   const openN=a.reduce((n,x)=>n+carHealth(x).open,0);
   return `<div class="carBlock">
-    <h3><button class="carToggle" data-ptog="${id}"><span class="arw">${pOpen?"▾":"▸"}</span><span>${esc(WHO_NAME[id])}</span></button>
+    <h3><button class="carToggle" data-ptog="${id}" title="${pOpen?"收起这位新人的全部客户":"展开这位新人的全部客户"}"><span class="arw">${pOpen?"▾":"▸"}</span><span>${esc(WHO_NAME[id])}</span><span class="ctBtn">${pOpen?"收起":"展开"}</span></button>
       <span class="tag gy">${a.length} 个客户 · ${openN} 项未闭环</span>
       ${carFilterOn()?`<span class="tag wt">筛选后 ${shown.length} 个</span>`:""}</h3>
     ${pOpen?`<div style="margin-top:6px">${rows}</div>
@@ -2165,12 +2174,30 @@ function qzFirstDone(who,nid){const l=qzAttempts(who,nid).filter(x=>x.status==="
  return l.length?l.reduce((a,x)=>{const ta=x.finishedAt||x.updatedAt||x.createdAt||0,pa=a.finishedAt||a.updatedAt||a.createdAt||0;return ta<pa?x:a;}):null;}
 function qzOpenAttempt(who,nid){return qzAttempts(who,nid).filter(x=>x.status==="doing")[0]||null;}
 function qzAttemptById(id){return qzList().filter(x=>x.id===id)[0]||null;}
+/* 题库修订后的历史评分：题目答案被修订时，旧答案或新答案命中都算对（只升不降）。
+   不改动任何作答记录，只在读取时重算，避免「改题库把新人成绩清零」。 */
+function gradeRec(x){
+ if(!x||!Array.isArray(x.answers)||!(+x.total>0)||!x.nodeId)return x;
+ const nd=NODE_BY_ID[x.nodeId];
+ if(!nd||!Array.isArray(nd.qz)||!nd.qz.length)return x;
+ const ans=qzPad(x.answers,nd.qz.length);
+ if(ans.some(v=>v<0))return x;                 // 没答完的不改
+ let correct=0;const wrong=[];
+ nd.qz.forEach((q,i)=>{
+  const v=ans[i];
+  const ok=v===q.a||(q.oa!=null&&v===q.oa);
+  if(ok)correct++;else wrong.push(q.q);
+ });
+ if(correct===x.correct&&wrong.length===(x.wrong||[]).length)return x;
+ return Object.assign({},x,{correct,wrong,total:nd.qz.length});
+}
 /* 每节点首次交卷成绩（官方口径）；旧版打卡记录里的小测成绩作为兼容兜底 */
 function qzFirstPerNode(who){
  const out={};
  const put=(x)=>{if(!x||!x.nodeId||!(+x.total>0))return;
-  const p=out[x.nodeId];const tx=x.finishedAt||x.updatedAt||x.createdAt||0,tp=p?(p.finishedAt||p.updatedAt||p.createdAt||0):0;
-  if(!p||tx<tp)out[x.nodeId]=x;};
+  const g=gradeRec(x);
+  const p=out[x.nodeId];const tx=g.finishedAt||g.updatedAt||g.createdAt||0,tp=p?(p.finishedAt||p.updatedAt||p.createdAt||0):0;
+  if(!p||tx<tp)out[x.nodeId]=g;};
  qzList(who).filter(x=>x.status==="done").forEach(put);
  ciList(who).filter(x=>(+x.total)>0).forEach(put);
  return out;
@@ -2337,6 +2364,7 @@ function renderCheckins(ids){
    自由节奏、按期完成整级即可；连续天数与整级解锁徽章自动统计，同时实时同步到「④ 把控」看板与导师端。</div>`;
 
  document.getElementById("ciForm").innerHTML=html;
+ rtCard();
  document.querySelectorAll("[data-cilv]").forEach(b=>b.onclick=()=>{CI_LV=b.dataset.cilv;renderCheckins(ids);});
  document.querySelectorAll("[data-cinode]").forEach(b=>b.onclick=()=>openCiNode(b.dataset.cinode));
 }
@@ -3014,6 +3042,7 @@ function renderMonitor(){
   document.querySelectorAll("[data-mcell]").forEach(b=>b.onclick=()=>{
    const [id,mi]=b.dataset.mcell.split(".");MILE_CELL={id,mi:+mi};render();});
   loadRisk();
+  renderVarReview();
  }
  renderMailBox();
 }
@@ -3241,6 +3270,96 @@ function dutyLv(ms){return ms<=TWO_H?1:ms<=EIGHT_H?2:3;}
 function fmtDur(ms){if(!ms||ms<0)return"0 分钟";const m=ms/60000;if(m<60)return Math.max(1,Math.round(m))+" 分钟";
  const h=ms/3600000;if(h<24)return (Math.round(h*10)/10)+" 小时";return (Math.round(h/24*10)/10)+" 天";}
 function dutyCard(v,k,tone){return `<div class="duty ${tone||""}"><div class="dnum">${esc(String(v))}</div><div class="dlab">${esc(k)}</div></div>`;}
+
+/* ---------- 错题复练（变式题，服务端判卷） ---------- */
+let RT={key:"",open:false,items:[],ans:{}};
+function rtCard(){
+ const box=document.getElementById("retestBox");
+ if(!box)return;
+ if(isStaff()){rtStaff(box);return;}
+ if(MY_ROLE!=="newbie"){box.innerHTML="";return;}
+ box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline">
+   <b>错题复练</b><span class="muted" id="rtMeta">读取中…</span></div><div id="rtBody"></div>`;
+ apiGet(`/api/retest?who=${encodeURIComponent(WHO)}`).then(r=>{
+  const d=(r&&r.data)||{};
+  const meta=document.getElementById("rtMeta");
+  if(meta)meta.textContent=`错题 ${d.wrongKinds||0} 类 · 待复练 ${d.total||0} 道 · 已订正 ${d.passedKinds||0} 类`;
+  const body=document.getElementById("rtBody");if(!body)return;
+  if(!d.items||!d.items.length){
+   body.innerHTML=`<div class="muted" style="margin-top:6px">${d.pendingVariants?`有 ${d.pendingVariants} 道变式题待导师审核，通过后会自动出现在这里。`:"暂时没有待复练的题。"}</div>`;
+   return;
+  }
+  if(!RT.open||RT.key!==WHO){
+   RT={key:WHO,open:false,items:d.items,ans:{}};
+   body.innerHTML=`<button class="btn sm" id="rtStart" style="margin-top:8px">开始复练（${d.items.length} 道）</button>
+     <span class="muted" style="margin-left:8px">同知识点变式题；答对 2 次即移出错题本</span>`;
+   const b=document.getElementById("rtStart");if(b)b.onclick=()=>{RT.open=true;rtPaint();};
+   return;
+  }
+  rtPaint();
+ }).catch(()=>{});
+}
+function rtPaint(){
+ const body=document.getElementById("rtBody");if(!body)return;
+ body.innerHTML=RT.items.map((it,i)=>`<div class="item" style="margin-top:9px">
+   <div class="hd"><span class="tt">${i+1}. ${esc(it.q)}</span><span class="tag gy">${esc(it.nodeTitle||"")}</span></div>
+   <div style="margin-top:6px">${(it.o||[]).map((o,oi)=>`<label style="display:flex;gap:8px;align-items:flex-start;margin-top:5px;cursor:pointer">
+     <input type="radio" name="rt_${it.vid}" value="${oi}" data-rt="${it.vid}" ${RT.ans[it.vid]===oi?"checked":""}>
+     <span style="font-size:13px">${esc(o)}</span></label>`).join("")}</div>
+ </div>`).join("")+`<div class="row" style="margin-top:10px"><button class="btn sm" id="rtSubmit">提交复练</button><span class="muted" id="rtMsg"></span></div>`;
+ body.querySelectorAll("[data-rt]").forEach(el=>el.onchange=()=>{RT.ans[el.dataset.rt]=+el.value;});
+ const sb=document.getElementById("rtSubmit");
+ if(sb)sb.onclick=async()=>{
+  const m=document.getElementById("rtMsg");
+  const answers=RT.items.filter(it=>RT.ans[it.vid]!=null).map(it=>({vid:it.vid,oi:RT.ans[it.vid]}));
+  if(answers.length<RT.items.length){if(m)m.textContent="还有题没选";return;}
+  sb.disabled=true;sb.textContent="判卷中…";
+  try{
+   const r=await apiPost("/api/retest/submit",{answers});
+   const d=(r&&r.data)||{};
+   if(!d.ok){alert(d.msg||"提交失败");sb.disabled=false;sb.textContent="提交复练";return;}
+   body.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline"><b>复练结果 ${d.result.correct}/${d.result.total}</b>
+     <button class="btn sm gh" id="rtAgain">返回错题本</button></div>`+
+     (d.detail||[]).map((x,i)=>{const it=RT.items[i]||{};return `<div class="item" style="margin-top:8px;border-left:4px solid ${x.ok?"var(--green)":"var(--red)"}">
+       <div class="hd"><span class="tt">${x.ok?"✓ 答对":"✗ 答错"}</span><span class="meta">${esc(it.nodeTitle||"")}</span></div>
+       <div class="body">正确答案：<b>${esc((it.o||[])[x.a]||"")}</b><br>${esc(x.w||"")}</div></div>`;}).join("");
+   const ag=document.getElementById("rtAgain");if(ag)ag.onclick=()=>{RT.open=false;rtCard();};
+  }catch(e){alert("提交失败");sb.disabled=false;sb.textContent="提交复练";}
+ };
+}
+async function rtStaff(box){
+ box.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline"><b>错题复练</b><span class="muted">导师/主管视图</span></div><div id="rtStaffBody" class="muted" style="margin-top:6px">读取中…</div>`;
+ const ids=ppl();
+ const rows=await Promise.all(ids.map(id=>apiGet(`/api/retest?who=${encodeURIComponent(id)}`).then(r=>(r&&r.data)||{}).catch(()=>({}))));
+ const body=document.getElementById("rtStaffBody");if(!body)return;
+ body.innerHTML=ids.map((id,i)=>`<div class="lrow"><span class="lt"><b>${esc(WHO_NAME[id])}</b> · 错题 ${rows[i].wrongKinds||0} 类 · 待复练 ${rows[i].total||0} 道 · 已订正 ${rows[i].passedKinds||0} 类</span></div>`).join("")
+  +`<div class="muted" style="margin-top:7px">变式题需在「题库变式题审核」通过后，才会进入新人的复练卷。</div>`;
+}
+/* ---------- 变式题审核（把控） ---------- */
+async function renderVarReview(){
+ const box=document.getElementById("varReview"),sec=document.getElementById("varReviewSec");
+ if(!box||!sec)return;
+ if(!isStaff()){sec.classList.add("hide");return;}
+ sec.classList.remove("hide");
+ const r=await apiGet("/api/variants");
+ const list=(r&&r.data&&r.data.list)||[];
+ const pend=list.filter(v=>v.status!=="approved");
+ const okN=list.filter(v=>v.status==="approved").length;
+ box.innerHTML=`<h3>题库变式题审核</h3>
+  <div class="muted" style="margin-top:4px">共 ${list.length} 道 · 已通过 ${okN} · 待审 ${pend.length}；通过后才会进入新人错题复练。</div>
+  <div class="listBox" style="max-height:340px">${(pend.length?pend:list).map(v=>`<div class="lrow">
+    <span class="lt"><b>${esc(v.q||"")}</b>
+      <div class="muted" style="font-size:12px;margin-top:3px">正确答案：${esc((v.o||[])[v.a]||"")}　·　${esc(v.key||"")}${v.status==="rejected"?"　·　已驳回":""}</div></span>
+    <span class="lm">${v.status==="pending"?`<button class="btn sm" data-varok="${v.id}">通过</button> <button class="btn sm danger" data-varno="${v.id}">驳回</button>`:`<button class="btn sm gh" data-varreset="${v.id}">撤销</button>`}</span>
+  </div>`).join("")}</div>`;
+ box.querySelectorAll("[data-varok],[data-varno],[data-varreset]").forEach(b=>b.onclick=async()=>{
+  const id=b.dataset.varok||b.dataset.varno||b.dataset.varreset;
+  const action=b.dataset.varok?"approve":b.dataset.varno?"reject":"reset";
+  b.disabled=true;
+  await apiPost("/api/variants/review",{id,action});
+  renderVarReview();
+ });
+}
 
 function renderDuty(){
  const sec=document.getElementById("dutySec");if(!sec)return;
