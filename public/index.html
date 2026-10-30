@@ -2185,7 +2185,8 @@ function gradeRec(x){
  let correct=0;const wrong=[];
  nd.qz.forEach((q,i)=>{
   const v=ans[i];
-  const ok=v===q.a||(q.oa!=null&&v===q.oa);
+  /* nz：原题本身有错（选项里没有正确答案），历史作答一律判对 */
+  const ok=q.nz?true:(v===q.a||(q.oa!=null&&v===q.oa));
   if(ok)correct++;else wrong.push(q.q);
  });
  if(correct===x.correct&&wrong.length===(x.wrong||[]).length)return x;

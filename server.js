@@ -2674,6 +2674,8 @@ function patchedBankSource() {
       if (f.w) q.w = f.w;
       /* oa = 修订前的答案下标，前端据此保证历史作答「只升不降」 */
       if (typeof f.oldA === "number") q.oa = f.oldA;
+      /* nz = 原题本身错误（如选项里没有正确答案）：历史作答一律判对 */
+      if (f.neutralize) q.nz = 1;
     }
   });
   return "window.BANK = " + JSON.stringify(bank) + ";\n";
@@ -2721,7 +2723,7 @@ function wrongBook(who) {
     nd.qz.forEach((q, i) => {
       const v = a.answers[i];
       if (v == null || v < 0) return;
-      if (v === q.a || (q.oa != null && v === q.oa)) return;
+      if (q.nz || v === q.a || (q.oa != null && v === q.oa)) return;
       const k = a.nodeId + "." + i;
       const o = out[k] || (out[k] = { key: k, nodeId: a.nodeId, qi: i, wrong: 0, last: 0 });
       o.wrong++; o.last = Math.max(o.last, a.finishedAt || a.updatedAt || 0);
