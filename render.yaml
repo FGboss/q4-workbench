@@ -39,7 +39,8 @@ services:
       - key: GH_USERS_PATH
         value: data/users.json
       - key: GH_BRANCH
-        value: main
+        # 仓库实际主分支是 master（原来写 main，GitHub 同步备份会写到不存在的分支而失败）
+        value: master
       # 邮件通知（推荐：GitHub Actions + QQ 邮箱，全免费、可按人分邮）
       #   GH_DISPATCH_TOKEN  可留空：留空时自动复用已有的 GH_TOKEN 触发发信 workflow
       #                      （若提示 token 权限不足，再单独填一个有 Actions: write 权限的 Token）

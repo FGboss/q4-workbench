@@ -338,6 +338,50 @@
     section{margin-top:34px}
     h2{font-size:19px}
   }
+  /* ---------- 首页「今天三件事」 / 每页三件套 / 术语 / 导览 ---------- */
+  #homeBox{margin-top:26px}
+  .today3{background:linear-gradient(140deg,#0B3A63,#17558F 62%,#2C6FA8);color:#fff;
+    border-radius:16px;padding:20px 22px;box-shadow:var(--sh)}
+  .today3 .thd{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+  .today3 .tlab{font-size:12.4px;letter-spacing:.6px;opacity:.82}
+  .today3 .tname{font-size:19px;font-weight:700;margin-top:3px}
+  .today3 .tbtns{display:flex;gap:8px;flex-wrap:wrap}
+  .today3 .tbtns button{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.34);color:#fff;
+    border-radius:999px;padding:6px 14px;font-size:12.6px}
+  .today3 .tbtns button:hover{background:rgba(255,255,255,.3)}
+  .t3grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:15px}
+  .t3c{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:15px 16px}
+  .t3c .no{font-size:11.6px;opacity:.8;font-weight:700;letter-spacing:.4px}
+  .t3c .tt{font-size:15.2px;font-weight:700;margin:5px 0 5px;line-height:1.5}
+  .t3c .dd{font-size:12.7px;opacity:.9;line-height:1.7;min-height:36px}
+  .t3c button{margin-top:11px;background:#fff;color:var(--blue-d);border:none;border-radius:8px;
+    padding:7px 14px;font-size:12.8px;font-weight:700}
+  .t3c button.ghost{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3)}
+  .t3foot{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:14px;
+    border-top:1px solid rgba(255,255,255,.18);padding-top:12px;font-size:12.4px;opacity:.92}
+  .t3foot .mini2{background:none;border:none;color:#fff;text-decoration:underline;font-size:12.4px;opacity:.9}
+  .pbrief{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin-bottom:22px;box-shadow:var(--sh)}
+  .pbrief .pbRow{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .pbrief .pbCol .k{font-size:11.8px;color:var(--ink3);letter-spacing:.4px;font-weight:700}
+  .pbrief .pbCol .v{font-size:13.2px;color:var(--ink);margin-top:4px;line-height:1.75}
+  .pbrief .pbCol .v b{color:var(--blue-d)}
+  .glossBtn{background:none;border:none;color:var(--blue-m);font-size:11.6px;padding:0 3px;
+    vertical-align:1px;cursor:pointer}
+  .glossBtn:hover{color:var(--blue)}
+  .glossList dt{font-weight:700;color:var(--blue-d);margin-top:14px;font-size:13.6px}
+  .glossList dd{color:var(--ink2);font-size:13px;line-height:1.8;margin:3px 0 0}
+  .tourStep{display:flex;gap:11px;align-items:flex-start;border:1px solid var(--line);border-radius:11px;
+    padding:12px 14px;margin-top:10px;background:#FAFCFE}
+  .tourStep .sn{flex:none;width:24px;height:24px;border-radius:50%;background:var(--blue);color:#fff;
+    font-size:12.4px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .tourStep .tx{flex:1;min-width:0;font-size:13.2px;color:var(--ink2);line-height:1.8}
+  .tourStep .tx b{color:var(--ink)}
+  .tourStep button{flex:none;align-self:center}
+  .tourFlash{animation:tflash 1.4s ease 2}
+  @keyframes tflash{0%,100%{box-shadow:0 0 0 0 rgba(23,85,143,0)}50%{box-shadow:0 0 0 6px rgba(23,85,143,.35)}}
+  @media(max-width:900px){
+    .t3grid,.pbrief .pbRow{grid-template-columns:1fr}
+  }
 </style>
 </head>
 <body>
@@ -435,8 +479,10 @@
 <div class="wrap">
 
   <div id="brainBar" class="hide"></div>
+  <div id="homeBox"></div>
 
   <div id="tab-plan">
+    <div class="pbrief" id="pbrief-plan"></div>
     <section id="mreqSec" class="hide">
       <h2>导师给我的要求 <span class="h">导师针对你进度写的下一步；与邮件里的「导师评价」同源，改了立刻同步</span></h2>
       <div class="card pad" id="mentorReq"></div>
@@ -474,6 +520,7 @@
   </div>
 
   <div id="tab-assist" class="hide">
+    <div class="pbrief" id="pbrief-assist"></div>
     <section>
       <h2>问题 / 诉求　随手记 <span class="h">一句话就能发；导师在同一处回复（不另开会）</span></h2>
       <div class="card pad">
@@ -493,6 +540,7 @@
   </div>
 
   <div id="tab-coach" class="hide">
+    <div class="pbrief" id="pbrief-coach"></div>
     <section>
       <h2>产品地图打卡 · 学—测—用 <span class="h">按 IMA 知识库出题：学 1 个节点 → 5 题随堂小测（系统自动判卷）→ 写 ≤50 字笔记 + 1 个场景联想；自由节奏，按期完成整级（青铜 24 / 白银 18 / 黄金 12）</span></h2>
       <div id="ciDemo"></div>
@@ -528,6 +576,7 @@
   </div>
 
   <div id="tab-monitor" class="hide">
+    <div class="pbrief" id="pbrief-monitor"></div>
     <section id="brainSec">
       <h2>AI 判断 · 今日优先级 <span class="h">只做判断和排序，不改任何数据 · 依据是平台实时数据，不是模板 · 没配模型时自动用规则版</span></h2>
       <div id="brainBox"></div>
@@ -563,6 +612,7 @@
   </div>
 
   <div id="tab-review" class="hide">
+    <div class="pbrief" id="pbrief-review"></div>
     <section>
       <h2>月度复盘 <span class="h">新人自评 → 导师复评 → 主管终评；每月约 1 小时</span></h2>
       <div class="card pad">
@@ -1312,11 +1362,254 @@ const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[
 let _rPend=null;
 function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
 function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
-function render(){if(!WHO)return;if(isStaff())loadBrain(false);_queueRender(TAB);}
+function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();_queueRender(TAB);}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
  render();
  window.scrollTo({top:0,behavior:"auto"});}
+
+/* ===================================================================
+   认知层（P0/P1）：术语解释 · 口径表 · 首页「今天三件事」· 每页三件套
+                  · 证据加权掌握度 · 复习排程 · 段位路径
+   原则：只增加「看得懂」的层，不改变任何业务数据与既有判定逻辑。
+   =================================================================== */
+const GLOSS={
+ node:"产品地图上的一个学习节点 = 一个知识点 / 一个产品能力。完成 = 学完要点 + 5 题小测有成绩。",
+ checkin:"打卡：点开节点、看完要点、做完小测后留下的记录；当天有记录就算「今天动了」。",
+ quiz:"小测：每个节点 5 题。只有第一次交卷计入正确率，重做不刷分，但会留痕。",
+ drill:"演练：新人把一件事讲 / 做一遍，导师给评分（优秀 / 合格 / 待练）。",
+ streak:"连续天数：按北京时间自然日，有打卡记录即 +1；断一天从 1 重新算。",
+ carrier:"客户档案：只做登记，不设闭环；闭环只发生在它下面的任务 / 项目上。",
+ action:"任务 / 项目：新人更新进展 → 提交验收 → 导师确认 = 闭环。看标签就知道轮到谁。",
+ review:"待验收：新人已提交，等导师确认；退回待改 = 等新人改完再提交。",
+ mastery:"掌握度：不是打勾数量，而是按证据加权 —— 打卡 0.3、小测 1.0、演练 1.2、实战闭环 1.5。",
+ retest:"错题复练：常错题会生成「同类型变式题」，导师审核通过后才推给你，避免原题背答案。",
+ acc:"正确率：每节点只认第一次交卷的成绩，按题数加权平均。"
+};
+const GLOSS_ALL=[
+ {g:"学习与打卡",items:["node","checkin","quiz","drill","streak"]},
+ {g:"任务与客户",items:["carrier","action","review"]},
+ {g:"评分与复练",items:["mastery","acc","retest"]}
+];
+function gloss(k){return `<button class="glossBtn" data-gloss="${esc(k)}" title="这是什么？">ⓘ</button>`;}
+function showGloss(k){
+ const d=GLOSS[k];if(!d)return;
+ paintModal(`<h3 style="margin-bottom:8px">名词解释</h3>
+  <div class="card pad" style="margin-top:6px"><b>${esc(k)}</b><div class="muted" style="margin-top:6px">${esc(d)}</div></div>
+  <div class="row" style="margin-top:14px"><button class="btn gh sm" data-act="glossall">看全部名词</button></div>`);
+}
+function openGlossAll(){
+ paintModal(`<h3 style="margin-bottom:4px">名词解释 · 口径表</h3>
+  <div class="muted">平台里所有会让人「看不懂」的名词，都在这里用一句话说清。指标口径也在这里。</div>
+  <dl class="glossList">${GLOSS_ALL.map(sec=>`<dt style="color:var(--ink2);margin-top:18px">${esc(sec.g)}</dt>`+
+    sec.items.map(k=>`<dt>${esc(k)}</dt><dd>${esc(GLOSS[k]||"")}</dd>`).join("")).join("")}</dl>`);
+}
+/* 复习排程（FSRS 简化版）：按首次小测正确率给间隔 —— 全对 7 天、≥70% 3 天、其余 1 天。 */
+function reviewQueue(who){
+ const now=nowT(),out=[],F=qzFirstPerNode(who);
+ Object.keys(F).forEach(nid=>{
+  const x=F[nid];if(!x)return;
+  const t=x.finishedAt||x.updatedAt||x.createdAt||0;if(!t)return;
+  const acc=(x.correct||0)/Math.max(1,x.total||1);
+  const days=acc>=0.9?7:acc>=0.7?3:1;
+  const due=t+days*86400000;
+  if(now>=due)out.push({nid,due});
+ });
+ return out.sort((a,b)=>a.due-b.due);
+}
+/* 证据加权掌握度：打卡覆盖 0.3 + 小测 1.0 + 演练 1.2 + 实战闭环 1.5（满分 4.0 → 百分比） */
+function masteryOf(who){
+ const st=ciStats(who);
+ const q=Object.values(qzFirstPerNode(who));
+ const qAcc=q.length?q.reduce((a,x)=>a+(x.correct||0),0)/q.reduce((a,x)=>a+Math.max(1,x.total||1),0):0;
+ const drills=(DOC.drills&&DOC.drills.list||[]).filter(x=>!x.del&&x.who===who&&x.score);
+ const closed=allActs(who).filter(o=>(o.v.st||0)===2).length;
+ const cover=TOTAL_NODES?Math.min(1,st.done.size/TOTAL_NODES):0;
+ const score=cover*0.3+qAcc*1.0+Math.min(1,drills.length/4)*1.2+Math.min(1,closed/3)*1.5;
+ return {pct:Math.round(score/4*100),cover:Math.round(cover*100),qAcc:Math.round(qAcc*100),
+  drills:drills.length,closed};
+}
+function allCarriers(){return ((DOC.carriers&&DOC.carriers.list)||[]).filter(x=>!x.del);}
+function allActs(who){const out=[];allCarriers().forEach(c=>{
+ if(who&&c.who!==who)return;
+ (c.actions||[]).filter(v=>!v.del).forEach(v=>out.push({c,v}));});return out;}
+function pendingReviews(){return allActs().filter(o=>(o.v.st||0)!==2&&o.v.cfm===3).length;}
+function returnedTasks(who){return allActs(who).filter(o=>o.v.cfm===2&&(o.v.st||0)!==2).length;}
+function riskTasks(){return allActs().filter(o=>{const v=o.v;return (v.st||0)!==2&&(actOver(v)||actStale(v));}).length;}
+/* 段位路径：本段位节点从左到右，点亮即完成（不鼓励跳着做） */
+function pathStrip(who,L){
+ const ns=NODES.filter(n=>n.level===L.k),done=ciDone(who);
+ return `<div style="margin-top:13px;border-top:1px solid rgba(255,255,255,.2);padding-top:11px">
+  <div class="pk" style="font-weight:700">本段位路径 · ${esc(L.n)}（${ns.filter(n=>done.has(n.id)).length}/${ns.length}）${gloss("node")}</div>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">${ns.map(n=>{
+   const on=done.has(n.id);
+   return `<span title="${esc(n.t)}" style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;background:${on?"#fff":"rgba(255,255,255,.16)"};color:${on?"#0B3A63":"#fff"};border:1px solid rgba(255,255,255,.35)">${on?"✓":""}</span>`;}).join("")}</div>
+  <div style="font-size:11.6px;opacity:.85;margin-top:6px">按顺序点亮即可，你的下一站就是最左边那个没亮的。</div>
+ </div>`;
+}
+/* 首页 · 今天三件事：按角色只给 3 个可执行动作，避免「打开不知道该干嘛」 */
+function threeThings(){
+ const out=[];
+ if(isNew()){
+  const nn=nextNodeOf(WHO),rq=reviewQueue(WHO),back=returnedTasks(WHO);
+  out.push(nn
+   ?{no:"第 1 件",tt:"学 1 个新节点",dd:`「${nn.t}」—— 学完做 5 题小测，今天就算进一格。`,btn:"现在去学",act:`node:${nn.id}`}
+   :{no:"第 1 件",tt:"地图已通关",dd:"进入复习与真实交付：今天挑 1 个节点复习即可。",btn:"去帮扶",act:"tab:coach",ghost:true});
+  out.push(rq.length
+   ?{no:"第 2 件",tt:`复习 ${Math.min(rq.length,3)} 个节点`,dd:"按首次成绩排的复习队列，先巩固最容易忘的。",btn:"去复习",act:"tab:coach"}
+   :{no:"第 2 件",tt:"补 1 条打卡",dd:"学—测—用任一步有记录，连续天数就不断。",btn:"去打卡",act:"tab:coach",ghost:true});
+  out.push(back
+   ?{no:"第 3 件",tt:`改完 ${back} 个被退回的任务`,dd:"导师已退回并写了意见，改完再提交验收。",btn:"去处理",act:"tab:plan"}
+   :{no:"第 3 件",tt:"推进 1 个客户任务",dd:"写一条进展，导师才看得见过程。",btn:"去看任务",act:"tab:plan",ghost:true});
+ }else{
+  const rev=pendingReviews(),alerts=mapAlerts().length;
+  const unconfirmed=NEWCOMERS.filter(id=>!(DOC.plan&&DOC.plan.confirm&&DOC.plan.confirm[id])).length;
+  out.push(rev
+   ?{no:"第 1 件",tt:`验收 ${rev} 个提交`,dd:"新人已提交验收，你确认后才会闭环。",btn:"去验收",act:"tab:plan"}
+   :{no:"第 1 件",tt:"暂无待验收",dd:"今天的验收队列已清空，可以去看看进展记录。",btn:"去看进展",act:"tab:plan",ghost:true});
+  out.push(alerts
+   ?{no:"第 2 件",tt:`处理 ${alerts} 条里程碑预警`,dd:"有新人节点进度落后，先对齐节奏。",btn:"去把控",act:"tab:monitor"}
+   :{no:"第 2 件",tt:"里程碑无预警",dd:"当前节奏正常，保持即可。",btn:"去把控",act:"tab:monitor",ghost:true});
+  out.push(unconfirmed
+   ?{no:"第 3 件",tt:`${unconfirmed} 份培养计划待确认`,dd:"新人还没确认计划，先让他们明确目标。",btn:"去规划",act:"tab:plan"}
+   :{no:"第 3 件",tt:"计划都已确认",dd:"可以进入复盘与证据整理。",btn:"去复盘",act:"tab:review",ghost:true});
+ }
+ return out;
+}
+/* 新人第一周清单：5 件小事，做完就「会用平台」了 */
+function firstWeekList(){
+ return [
+  {k:"进入平台并看到首页",on:true},
+  {k:"确认自己的培养计划",on:!!(DOC.plan&&DOC.plan.confirm&&DOC.plan.confirm[WHO])},
+  {k:"完成第 1 个节点（学完 + 小测）",on:ciDone(WHO).size>=1},
+  {k:"完成第 1 次演练",on:((DOC.drills&&DOC.drills.list)||[]).some(x=>!x.del&&x.who===WHO)},
+  {k:"发起第 1 次求助 / 问题",on:((DOC.issues&&DOC.issues.list)||[]).some(x=>!x.del&&x.who===WHO)}
+ ];
+}
+function renderHome(){
+ const box=document.getElementById("homeBox");if(!box)return;
+ if(TAB!=="plan"||!WHO){box.innerHTML="";return;}
+ const t3=threeThings(),nm=WHO_NAME[WHO]||"";
+ let foot="";
+ if(isNew()){
+  const st=ciStats(WHO),m=masteryOf(WHO),rq=reviewQueue(WHO);
+  foot=`<span>连续打卡 <b>${st.streak}</b> 天</span><span>掌握度 <b>${m.pct}%</b>${gloss("mastery")}</span><span>今天该复习 <b>${rq.length}</b> 个</span>`;
+ }else{
+  const rev=pendingReviews(),risk=riskTasks(),alerts=mapAlerts().length;
+  foot=`<span>待验收 <b>${rev}</b></span><span>超期 / 停滞 <b>${risk}</b></span><span>里程碑预警 <b>${alerts}</b></span>`;
+ }
+ let fw="";
+ if(isNew()){
+  const list=firstWeekList();
+  const done=list.filter(x=>x.on).length;
+  if(done<list.length){
+   fw=`<div class="card pad" style="margin-top:12px">
+    <div class="row" style="justify-content:space-between"><b style="font-size:14.6px">第一周清单 · ${done}/${list.length}</b>
+     <span class="muted">做完这 5 件，平台就会用了</span></div>
+    <div style="display:flex;flex-direction:column;gap:7px;margin-top:10px">
+     ${list.map(x=>`<div style="display:flex;gap:9px;align-items:center;font-size:13.2px;color:${x.on?"var(--green-d)":"var(--ink2)"}">
+       <span style="width:18px;height:18px;border-radius:50%;border:1px solid ${x.on?"#BEDDC0":"var(--line)"};background:${x.on?"var(--green-l)":"#fff"};display:flex;align-items:center;justify-content:center;font-size:11px">${x.on?"✓":""}</span>${esc(x.k)}</div>`).join("")}
+    </div></div>`;
+  }
+ }
+ box.innerHTML=`<div class="today3">
+   <div class="thd"><div><div class="tlab">今天三件事 · 只做这三件就够</div>
+     <div class="tname">${esc(nm)}，先看这里</div></div>
+    <div class="tbtns"><button data-act="tour">3 分钟导览</button><button data-act="glossall">名词解释</button></div></div>
+   <div class="t3grid">${t3.map(c=>`<div class="t3c"><div class="no">${esc(c.no)}</div>
+     <div class="tt">${esc(c.tt)}</div><div class="dd">${esc(c.dd)}</div>
+     <button class="${c.ghost?"ghost":""}" data-act="${esc(c.act)}">${esc(c.btn)}</button></div>`).join("")}</div>
+   <div class="t3foot">${foot}</div>
+  </div>${fw}`;
+}
+/* 每页三件套：我在哪 / 今天做什么 / 做到什么算完成 */
+function PAGE_BRIEF(){
+ const staff=isStaff();
+ return {
+  plan:staff
+   ?{where:`<b>规划</b>：定目标、确认新人计划、看客户档案与任务${gloss("carrier")}`,
+     today:`处理首页提醒的<b>待验收</b>与<b>计划确认</b>；需要时给任务派活。`,
+     done:`新人计划已确认、待验收清零，任务进展可追溯。`}
+   :{where:`<b>规划</b>：你的培养计划 + 客户档案与任务${gloss("carrier")}`,
+     today:`确认培养计划；给客户档案加 1 条任务并写进展。`,
+     done:`计划显示「已确认」，任务有进展记录。`},
+  assist:staff
+   ?{where:`<b>协助</b>：新人遇到的问题与诉求汇总在这里。`,
+     today:`逐条回复未闭环的问题；能一句话给方向的先给。`,
+     done:`每个问题都有回复或转为任务。`}
+   :{where:`<b>协助</b>：遇到卡点就在这里发一条，不憋着。`,
+     today:`有卡点就发 1 条：说清现象 + 你已试过什么。`,
+     done:`问题收到导师回复并闭环。`},
+  coach:staff
+   ?{where:`<b>帮扶</b>：新人打卡、演练、错题复练都在这里。`,
+     today:`看今天谁没打卡；给演练评分 / 审核变式题。`,
+     done:`每人当天至少有 1 条学习记录。`}
+   :{where:`<b>帮扶</b>：产品地图打卡 + 演练 + 错题复练${gloss("checkin")}`,
+     today:`完成 1 个节点的「学 → 测 → 用」${gloss("quiz")}`,
+     done:`小测有成绩、笔记 + 场景联想都写了。`},
+  monitor:staff
+   ?{where:`<b>把控</b>：进度、预警、验收、里程碑一屏看全。`,
+     today:`先处理红色预警，再看待验收。`,
+     done:`无超期 / 无停滞 / 无待验收。`}
+   :{where:`<b>把控</b>：你的进度与预警（也能看到同伴的）。`,
+     today:`看一眼预警，确认自己的节奏没掉队。`,
+     done:`没有属于你的红色预警。`},
+  review:staff
+   ?{where:`<b>复盘</b>：月度自评、导师复评、证据留痕。`,
+     today:`检查证据是否齐全，缺的先补。`,
+     done:`每条结论都有对应证据。`}
+   :{where:`<b>复盘</b>：月度自评 + 证据${gloss("mastery")}`,
+     today:`补 1 条能证明你进步的记录（进展 / 演练 / 小测）。`,
+     done:`自评每一条都能指到证据。`}
+ };
+}
+function renderBrief(){
+ const B=PAGE_BRIEF()[TAB],el=document.getElementById("pbrief-"+TAB);
+ if(!el||!B){return;}
+ el.innerHTML=`<div class="pbRow">
+   <div class="pbCol"><div class="k">我在哪</div><div class="v">${B.where}</div></div>
+   <div class="pbCol"><div class="k">今天做什么</div><div class="v">${B.today}</div></div>
+   <div class="pbCol"><div class="k">做到什么算完成</div><div class="v">${B.done}</div></div>
+  </div>`;
+}
+/* 3 分钟导览：讲清「从哪下手」，每一步都能点「看这里」直接跳过去 */
+const TOUR_STEPS=[
+ {t:"① 先看首页「今天三件事」",d:"打开就告诉你今天只做哪 3 件，不用自己找活。",sel:"homeBox",tab:"plan"},
+ {t:"② 五个页签是一条流程",d:"规划 → 协助 → 帮扶 → 把控 → 复盘。新人优先用前两个。",sel:"tabs",tab:"plan"},
+ {t:"③ 每页顶部有「三件套」",d:"我在哪 / 今天做什么 / 做到什么算完成，看不懂就先读这块。",sel:"pbrief-plan",tab:"plan"},
+ {t:"④ 不懂的名词点 ⓘ",d:"任何名词旁的小 ⓘ 都能点开解释；也可以打开「名词解释」看全表。",sel:"homeBox",tab:"plan"},
+ {t:"⑤ 任务标签告诉你轮到谁",d:"「等待导师验收 / 退回待改」看标签就知道该谁动了。",sel:"carrierBlk",tab:"plan"}
+];
+function openTour(){
+ paintModal(`<h3 style="margin-bottom:4px">3 分钟导览</h3>
+  <div class="muted">按顺序看一遍，就知道这个平台从哪下手。</div>
+  ${TOUR_STEPS.map((s,i)=>`<div class="tourStep"><div class="sn">${i+1}</div>
+   <div class="tx"><b>${esc(s.t)}</b><br>${esc(s.d)}</div>
+   <button class="btn sm gh" data-tour="${i}">看这里</button></div>`).join("")}`);
+}
+/* 动作分发：首页按钮 / 导览按钮共用一套委托，避免到处绑事件 */
+function actGo(kind,val){
+ if(kind==="tab"){setTab(val);return;}
+ if(kind==="node"){setTab("coach");setTimeout(()=>{try{openCiNode(val);}catch(e){console.error(e);}},80);return;}
+ if(kind==="tour"){openTour();return;}
+ if(kind==="glossall"){openGlossAll();return;}
+}
+function bindCognitive(){
+ document.addEventListener("click",e=>{
+  const g=e.target.closest&&e.target.closest("[data-gloss]");
+  if(g){e.preventDefault();showGloss(g.dataset.gloss);return;}
+  const tr=e.target.closest&&e.target.closest("[data-tour]");
+  if(tr){
+   const i=+tr.dataset.tour,st=TOUR_STEPS[i];
+   if(st){closeOvl();setTab(st.tab);setTimeout(()=>{const el=document.getElementById(st.sel);
+    if(el){el.scrollIntoView({behavior:"smooth",block:"center"});el.classList.add("tourFlash");
+     setTimeout(()=>el.classList.remove("tourFlash"),3000);}},70);}
+   return;
+  }
+  const a=e.target.closest&&e.target.closest("[data-act]");
+  if(a){e.preventDefault();const p=String(a.dataset.act).split(":");actGo(p[0],p[1]);}
+ });
+}
 
 /* ---------- 成长护照（新人首页）----------
    目的：让新人打开就想「今天再进一格」，而不是当成负担。
@@ -1379,7 +1672,7 @@ function renderPassport(){
      <div>
       <div class="pk">当前段位</div>
       <div class="pv">${esc(lvName)} ｜ ${lvDone}/${cur?cur.goal:total}</div>
-      <div style="font-size:12px;opacity:.92;margin-top:5px">连续打卡 <b>${st.streak}</b> 天 · 已完成 <b>${st.done.size}</b>/${total} 个节点 · 本月 <b>${st.mon}</b> 个 · 小测正确率 <b>${st.acc==null?"—":st.acc+"%"}</b></div>
+      <div style="font-size:12px;opacity:.92;margin-top:5px">连续打卡 <b>${st.streak}</b> 天 · 已完成 <b>${st.done.size}</b>/${total} 个节点 · 本月 <b>${st.mon}</b> 个 · 小测正确率 <b>${st.acc==null?"—":st.acc+"%"}</b> · 掌握度 <b>${masteryOf(who).pct}%</b>${gloss("mastery")}</div>
      </div>
      <div style="min-width:210px">
       <div class="pk">本段位进度</div>
@@ -1391,6 +1684,7 @@ function renderPassport(){
      <div class="pk" style="font-weight:700">徽章墙 · 已解锁 ${onCnt}/${badges.length}</div>
      <div class="row" style="gap:12px;margin-top:9px;flex-wrap:wrap">${badges.map(b=>`<span class="badge ${b.on?"on":"off"}" title="${esc(b.note)}"><span class="bb">${b.ic}</span>${esc(b.n)}</span>`).join("")}</div>
     </div>
+    ${cur?pathStrip(who,cur):""}
    </div>
    <div class="grid2" style="margin-top:12px">
     <div class="card pad">
@@ -1464,8 +1758,9 @@ function actTag(v){
 }
 function actCfmTag(v){
  if((v.st||0)===2&&v.cfm===1)return '<span class="tag ok">导师已确认</span>';
- if(v.cfm===3)return '<span class="tag wt">等待导师验收</span>';
- if(v.cfm===2)return '<span class="tag no">退回待改</span>';
+ /* 状态机「轮到谁」：同一标签按当前角色给出行动人，避免两边都在等 */
+ if(v.cfm===3)return isStaff()?'<span class="tag wt">待你验收</span>':'<span class="tag wt">等待导师验收</span>';
+ if(v.cfm===2)return isNew()?'<span class="tag no">退回 · 轮到你了</span>':'<span class="tag no">已退回 · 等新人改</span>';
  return "";
 }
 /* 交互状态放在内存里：选择目标/负责人触发重绘时，展开状态与已填内容都不会丢 */
@@ -1621,7 +1916,7 @@ function renderCarriers(){
          </div>
        </div>`:""}
       </div>`;}).join("")
-     :`<div class="muted" style="margin-top:7px">还没有任务 —— 加一条，写清「做什么 + 什么时候前」</div>`}
+     :`<div class="muted" style="margin-top:7px">还没有任务 —— 加一条，写清「做什么 + 什么时候前」${allow?` <button class="btn sm gh" data-aempty="${x.id}">＋ 加第一条</button>`:""}</div>`}
     ${allow?`<div class="form formLG" style="margin-top:13px;grid-template-columns:125px 1fr 165px;background:#F7F9FB;border:1px dashed #CFD8E2;border-radius:11px;padding:12px 13px">
       <div><label>类型</label><select data-akind="${x.id}"><option value="任务">任务</option><option value="项目">项目</option></select></div>
       <div><label>下一步动作（做什么 + 做到什么程度）</label><input data-anew="${x.id}" placeholder="例：周三前完成现场排查并给出方案"></div>
@@ -1631,7 +1926,7 @@ function renderCarriers(){
     </div>`:""}
     `:""}
    </div>`;}).join("")
-   :`<div class="muted" style="margin-top:8px">${a.length?"筛选后没有匹配的客户档案":"还没有客户档案 —— 分到客户/项目后先建一份档案，再往下加任务"}</div>`;
+   :`<div class="muted" style="margin-top:8px">${a.length?"筛选后没有匹配的客户档案":"还没有客户档案 —— 分到客户/项目后先建一份档案，再往下加任务"}${!a.length&&allow?` <button class="btn sm gh" data-cempty="${id}">＋ 先登记第一份</button>`:""}</div>`;
   const openN=a.reduce((n,x)=>n+carHealth(x).open,0);
   return `<div class="carBlock">
     <h3><button class="carToggle" data-ptog="${id}" title="${pOpen?"收起这位新人的全部客户":"展开这位新人的全部客户"}"><span class="arw">${pOpen?"▾":"▸"}</span><span>${esc(WHO_NAME[id])}</span><span class="ctBtn">${pOpen?"收起":"展开"}</span></button>
@@ -1667,6 +1962,11 @@ function renderCarriers(){
   const k=b.dataset.ctog;CUI_CAR.open[k]=!CUI_CAR.open[k];render();});
  document.querySelectorAll("[data-ptog]").forEach(b=>b.onclick=()=>{
   const k=b.dataset.ptog;CUI_CAR.pClosed[k]=!CUI_CAR.pClosed[k];render();});
+ /* 空状态 CTA：直接聚焦到对应的登记 / 加任务输入框，少一步「找入口」 */
+ const focusField=el=>{if(!el)return;el.focus();if(el.scrollIntoView)el.scrollIntoView({block:"center",behavior:"smooth"});
+  el.style.boxShadow="0 0 0 3px rgba(59,124,176,.35)";};
+ document.querySelectorAll("[data-cempty]").forEach(b=>b.onclick=()=>focusField(document.querySelector(`[data-cnew="${b.dataset.cempty}.name"]`)));
+ document.querySelectorAll("[data-aempty]").forEach(b=>b.onclick=()=>focusField(document.querySelector(`[data-anew="${b.dataset.aempty}"]`)));
  /* ---- 客户档案：只登记 / 编辑 / 归档，不设闭环 ---- */
  document.querySelectorAll("[data-cadd]").forEach(b=>b.onclick=()=>{
   const id=b.dataset.cadd;
@@ -2175,18 +2475,23 @@ function qzFirstDone(who,nid){const l=qzAttempts(who,nid).filter(x=>x.status==="
 function qzOpenAttempt(who,nid){return qzAttempts(who,nid).filter(x=>x.status==="doing")[0]||null;}
 function qzAttemptById(id){return qzList().filter(x=>x.id===id)[0]||null;}
 /* 题库修订后的历史评分：题目答案被修订时，旧答案或新答案命中都算对（只升不降）。
-   不改动任何作答记录，只在读取时重算，避免「改题库把新人成绩清零」。 */
+   不改动任何作答记录，只在读取时重算，避免「改题库把新人成绩清零」。
+   答案已不在 /bank.js 下发：新作答用服务端判卷快照 ansOk；历史作答靠 wrong 文本 + 旧答案 oa / nz 重算。 */
 function gradeRec(x){
  if(!x||!Array.isArray(x.answers)||!(+x.total>0)||!x.nodeId)return x;
  const nd=NODE_BY_ID[x.nodeId];
  if(!nd||!Array.isArray(nd.qz)||!nd.qz.length)return x;
  const ans=qzPad(x.answers,nd.qz.length);
  if(ans.some(v=>v<0))return x;                 // 没答完的不改
+ const hasOk=Array.isArray(x.ansOk),hasWrong=Array.isArray(x.wrong);
+ if(!hasOk&&!hasWrong)return x;                // 无判卷快照也无错题文本：保持历史结果
  let correct=0;const wrong=[];
  nd.qz.forEach((q,i)=>{
-  const v=ans[i];
-  /* nz：原题本身有错（选项里没有正确答案），历史作答一律判对 */
-  const ok=q.nz?true:(v===q.a||(q.oa!=null&&v===q.oa));
+  let ok;
+  if(hasOk&&x.ansOk[i]!==undefined)ok=!!x.ansOk[i];
+  else if(q.nz)ok=true;                        // 原题本身有错：一律判对
+  else if(typeof q.oa==="number"&&ans[i]===q.oa)ok=true;  // 修订前答案命中：只升不降
+  else ok=!hasWrong||x.wrong.indexOf(q.q)<0;    // 兜底：沿用历史错题文本
   if(ok)correct++;else wrong.push(q.q);
  });
  if(correct===x.correct&&wrong.length===(x.wrong||[]).length)return x;
@@ -2245,7 +2550,9 @@ function mapAlerts(){
   if(p.remain>0&&(p.over||p.risk))out.push({who:id,lv:L,p});}));
  return out;
 }
-let CI_LV=null,CI_NODE=null,CI_ANS=[],CI_ATT=null,CI_NEW=false;
+let CI_LV=null,CI_NODE=null,CI_ANS=[],CI_ATT=null,CI_NEW=false,CI_BUSY=false;
+/* 答案不再随 /bank.js 下发：已交卷/导师复查时按节点拉一次答案缓存（含解析） */
+let CI_KEY={};
 /* 学习行为监测：新人点开节点里的「展开自查要点」（含答案）逐次留痕，随 DOC 自动同步到看板/产品地图。 */
 let RV_GUARD={};
 function rvList(who){const L=(DOC.reveals&&DOC.reveals.list)||[];return L.filter(x=>!x.del&&(!who||x.who===who));}
@@ -2376,8 +2683,9 @@ function qzPad(arr,n){
  return a;
 }
 /* 答题即落库：第一题选中就生成一条 quiz 记录；之后每题实时更新答案；
-   5 题答完自动交卷（status=done），全程与小测记录绑定，退出重进答案已锁定不能改。 */
-function qzSaveAnswer(nd,qi,oi){
+   5 题答完自动交卷（status=done），全程与小测记录绑定，退出重进答案已锁定不能改。
+   判卷在服务端完成：答案不下发，避免新人直接从 /bank.js 看到正确答案。 */
+async function qzSaveAnswer(nd,qi,oi){
  DOC.quiz=DOC.quiz||{t:0,list:[]};DOC.quiz.list=DOC.quiz.list||[];
  const now=nowT();
  let x=CI_ATT?(DOC.quiz.list.find(y=>y.id===CI_ATT&&!y.del)||null):null;
@@ -2389,19 +2697,33 @@ function qzSaveAnswer(nd,qi,oi){
  if(x.status!=="doing")return x;                    /* 已交卷 = 锁定，必须点「重新做题」 */
  const ans=qzPad(x.answers,nd.qz.length);
  if(ans[qi]>=0)return x;
- ans[qi]=oi;
- x.answers=ans;
- /* 记录每一题的作答时间：日报/周报按「当天是否有业务动作」统计时更准确 */
- x.answerAt=Array.isArray(x.answerAt)?x.answerAt:[];
- x.answerAt[qi]=now;
- x.updatedAt=now;
- if(ans.every(v=>v>=0)){
-  const wrong=nd.qz.map((q,i)=>ans[i]!==q.a?q.q:null).filter(Boolean);
-  x.status="done";x.correct=nd.qz.length-wrong.length;x.total=nd.qz.length;x.wrong=wrong;x.finishedAt=now;
- }
+ /* 判卷、记录、交卷都在服务端完成：同一题只认第一次作答，接口刷不出别题的答案 */
+ const r=await apiPost("/api/quiz/answer",{nodeId:nd.id,qi,oi,attId:x.id,
+   meta:{level:nd.level,module:nd.t,line:nd.levelName}});
+ const g=r&&r.data;
+ if(!(g&&g.ok))throw new Error((g&&g.msg)||"判卷失败，请重试");
+ const rc=g.rec||{};
+ Object.assign(x,{status:rc.status||"doing",answers:rc.answers||ans,
+   ansA:rc.ansA||[],ansOk:rc.ansOk||[],ansW:rc.ansW||[],
+   wrong:rc.wrong||[],correct:rc.correct,total:rc.total,updatedAt:rc.updatedAt||now});
  DOC.quiz.t=now;
- touch();push();                                    /* 立即同步，不等退出打卡 */
+ touch();push();                                    /* 服务端已落库；本地同步一次，保证多端一致 */
  return x;
+}
+/* 已交卷 / 导师复查需要看正确答案：按节点拉一次并缓存（未交卷不拉，避免提前泄露） */
+function quizKeyNeeded(nd){
+ if(!isNew())return true;                       // 导师/主管复查
+ const att=CI_ATT?qzAttemptById(CI_ATT):null;
+ return !!(att&&att.status==="done"&&!(Array.isArray(att.ansA)&&att.ansA.length>=nd.qz.length&&Array.isArray(att.ansW)&&att.ansW.length>=nd.qz.length));
+}
+function loadQuizKey(nid){
+ const k=CI_KEY[nid];
+ if(k&&Array.isArray(k.a))return Promise.resolve(k);
+ return apiGet("/api/quiz/key?nodeId="+encodeURIComponent(nid)).then(r=>{
+  const d=r&&r.data;
+  if(d&&d.ok&&Array.isArray(d.a))CI_KEY[nid]={a:d.a,w:d.w||[]};
+  return CI_KEY[nid]||null;
+ }).catch(()=>null);
 }
 function openCiNode(nid){
  const nd=NODE_BY_ID[nid];if(!nd)return;
@@ -2417,6 +2739,7 @@ function openCiNode(nid){
  }else CI_ANS=nd.qz.map(()=>-1);
  paintCiNode();
  document.getElementById("ovl").classList.remove("hide");
+ if(quizKeyNeeded(nd))loadQuizKey(nid).then(k=>{if(k&&CI_NODE===nid)paintCiNode();});
 }
 function paintCiNode(){
  const nd=NODE_BY_ID[CI_NODE];if(!nd)return;
@@ -2426,9 +2749,19 @@ function paintCiNode(){
  const doneAtt=mine?qzLatestDone(WHO,CI_NODE):null;
  const firstAtt=mine?qzFirstDone(WHO,CI_NODE):null;
  const answered=CI_ANS.length===nd.qz.length&&CI_ANS.every(a=>a>=0);
- const score=nd.qz.filter((q,i)=>CI_ANS[i]===q.a).length;
  const tries=mine?qzAttempts(WHO,CI_NODE).filter(x=>x.status==="done").length:0;
  const rec=mine?ciRec(WHO,CI_NODE):null;
+ /* 判卷结果与答案来源：① 新作答记录里的服务端快照；② 已交卷/导师复查时拉取的答案缓存 */
+ const okArr=att&&Array.isArray(att.ansOk)?att.ansOk:null;
+ const keyA=att&&Array.isArray(att.ansA)&&att.ansA.length>=nd.qz.length?att.ansA:(CI_KEY[nd.id]&&CI_KEY[nd.id].a)||null;
+ const keyW=att&&Array.isArray(att.ansW)&&att.ansW.length>=nd.qz.length?att.ansW:(CI_KEY[nd.id]&&CI_KEY[nd.id].w)||null;
+ const hitOf=(q,qi,a)=>{
+  if(okArr&&okArr[qi]!==undefined)return !!okArr[qi];
+  if(q.nz)return true;
+  if(keyA&&a>=0)return a===keyA[qi];
+  if(att&&Array.isArray(att.wrong))return att.wrong.indexOf(q.q)<0;
+  return null;
+ };
  let H=`<div class="mh"><b>${esc(nd.t)}</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
   <div class="pad">
    <div class="row" style="gap:8px;flex-wrap:wrap"><span class="tag gy">${esc(nd.levelName)} · ${esc(nd.period)}</span>
@@ -2448,13 +2781,14 @@ function paintCiNode(){
    ${mine?('<div class="muted" style="margin-top:3px;font-size:12.2px">'+(editable?(CI_NEW?"新一次作答：每选一题立即记录，5 题答完自动交卷。":"继续本次作答：已答题目已锁定，退出重进仍从本题继续。"):("本次已交卷，答案已锁定。"+(tries>1?"已重做 "+(tries-1)+" 次，":"")+"正确率只认每节点首次交卷，重做不刷分。"))+'</div>'):""}
    ${nd.qz.map((q,qi)=>{
      const a=CI_ANS[qi],revealed=(a>=0)||!mine;
+     const hit=revealed?hitOf(q,qi,a):null;
      return `<div class="qz">
      <div class="q">${qi+1}. ${esc(q.q)}</div>
      ${q.o.map((o,oi)=>{
-       let cls="";if(revealed){if(oi===q.a)cls="ok";else if(mine&&oi===a)cls="no";}
+       let cls="";if(revealed){if(keyA&&oi===keyA[qi])cls="ok";else if(mine&&oi===a&&!hit)cls="no";}
        return `<div class="opt ${cls}" data-ciopt="${qi}.${oi}" style="${editable&&a<0?'cursor:pointer':'cursor:default'}"><b>${"ABCD".charAt(oi)}</b><span>${esc(o)}</span></div>`;}).join("")}
-     ${revealed?`<div class="muted" style="margin-top:3px;color:${(!mine||a===q.a)?"var(--green-d)":"var(--red-d)"}">
-        ${mine?(a===q.a?"✔ 答对了":"✘ 答错了")+"　：":"正确答案见上。："}解析：${esc(q.w)}</div>`:`<div class="muted" style="margin-top:3px">（选一个选项，系统立即判卷并实时记录；每题的第一次作答即为本次成绩）</div>`}
+     ${revealed?`<div class="muted" style="margin-top:3px;color:${(!mine||hit===true)?"var(--green-d)":"var(--red-d)"}">
+        ${mine?(hit===true?"✔ 答对了":hit===false?"✘ 答错了":"已作答")+"　：":"正确答案见上。："}解析：${keyW&&keyW[qi]?esc(keyW[qi]):(mine&&okArr?"":"（暂无解析）")}</div>`:`<div class="muted" style="margin-top:3px">（选一个选项，系统立即判卷并实时记录；每题的第一次作答即为本次成绩）</div>`}
     </div>`;}).join("")}`;
 
  if(mine){
@@ -2487,13 +2821,16 @@ function paintCiNode(){
    copyText(b.dataset.copyima).then(()=>{b.textContent="已复制，去 IMA 粘贴搜索";setTimeout(()=>b.textContent=o,1500);})
     .catch(()=>{b.textContent="请手动复制";setTimeout(()=>b.textContent=o,1600);});});
  if(!mine)return;
- if(editable)document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=()=>{
+ if(editable)document.querySelectorAll("[data-ciopt]").forEach(el=>el.onclick=async()=>{
+  if(CI_BUSY)return;
   const [qi,oi]=el.dataset.ciopt.split(".").map(Number);
   if(CI_ANS[qi]>=0)return;
-  const x=qzSaveAnswer(nd,qi,oi);
-  if(!x)return;
-  CI_NEW=false;CI_ATT=x.id;CI_ANS=qzPad(x.answers,nd.qz.length);
-  paintCiNode();});
+  CI_BUSY=true;
+  try{const x=await qzSaveAnswer(nd,qi,oi);
+   if(x){CI_NEW=false;CI_ATT=x.id;CI_ANS=qzPad(x.answers,nd.qz.length);}}
+  catch(e){alert((e&&e.message)||"判卷失败，请重试");}
+  finally{CI_BUSY=false;paintCiNode();}
+ });
  const rb=document.getElementById("ciRetry");
  if(rb)rb.onclick=()=>{
   if(!confirm("重新做本节点小测？\n· 本次会另存一条新的作答记录；\n· 正确率只认每节点首次交卷，重做不会抬高成绩；\n· 旧记录完整保留，导师端可见。"))return;
@@ -3613,6 +3950,7 @@ function renderFinal(){
    启动
    =================================================================== */
 function bindStatic(){
+ bindCognitive();
  document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
  document.getElementById("syncNow").onclick=()=>{if(ONLINE&&TOKEN){setSync("warn","同步中…");pull();}else setSync("warn","本地模式");};
  document.getElementById("linksBtn").onclick=openPanel;

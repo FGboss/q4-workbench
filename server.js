@@ -825,25 +825,48 @@ function snapshot() {
     activity: buildActivityMap(D),
   };
 }
+/* 与前端 gradeRec 同一口径：题库修订后历史成绩只升不降（改题库不清零新人成绩）。
+   新作答记录用服务端判卷快照 ansOk；历史记录靠 wrong 文本 + 旧答案 oa / nz 重算。 */
+function gradeQuizRec(x) {
+  if (!x || !Array.isArray(x.answers) || !(+x.total > 0) || !x.nodeId) return x;
+  const nd = bankNode(x.nodeId);
+  if (!nd || !Array.isArray(nd.qz) || !nd.qz.length) return x;
+  const n = nd.qz.length, ans = x.answers.slice(0, n).map(v => (+v >= 0 ? +v : -1));
+  while (ans.length < n) ans.push(-1);
+  if (ans.some(v => v < 0)) return x;
+  const hasOk = Array.isArray(x.ansOk), hasWrong = Array.isArray(x.wrong);
+  if (!hasOk && !hasWrong) return x;
+  let correct = 0; const wrong = [];
+  nd.qz.forEach((q, i) => {
+    let ok;
+    if (hasOk && x.ansOk[i] !== undefined) ok = !!x.ansOk[i];
+    else if (q.nz) ok = true;
+    else if (typeof q.oa === "number" && ans[i] === q.oa) ok = true;
+    else ok = !hasWrong || x.wrong.indexOf(q.q) < 0;
+    if (ok) correct++; else wrong.push(q.q);
+  });
+  if (correct === x.correct && wrong.length === (x.wrong || []).length) return x;
+  return Object.assign({}, x, { correct, wrong, total: n });
+}
 /* 每个节点的「官方小测成绩」：独立小测记录优先；旧版打卡里自带成绩的节点作为兜底。
    只看交卷记录，避免做了一半的答案把正确率算进去。
    同一节点重做多次时，取「最早一次交卷」作为首次成绩计入口径；
    重做记录完整保留、单独展示，但不会抬高正确率，避免刷题刷分。 */
 function firstQuizPerNode(list, quizList) {
   const legacy = {}, qz = {};
-  (list || []).filter(x => (+x.total) > 0 && x.nodeId).forEach(x => {
-    const k = x.nodeId, t = toMs(x.updatedAt || x.createdAt), p = legacy[k];
+  (list || []).filter(x => (+x.total) > 0 && x.nodeId).forEach(x0 => {
+    const x = gradeQuizRec(x0), k = x.nodeId, t = toMs(x.updatedAt || x.createdAt), p = legacy[k];
     if (!p || t < toMs(p.updatedAt || p.createdAt)) legacy[k] = x;
   });
-  (quizList || []).filter(x => x.status === "done" && (+x.total) > 0 && x.nodeId).forEach(x => {
-    const k = x.nodeId, t = toMs(x.finishedAt || x.updatedAt || x.createdAt), p = qz[k];
+  (quizList || []).filter(x => x.status === "done" && (+x.total) > 0 && x.nodeId).forEach(x0 => {
+    const x = gradeQuizRec(x0), k = x.nodeId, t = toMs(x.finishedAt || x.updatedAt || x.createdAt), p = qz[k];
     if (!p || t < toMs(p.finishedAt || p.updatedAt || p.createdAt)) qz[k] = x;
   });
   return Object.values(Object.assign({}, legacy, qz));
 }
 function quizSum(list) {
   let correct = 0, total = 0;
-  list.forEach(x => { correct += Math.max(0, +x.correct || 0); total += Math.max(0, +x.total || 0); });
+  list.forEach(x0 => { const x = gradeQuizRec(x0); correct += Math.max(0, +x.correct || 0); total += Math.max(0, +x.total || 0); });
   return { correct, total, acc: total > 0 ? Math.round(correct * 100 / total) : null };
 }
 /* 已完成小测的节点：独立小测交卷 或 旧版打卡记录里带小测成绩 */
@@ -1972,7 +1995,7 @@ app.post("/api/activate", (req, res) => {
 app.get("/api/state", (req, res) => {
   const me = tokenFromReq(req);
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
-  res.json({ ok: true, who: me.id, role: me.role, doc: DOC || null });
+  res.json({ ok: true, who: me.id, role: me.role, doc: docForClient(me, DOC || null) });
 });
 
 app.post("/api/save", async (req, res) => {
@@ -1990,7 +2013,7 @@ app.post("/api/save", async (req, res) => {
     const fresh = ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && !oldIds.has(x.id) && findUser(x.who) && findUser(x.who).role === "newbie");
     if (fresh.length) notifyNewIssues(fresh);
   } catch (e) { console.error("[mail] issue", e.message); }
-  res.json({ ok: true, doc: DOC });
+  res.json({ ok: true, doc: docForClient(me, DOC) });
 });
 
 /* ---------- 账号管理（仅超级管理员） ---------- */
@@ -2678,15 +2701,21 @@ function patchedBankSource() {
       if (f.neutralize) q.nz = 1;
     }
   });
-  return "window.BANK = " + JSON.stringify(bank) + ";\n";
+  /* 下发给浏览器的题库必须去掉「答案下标 a」和「解析 w」，判卷只走 /api/quiz/answer。
+     oa / nz 不是当前答案（oa 是修订前的旧答案），保留它们用于历史成绩重算。 */
+  const client = JSON.parse(JSON.stringify(bank));
+  (client.levels || []).forEach(L => (L.nodes || []).forEach(n => (n.qz || []).forEach(q => {
+    delete q.a; delete q.w;
+  })));
+  return "window.BANK = " + JSON.stringify(client) + ";\n";
 }
 let BANK_DATA = null;
 const BANK_PATCHED = patchedBankSource();
-if (BANK_PATCHED) {
-  app.get("/bank.js", (req, res) => {
-    res.type("application/javascript").send(BANK_PATCHED);
-  });
-}
+/* 始终用服务端脱敏版本覆盖 /bank.js：脱敏失败时返回空题库（宁可小测不可用，也不泄露答案） */
+app.get("/bank.js", (req, res) => {
+  if (!BANK_PATCHED) console.error("[bank] 脱敏失败：拒绝下发展开含答案的题库");
+  res.type("application/javascript").send(BANK_PATCHED || "window.BANK={meta:{},levels:[]};\n");
+});
 
 /* ---------- 错题复练（变式题） ----------
    原则：
@@ -2744,6 +2773,24 @@ function persistDoc() {
   broadcast(); docWriter.kick();
 }
 const isStaffRole = me => !!me && ["admin", "lead", "mentor"].includes(me.role);
+/* 非导师/主管：只保留「自己」的作答明细（选项 / 对错 / 正确答案 / 解析），
+   他人的作答记录只留成绩与状态，避免从 /api/state、/api/save 回包里反推出正确答案。
+   导师/主管看答案走 /api/quiz/key，不影响任何现有功能。 */
+function docForClient(me, doc) {
+  if (!doc || isStaffRole(me)) return doc;
+  const q = doc.quiz;
+  if (!q || !Array.isArray(q.list)) return doc;
+  const list = q.list.map(x => {
+    if (!x || x.who === me.id) return x;
+    const g = gradeQuizRec(x);
+    const y = Object.assign({}, x);
+    delete y.ansA; delete y.ansW; delete y.ansOk; delete y.answers; delete y.wrong;
+    /* 服务端已按修订层重算过成绩：补回 correct/total，保证他人看到的分数与报告口径一致 */
+    y.correct = g.correct; y.total = g.total;
+    return y;
+  });
+  return Object.assign({}, doc, { quiz: Object.assign({}, q, { list }) });
+}
 
 app.get("/api/variants", (req, res) => {
   const me = tokenFromReq(req);
@@ -2808,6 +2855,77 @@ app.post("/api/retest/submit", (req, res) => {
   DOC.retests.t = Date.now();
   persistDoc();
   res.json({ ok: true, result: { correct, total: detail.length }, detail });
+});
+
+/* ---------- 小测：服务端判卷 + 服务端落记录 ----------
+   题库 /bank.js 不下发答案（a / w 已剔除），新人每选一题调用这里取判定与解析。
+   关键：判卷与记录都在服务端完成，同一题只认第一次作答 —— 只调接口刷答案拿不到别的题的答案。
+   历史作答仍按 answers / correct / wrong 保留；新作答额外记录 ansA / ansOk / ansW，便于复查。 */
+function quizAttFor(x) {
+  return { id: x.id, status: x.status, updatedAt: x.updatedAt,
+    answers: (x.answers || []).slice(), ansA: (x.ansA || []).slice(), ansOk: (x.ansOk || []).slice(),
+    ansW: (x.ansW || []).slice(), wrong: (x.wrong || []).slice(), correct: x.correct, total: x.total };
+}
+app.post("/api/quiz/answer", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录" });
+  const b = req.body || {};
+  const nid = String(b.nodeId || "");
+  const nd = bankNode(nid);
+  if (!nd || !Array.isArray(nd.qz) || !nd.qz.length) return res.status(404).json({ ok: false, msg: "节点不存在" });
+  const n = nd.qz.length, qi = Number(b.qi), oi = Number(b.oi), q = nd.qz[qi];
+  if (!q || !(qi >= 0) || !(oi >= 0 && oi < (q.o || []).length)) return res.status(400).json({ ok: false, msg: "题目或选项无效" });
+
+  if (!DOC) DOC = emptyDoc();
+  DOC.quiz = DOC.quiz || { t: 0, list: [] };
+  DOC.quiz.list = DOC.quiz.list || [];
+  const attId = String(b.attId || "");
+  let x = attId ? (DOC.quiz.list.find(y => y.id === attId && y.who === me.id && !y.del) || null)
+                : (DOC.quiz.list.find(y => y.who === me.id && y.nodeId === nid && y.status === "doing" && !y.del) || null);
+  const meta = b.meta || {};
+  if (!x) {
+    const now = Date.now();
+    x = { id: attId || uid(), who: me.id, nodeId: nid, level: meta.level || "", module: meta.module || "", line: meta.line || "",
+      answers: nd.qz.map(() => -1), status: "doing", startedAt: now, createdAt: now, updatedAt: now };
+    DOC.quiz.list.push(x);
+  }
+  if (x.status !== "doing") return res.status(409).json({ ok: false, msg: "本次已交卷" });
+  x.answers = Array.isArray(x.answers) ? x.answers : [];
+  while (x.answers.length < n) x.answers.push(-1);
+  /* 同一题重复提交：不覆盖第一次作答，直接回已记录的结果 */
+  if (x.answers[qi] >= 0) {
+    return res.json({ ok: true, hit: !!(x.ansOk && x.ansOk[qi]), a: (x.ansA || [])[qi], w: (x.ansW || [])[qi] || "", rec: quizAttFor(x) });
+  }
+  const hit = oi === q.a, now = Date.now();
+  x.answers[qi] = oi;
+  x.ansA = Array.isArray(x.ansA) ? x.ansA : [];
+  x.ansOk = Array.isArray(x.ansOk) ? x.ansOk : [];
+  x.ansW = Array.isArray(x.ansW) ? x.ansW : [];
+  x.ansA[qi] = q.a; x.ansOk[qi] = hit; x.ansW[qi] = q.w || "";
+  x.answerAt = Array.isArray(x.answerAt) ? x.answerAt : [];
+  x.answerAt[qi] = now;
+  x.updatedAt = now;
+  if (x.answers.every(v => v >= 0)) {
+    x.status = "done";
+    x.correct = x.ansOk.filter(Boolean).length;
+    x.total = n;
+    x.wrong = nd.qz.map((qq, i) => (x.ansOk[i] ? null : qq.q)).filter(Boolean);
+    x.finishedAt = now;
+  }
+  DOC.quiz.t = now;
+  persistDoc();
+  res.json({ ok: true, hit, a: q.a, w: q.w || "", rec: quizAttFor(x) });
+});
+/* 正确答案只在「本人已交卷」或导师/主管复查时下发，避免未答先看答案 */
+app.get("/api/quiz/key", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录" });
+  const nid = String((req.query && req.query.nodeId) || "");
+  const nd = bankNode(nid);
+  if (!nd || !Array.isArray(nd.qz)) return res.status(404).json({ ok: false, msg: "节点不存在" });
+  const done = (((DOC && DOC.quiz && DOC.quiz.list) || [])).some(x => !x.del && x.nodeId === nid && x.status === "done" && x.who === me.id);
+  if (!isStaffRole(me) && !done) return res.status(403).json({ ok: false, msg: "交卷后可查看答案" });
+  res.json({ ok: true, a: nd.qz.map(q => q.a), w: nd.qz.map(q => q.w || "") });
 });
 
 app.use(express.static(path.join(__dirname, "public")));
