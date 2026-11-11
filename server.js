@@ -15,6 +15,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const zlib = require("zlib");
 const attentionEngine = require("./engine/attention");
+const recognitionEngine = require("./engine/recognition");
 const PORT = process.env.PORT || 3000;
 const APP_SECRET = process.env.APP_SECRET || "q4-workbench-2026";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -1116,6 +1117,9 @@ function buildNewbieDaily(u, day, S0) {
   const blocked = open.filter(v => v.blocked);
   const mlines = latestEvalRecent(u, "daily", 7).split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
   const aiLines = mlines.length ? [] : aiEvalLines(u);
+  /* 认可：优先讲今天做了什么；今天没有，再退到本周亮点。没有证据就不硬夸。 */
+  const rec = recognitionAll().byWho[u.id] || null;
+  const good = rec ? (rec.todayH.length ? rec.todayH : rec.highlights.map(x => x.text).slice(0, 2)) : [];
   const steps = nextStepsFor(u, S, s, dayKey);
   const stepTitle = "我的下一步（按优先级）";
 
@@ -1164,6 +1168,11 @@ function buildNewbieDaily(u, day, S0) {
   return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
     <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${dayKey} 今日小结</span></div>
     <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLine}</div>
+    ${mailBox(good.length ? "今天做得好的" : "今天还没有记录",
+      good.length
+        ? `<ul style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#274A0F">${good.slice(0, 4).map(t => `<li>${h(t)}</li>`).join("")}</ul>
+           <div style="font-size:12px;color:#7C8896;margin-top:4px">${h(rec.support || "")}</div>`
+        : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">不用补记录。从一次打卡或一条任务进展开始，系统就会记下来。</div>`, "green")}
     ${mailBox("我的今日进展", progressTable, "green")}
     ${mailBox("卡住的地方", blockHtml, blockItems.length ? "red" : "green")}
     ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
@@ -1185,6 +1194,7 @@ function buildDailyReport(day, opts) {
   const rows = newbies.map(u => {
     const s = userStats(u, [today], S);
     const risk = riskOf(u, S, s, today);
+    const rec = recognitionAll().byWho[u.id] || null;
     const steps = nextStepsFor(u, S, s, today);
     const allTasks = tasksOf(u, S);
     const closed = allTasks.filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === today);
@@ -1216,7 +1226,7 @@ function buildDailyReport(day, opts) {
     if (returned.length) bits.push(`有 ${returned.length} 项被退回待改`);
     const oneLine = bits.length ? "今天" + bits.join("、") + "。"
       : (s.activeAt ? "今天有登录/浏览动作，但没有产生可记录的推进。" : "今天还没有任何动作。");
-    return { u, s, risk, steps, logs, closed, newCars, touchedCars, submitted, nodeNames, todayIssues, drillsToday, blocked, returned, mlines, aiLines, oneLine };
+    return { u, s, risk, rec, steps, logs, closed, newCars, touchedCars, submitted, nodeNames, todayIssues, drillsToday, blocked, returned, mlines, aiLines, oneLine };
   });
   const reds = rows.filter(x => x.risk.level === "red");
   const yels = rows.filter(x => x.risk.level === "yellow");
@@ -1271,6 +1281,9 @@ function buildDailyReport(day, opts) {
       </div>
       <div style="margin-top:5px;font-size:12.9px;color:#2C3E50">${x.oneLine}</div>
       ${progress}
+      ${x.rec && (x.rec.todayH.length || x.rec.highlights.length)
+        ? `<div style="margin-top:5px;font-size:12.6px;color:#274A0F"><b>值得肯定：</b>${(x.rec.todayH.length ? x.rec.todayH : x.rec.highlights.map(y => y.text)).slice(0, 3).map(h).join("；")}</div>`
+        : ""}
       <div style="margin-top:5px;font-size:12.6px;color:#8C2B1F"><b>卡点与风险：</b>${riskLine.length ? riskLine.slice(0, 4).map(h).join("；") : '<span style="color:#3C6B1A">今日无明显卡点</span>'}</div>
       <div style="margin-top:4px;font-size:12.6px;color:#1A5276"><b>建议下一步：</b>${x.steps.map(h).join("；")}</div>
       <div style="margin-top:4px;font-size:12.6px;color:#7A4C12"><b>${x.aiLines.length ? "AI 主管观察（导师暂未点评）" : "导师要求"}：</b>${x.mlines.length ? x.mlines.slice(0, 3).map(h).join("；")
@@ -1442,6 +1455,7 @@ function buildNewbieWeekly(u, day, S0) {
   const blocked = acts.filter(v => taskOpen(v) && v.blocked);
   const mlines = latestEvalRecent(u, "weekly", 7).split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
   const aiLines = mlines.length ? [] : aiEvalLines(u);
+  const recW = recognitionAll().byWho[u.id] || null;
   const steps = nextStepsFor(u, S, s, range.end);
   const stepTitle = "下周 3 件事（系统建议）";
 
@@ -1490,6 +1504,9 @@ function buildNewbieWeekly(u, day, S0) {
   return { range, html: `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:14px 16px;margin-top:12px">
     <div style="font-size:15px;font-weight:700;color:#17558F">${h(u.name)} <span style="font-size:12px;color:#7C8896;font-weight:400">${range.start} ～ ${range.end} 周报</span></div>
     <div style="margin-top:6px;font-size:13px;color:#2C3E50">${oneLine}</div>
+    ${recW && recW.highlights.length ? mailBox("本周高光",
+      `<ul style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#274A0F">${recW.highlights.map(x => `<li>${h(x.text)}</li>`).join("")}</ul>
+       <div style="font-size:12px;color:#7C8896;margin-top:4px">${h(recW.support)}</div>`, "green") : ""}
     ${mailBox("本周成果", ach.length ? ul(ach) : `<div style="font-size:12.5px;color:#7C8896">本周还没有闭环或学习记录</div>`, "green")}
     ${mailBox("与上周对比", `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:4px"><tr style="text-align:left"><td style="padding:5px 8px;color:#7C8896">指标</td><td style="padding:5px 8px;color:#7C8896">本周</td><td style="padding:5px 8px;color:#7C8896">上周同期</td></tr>${cmp}</table>`, "yellow")}
     ${mailBox("本周卡点与应对", blockHtml, blockItems.length ? "red" : "green")}
@@ -2599,6 +2616,61 @@ app.get("/api/attention", (req, res) => {
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
   try { res.json(Object.assign({ ok: true }, attentionPayload(me))); }
   catch (e) { console.error("[attention]", e.message); res.status(500).json({ ok: false, msg: "待办生成失败" }); }
+});
+
+/* ---------- 认可引擎：把新人真实做过的事讲出来（不是打分，不排名） ----------
+   规则在 engine/recognition.js；这里只做数据整理与角色过滤。
+   DOC.t 变化才重算，日报/周报多次调用不会重复计算。 */
+let REC_CACHE = { t: -1, day: "", data: null };
+function weekStartOf(day) {
+  const d = new Date(day + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+function recognitionAll() {
+  const day = bjKey(Date.now());
+  const t = DOC ? (DOC.t || 0) : 0;
+  if (REC_CACHE.data && REC_CACHE.t === t && REC_CACHE.day === day) return REC_CACHE.data;
+  const S = snapshot();
+  const newbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active !== false);
+  const tasks = [];
+  S.carriers.forEach(c => (c.actions || []).filter(v => !v.del).forEach(v => tasks.push({
+    ownerId: v.owner || c.who, carrierName: c.name, text: v.text || "",
+    st: v.st || 0, cfmAt: toMs(v.cfmAt), updatedAt: toMs(v.updatedAt), createdAt: toMs(v.createdAt),
+    logs: (v.log || []).filter(l => !l.del).map(l => ({ by: l.by, at: toMs(l.at) })),
+  })));
+  const data = recognitionEngine.build({
+    now: Date.now(), day, weekStart: weekStartOf(day),
+    people: newbies.map(u => ({ id: u.id, name: u.name })),
+    checkins: S.checkins.map(x => ({ who: x.who, at: toMs(x.at || x.createdAt), nodeId: x.nodeId, module: x.module })),
+    quiz: S.quiz.map(x => ({ who: x.who, at: toMs(x.updatedAt || x.finishedAt || x.createdAt),
+      correct: x.correct || 0, total: x.total || 0, nodeId: x.nodeId })),
+    tasks,
+    issues: S.issues.map(x => ({ who: x.who, createdAt: toMs(x.createdAt), status: x.status || 0,
+      replies: (x.replies || []).map(r => ({ by: r.by, at: toMs(r.at) })) })),
+    drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt), score: x.score || "", topic: x.topic || "" })),
+    deposits: S.deposits.map(x => ({ who: x.who, at: toMs(x.createdAt), title: x.title || "" })),
+    retests: ((DOC && DOC.retests && DOC.retests.list) || []).filter(x => !x.del)
+      .map(x => ({ who: x.who, at: toMs(x.at), items: x.items || [] })),
+    planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {},
+  });
+  REC_CACHE = { t, day, data };
+  return data;
+}
+function recognitionPayload(me) {
+  const data = recognitionAll();
+  if (me && me.role === "newbie") {
+    const mine = data.byWho[me.id] || null;
+    return { at: data.at, day: data.day, weekStart: data.weekStart,
+      byWho: mine ? { [me.id]: mine } : {}, team: mine && mine.highlights.length ? [{ id: me.id, name: mine.name, top: mine.highlights[0].text, count: mine.highlights.length }] : [] };
+  }
+  return data;
+}
+app.get("/api/recognition", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  try { res.json(Object.assign({ ok: true }, recognitionPayload(me))); }
+  catch (e) { console.error("[recognition]", e.message); res.status(500).json({ ok: false, msg: "认可数据生成失败" }); }
 });
 
 /* 自动升级：超期 3 天 / 停滞 10 天 → 自动开一条「协助」，导师 48 小时不处理再升级主管。

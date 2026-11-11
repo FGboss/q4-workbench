@@ -493,6 +493,7 @@
 
   <div id="brainBar" class="hide"></div>
   <div id="homeBox"></div>
+  <div id="recogBox"></div>
 
   <div id="tab-plan">
     <div class="pbrief" id="pbrief-plan"></div>
@@ -593,6 +594,10 @@
     <section id="attnSec">
       <h2>今天先处理这些 <span class="h">系统按「红灯优先 + 等了多久」自动排序；待验收可直接在这里通过或退回，不用逐个客户翻</span></h2>
       <div id="mQueue"></div>
+    </section>
+    <section id="recogSec">
+      <h2>本周值得表扬 <span class="h">只列新人真实做过的事，不打分、不排名；看到就顺手在评价里回一句，认可比加分更有用</span></h2>
+      <div id="mRecog"></div>
     </section>
     <section id="brainSec">
       <h2>AI 判断 · 今日优先级 <span class="h">只做判断和排序，不改任何数据 · 依据是平台实时数据，不是模板 · 没配模型时自动用规则版</span></h2>
@@ -1404,11 +1409,11 @@ function statCard(v,k){return `<div class="stat"><div class="v">${v}</div><div c
 /* 按标签页分组渲染：只重绘「当前可见」的面板，避免每次操作都全量重绘 7 个面板造成卡顿；
    同一帧内多次渲染请求用 requestAnimationFrame 合并，进一步减少重绘次数。
    切换标签页时自动重绘目标页；跨页聚合（如成长看板）在切到该页时重新计算，数据与逻辑不受影响。 */
-const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[renderCoach],monitor:[renderMonitor,renderDuty,renderQueue],review:[renderReview]};
+const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[renderCoach],monitor:[renderMonitor,renderDuty,renderQueue,renderRecognition],review:[renderReview]};
 let _rPend=null;
 function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
 function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
-function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();loadAttention(false);_queueRender(TAB);}
+function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();loadAttention(false);loadRecognition(false);_queueRender(TAB);}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
  render();
@@ -1583,6 +1588,67 @@ function taskReject(k){
  o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
  taskLog(o.v,"导师退回："+(r||"请补充完成证据后再提交"));
  taskCommit(o);loadAttention(true);
+}
+
+/* ===================================================================
+   认可（服务端 engine/recognition.js 是唯一规则源）
+   只讲真实动作，不打分、不排名；没有记录就不硬夸。
+   =================================================================== */
+let REC=null,REC_T=0,REC_BUSY=false;
+function loadRecognition(force){
+ if(!WHO)return;
+ if(!force&&REC&&Date.now()-REC_T<60000){renderRecognition();return;}
+ if(REC_BUSY)return;REC_BUSY=true;
+ apiGet("/api/recognition").then(r=>{
+  const d=(r&&r.data)||{};
+  if(d&&d.ok){REC=d;REC_T=Date.now();renderRecognition();}
+ }).catch(()=>{}).then(()=>{REC_BUSY=false;});
+}
+function weekChips(w){
+ const c=[];
+ if(w.nodes)c.push(`打卡 ${w.nodes} 个节点`);
+ if(w.quizTotal)c.push(`小测 ${w.quizCorrect}/${w.quizTotal}`);
+ if(w.closed)c.push(`闭环 ${w.closed} 项`);
+ if(w.logs)c.push(`进展 ${w.logs} 条`);
+ if(w.issues)c.push(`提问题 ${w.issues} 个`);
+ if(w.drills)c.push(`演练 ${w.drills} 次`);
+ if(w.deposits)c.push(`沉淀 ${w.deposits} 篇`);
+ if(w.streak>=2)c.push(`连续 ${w.streak} 天`);
+ return c;
+}
+function renderRecognition(){
+ const box=document.getElementById("recogBox"),mb=document.getElementById("mRecog");
+ if(box)box.innerHTML="";
+ if(mb)mb.innerHTML="";
+ if(!REC)return;
+ if(isNew()){
+  if(!box||TAB!=="plan")return;
+  const r=(REC.byWho||{})[WHO];if(!r)return;
+  const chips=weekChips(r.week||{}),hs=r.highlights||[];
+  box.innerHTML=`<div class="card pad" style="margin-top:16px;border-left:4px solid ${hs.length?"var(--green)":"var(--line)"}">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:230px">
+        <div class="muted" style="font-size:12px;font-weight:700;letter-spacing:.3px">AI 主管认可 · 来自真实记录</div>
+        <div style="font-size:15.4px;font-weight:700;margin-top:4px;line-height:1.6">${esc(r.headline||"这周还没留下记录")}</div>
+      </div><span class="tag ${hs.length?"ok":"gy"}">本周</span>
+    </div>
+    ${chips.length?`<div class="chips" style="margin-top:10px">${chips.map(x=>`<span class="chip k2">${esc(x)}</span>`).join("")}</div>`:""}
+    ${hs.length>1?`<div class="muted" style="margin-top:8px;font-size:12.8px">${hs.slice(1).map(x=>"· "+esc(x.text)).join("　")}</div>`:""}
+    <div class="muted" style="margin-top:9px;font-size:12.6px">${esc(r.support||"")}</div>
+  </div>`;
+  return;
+ }
+ if(!mb)return;
+ const rows=Object.keys(REC.byWho||{}).map(id=>{
+  const r=REC.byWho[id];if(!r)return "";
+  const hs=r.highlights||[];
+  return `<div style="border-top:1px dashed var(--line);padding:9px 2px">
+   <b>${esc(r.name)}</b><span class="muted" style="font-size:12.4px"> · 本周 ${hs.length} 项值得肯定</span>
+   <div class="muted" style="margin-top:3px;font-size:12.8px">${hs.length?esc(hs[0].text):"本周还没有留下动作记录"}</div>
+  </div>`;
+ }).join("");
+ mb.innerHTML=`<div class="card pad">${rows||'<div class="qEmpty">暂无新人账号</div>'}
+  <div class="muted" style="margin-top:10px;font-size:12.2px">认可来自打卡、小测、进展、闭环、求助、演练、沉淀这些真实记录；没有记录时不会硬夸。</div></div>`;
 }
 /* 段位路径：本段位节点从左到右，点亮即完成（不鼓励跳着做） */
 function pathStrip(who,L){
