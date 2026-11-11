@@ -1035,13 +1035,13 @@ async function openInfo(){
 
 /* 平台反馈：一键选感受 + 一句话，不弹窗打断，不记名给导师看 */
 function openFeedback(){
- paintModal(`<h3 style="margin-bottom:4px">给平台提个意见</h3>
-  <div class="muted">哪里最麻烦、希望怎么改？选一个感受，再写一句就行。内容只给导师/主管看。</div>
+ paintModal(`<div class="mh"><b>给平台提个意见</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div style="padding:14px 18px 18px"><div class="muted">哪里最麻烦、希望怎么改？选一个感受，再写一句就行。内容只给导师/主管看。</div>
   <div class="row" style="margin-top:14px" id="fbScores">
    ${["有用","一般","卡住了"].map(s=>`<button class="btn gh sm" data-fbscore="${s}">${s}</button>`).join("")}
   </div>
   <div class="form" style="margin-top:12px"><textarea id="fbText" placeholder="例：验收要一个个客户翻；希望把控页能直接通过（可留空）"></textarea></div>
-  <div class="row" style="margin-top:12px"><button class="btn sm" id="fbSend">提交</button><span class="muted" id="fbMsg"></span></div>`);
+  <div class="row" style="margin-top:12px"><button class="btn sm" id="fbSend">提交</button><span class="muted" id="fbMsg"></span></div></div>`);
  let score="";
  document.querySelectorAll("[data-fbscore]").forEach(b=>b.onclick=()=>{
   score=b.dataset.fbscore;
@@ -1440,15 +1440,15 @@ const GLOSS_ALL=[
 function gloss(k){return `<button class="glossBtn" data-gloss="${esc(k)}" title="这是什么？">ⓘ</button>`;}
 function showGloss(k){
  const d=GLOSS[k];if(!d)return;
- paintModal(`<h3 style="margin-bottom:8px">名词解释</h3>
-  <div class="card pad" style="margin-top:6px"><b>${esc(k)}</b><div class="muted" style="margin-top:6px">${esc(d)}</div></div>
-  <div class="row" style="margin-top:14px"><button class="btn gh sm" data-act="glossall">看全部名词</button></div>`);
+ paintModal(`<div class="mh"><b>名词解释</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div style="padding:14px 18px 18px"><div class="card pad" style="margin-top:6px"><b>${esc(k)}</b><div class="muted" style="margin-top:6px">${esc(d)}</div></div>
+  <div class="row" style="margin-top:14px"><button class="btn gh sm" data-act="glossall">看全部名词</button></div></div>`);
 }
 function openGlossAll(){
- paintModal(`<h3 style="margin-bottom:4px">名词解释 · 口径表</h3>
-  <div class="muted">平台里所有会让人「看不懂」的名词，都在这里用一句话说清。指标口径也在这里。</div>
+ paintModal(`<div class="mh"><b>名词解释 · 口径表</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div style="padding:14px 18px 18px"><div class="muted">平台里所有会让人「看不懂」的名词，都在这里用一句话说清。指标口径也在这里。</div>
   <dl class="glossList">${GLOSS_ALL.map(sec=>`<dt style="color:var(--ink2);margin-top:18px">${esc(sec.g)}</dt>`+
-    sec.items.map(k=>`<dt>${esc(k)}</dt><dd>${esc(GLOSS[k]||"")}</dd>`).join("")).join("")}</dl>`);
+    sec.items.map(k=>`<dt>${esc(k)}</dt><dd>${esc(GLOSS[k]||"")}</dd>`).join("")).join("")}</dl></div>`);
 }
 /* 复习排程（FSRS 简化版）：按首次小测正确率给间隔 —— 全对 7 天、≥70% 3 天、其余 1 天。 */
 function reviewQueue(who){
@@ -1559,9 +1559,9 @@ function renderQueue(){
 function openQueue(){
  const list=attItems();
  const mine=isStaff()?list:list.filter(x=>x.who===WHO);
- paintModal(`<h3 style="margin-bottom:4px">${isStaff()?"今天要处理":"我的待办"}</h3>
-  <div class="muted">按「红灯优先 + 等待时长」排序，共 ${mine.length} 项。</div>
-  <div class="qWrap" style="margin-top:12px">${mine.length?mine.map(qRow).join(""):'<div class="qEmpty">暂无待办</div>'}</div>`);
+ paintModal(`<div class="mh"><b>${isStaff()?"今天要处理":"我的待办"}</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div style="padding:14px 18px 18px"><div class="muted">按「红灯优先 + 等待时长」排序，共 ${mine.length} 项。</div>
+  <div class="qWrap" style="margin-top:12px">${mine.length?mine.map(qRow).join(""):'<div class="qEmpty">暂无待办</div>'}</div></div>`);
 }
 /* 任务操作抽到公共函数：客户卡片和待办队列共用同一套逻辑 */
 function taskPair(k){
@@ -1735,11 +1735,11 @@ const TOUR_STEPS=[
  {t:"⑤ 任务标签告诉你轮到谁",d:"「等待导师验收 / 退回待改」看标签就知道该谁动了。",sel:"carrierBlk",tab:"plan"}
 ];
 function openTour(){
- paintModal(`<h3 style="margin-bottom:4px">3 分钟导览</h3>
-  <div class="muted">按顺序看一遍，就知道这个平台从哪下手。</div>
+ paintModal(`<div class="mh"><b>3 分钟导览</b><button class="btn gh sm" id="ovlClose">关闭</button></div>
+  <div style="padding:14px 18px 18px"><div class="muted">按顺序看一遍，就知道这个平台从哪下手。</div>
   ${TOUR_STEPS.map((s,i)=>`<div class="tourStep"><div class="sn">${i+1}</div>
    <div class="tx"><b>${esc(s.t)}</b><br>${esc(s.d)}</div>
-   <button class="btn sm gh" data-tour="${i}">看这里</button></div>`).join("")}`);
+   <button class="btn sm gh" data-tour="${i}">看这里</button></div>`).join("")}</div>`);
 }
 /* 动作分发：首页按钮 / 导览按钮共用一套委托，避免到处绑事件 */
 function actGo(kind,val){
