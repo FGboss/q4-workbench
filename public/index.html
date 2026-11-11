@@ -379,6 +379,19 @@
   .tourStep button{flex:none;align-self:center}
   .tourFlash{animation:tflash 1.4s ease 2}
   @keyframes tflash{0%,100%{box-shadow:0 0 0 0 rgba(23,85,143,0)}50%{box-shadow:0 0 0 6px rgba(23,85,143,.35)}}
+  /* 统一待办队列（服务端引擎输出） */
+  .tabBadge{display:inline-block;min-width:17px;height:17px;line-height:17px;border-radius:9px;background:#D9480F;
+    color:#fff;font-size:11px;font-weight:700;text-align:center;padding:0 5px;margin-left:6px;vertical-align:1px}
+  .qWrap{display:flex;flex-direction:column;gap:9px}
+  .qRow{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;border:1px solid var(--line);
+    border-left:3px solid #C9D3DE;border-radius:11px;padding:11px 14px;background:#fff}
+  .qRow.red{border-left-color:var(--red);background:#FFFCFB}
+  .qRow.yellow{border-left-color:#D08A2C}
+  .qRow .qt{flex:1;min-width:210px}
+  .qRow .qtt{font-size:13.8px;font-weight:700;line-height:1.6}
+  .qRow .qdd{font-size:12.6px;color:var(--ink3);margin-top:3px}
+  .qRow .qops{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .qEmpty{font-size:13.2px;color:var(--ink3);border:1px dashed #CFD8E2;border-radius:11px;padding:18px;text-align:center}
   @media(max-width:900px){
     .t3grid,.pbrief .pbRow{grid-template-columns:1fr}
   }
@@ -577,6 +590,10 @@
 
   <div id="tab-monitor" class="hide">
     <div class="pbrief" id="pbrief-monitor"></div>
+    <section id="attnSec">
+      <h2>今天先处理这些 <span class="h">系统按「红灯优先 + 等了多久」自动排序；待验收可直接在这里通过或退回，不用逐个客户翻</span></h2>
+      <div id="mQueue"></div>
+    </section>
     <section id="brainSec">
       <h2>AI 判断 · 今日优先级 <span class="h">只做判断和排序，不改任何数据 · 依据是平台实时数据，不是模板 · 没配模型时自动用规则版</span></h2>
       <div id="brainBox"></div>
@@ -664,7 +681,7 @@ function applyAccounts(list){
  const nm={},nw=[];
  ACCOUNTS.forEach(u=>{nm[u.id]=u.name||u.username||u.id;if(u.role==="newbie")nw.push(u.id);});
  // 兜底（离线/本地模式下仍要能渲染）
- nm.lead=nm.lead||"主管";nm.mentor=nm.mentor||"导师";nm.zhan=nm.zhan||"詹祥雨";nm.tong=nm.tong||"童伟桀";
+ nm.lead=nm.lead||"主管";nm.mentor=nm.mentor||"导师";nm.zhan=nm.zhan||"詹祥雨";nm.tong=nm.tong||"童伟桀";nm.system="系统";
  WHO_NAME=nm;NEWCOMERS=nw.length?nw:["zhan","tong"];
 }
 applyAccounts([{id:"lead",name:"主管",role:"lead"},{id:"mentor",name:"导师",role:"mentor"},{id:"zhan",name:"詹祥雨",role:"newbie"},{id:"tong",name:"童伟桀",role:"newbie"}]);
@@ -999,10 +1016,12 @@ async function openInfo(){
   · 成员名单、角色，由<b>超级管理员</b>在右上角「账号管理」里维护。</div>`;
  if(WHO)html+=`<div class="row" style="margin-top:14px;flex-wrap:wrap">`
   +(ONLINE&&MY_PWLESS?`<button class="btn gh sm" id="setPwBtn">设置一个密码（方便换设备登录）</button>`:"")
+  +`<button class="btn gh sm" id="fbOpen">给平台提意见</button>`
   +`<button class="btn gh sm" id="exitBtn">${ONLINE?"退出登录":"退出并切换身份"}</button></div>`;
  html+=`</div>`;
  paintModal(html);
  const eb=document.getElementById("exitBtn");if(eb)eb.onclick=logout;
+ const fb=document.getElementById("fbOpen");if(fb)fb.onclick=openFeedback;
  const sp=document.getElementById("setPwBtn");if(sp)sp.onclick=async()=>{
   const a=prompt("设置新密码（至少 4 位）：");if(a===null)return;
   if(String(a).length<4){alert("至少 4 位");return;}
@@ -1011,6 +1030,33 @@ async function openInfo(){
   const rr=await apiPost("/api/passwd",{newPassword:a});
   if(rr.data&&rr.data.ok){MY_PWLESS=false;if(rr.data.token){TOKEN=rr.data.token;try{localStorage.setItem(LS_TOKEN,TOKEN);}catch(e){}}alert("已设置密码：以后可在任意设备用「账号 + 密码」登录。");openInfo();}
   else alert((rr.data&&rr.data.msg)||"设置失败");
+ };
+}
+
+/* 平台反馈：一键选感受 + 一句话，不弹窗打断，不记名给导师看 */
+function openFeedback(){
+ paintModal(`<h3 style="margin-bottom:4px">给平台提个意见</h3>
+  <div class="muted">哪里最麻烦、希望怎么改？选一个感受，再写一句就行。内容只给导师/主管看。</div>
+  <div class="row" style="margin-top:14px" id="fbScores">
+   ${["有用","一般","卡住了"].map(s=>`<button class="btn gh sm" data-fbscore="${s}">${s}</button>`).join("")}
+  </div>
+  <div class="form" style="margin-top:12px"><textarea id="fbText" placeholder="例：验收要一个个客户翻；希望把控页能直接通过（可留空）"></textarea></div>
+  <div class="row" style="margin-top:12px"><button class="btn sm" id="fbSend">提交</button><span class="muted" id="fbMsg"></span></div>`);
+ let score="";
+ document.querySelectorAll("[data-fbscore]").forEach(b=>b.onclick=()=>{
+  score=b.dataset.fbscore;
+  document.querySelectorAll("[data-fbscore]").forEach(x=>x.classList.toggle("gh",x!==b));
+ });
+ const s=document.getElementById("fbSend");
+ if(s)s.onclick=()=>{
+  const t=((document.getElementById("fbText")||{}).value||"").trim();
+  if(!score&&!t){document.getElementById("fbMsg").textContent="选一个或写一句再提交";return;}
+  s.disabled=true;
+  apiPost("/api/feedback",{score,text:t}).then(r=>{
+   const d=(r&&r.data)||{};
+   document.getElementById("fbMsg").textContent=d.ok?"已收到，谢谢":"提交失败，请重试";
+   if(d.ok)setTimeout(closeOvl,700);
+  }).catch(()=>{s.disabled=false;document.getElementById("fbMsg").textContent="提交失败，请重试";});
  };
 }
 
@@ -1358,11 +1404,11 @@ function statCard(v,k){return `<div class="stat"><div class="v">${v}</div><div c
 /* 按标签页分组渲染：只重绘「当前可见」的面板，避免每次操作都全量重绘 7 个面板造成卡顿；
    同一帧内多次渲染请求用 requestAnimationFrame 合并，进一步减少重绘次数。
    切换标签页时自动重绘目标页；跨页聚合（如成长看板）在切到该页时重新计算，数据与逻辑不受影响。 */
-const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[renderCoach],monitor:[renderMonitor,renderDuty],review:[renderReview]};
+const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[renderCoach],monitor:[renderMonitor,renderDuty,renderQueue],review:[renderReview]};
 let _rPend=null;
 function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
 function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
-function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();_queueRender(TAB);}
+function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();loadAttention(false);_queueRender(TAB);}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
  render();
@@ -1436,6 +1482,108 @@ function allActs(who){const out=[];allCarriers().forEach(c=>{
 function pendingReviews(){return allActs().filter(o=>(o.v.st||0)!==2&&o.v.cfm===3).length;}
 function returnedTasks(who){return allActs(who).filter(o=>o.v.cfm===2&&(o.v.st||0)!==2).length;}
 function riskTasks(){return allActs().filter(o=>{const v=o.v;return (v.st||0)!==2&&(actOver(v)||actStale(v));}).length;}
+
+/* ===================================================================
+   统一待办（服务端 engine/attention.js 是唯一规则源）
+   页面只做两件事：展示、执行。禁止在这里重算「谁该做什么」。
+   =================================================================== */
+let ATT=null,ATT_T=0,ATT_BUSY=false;
+function attItems(){return (ATT&&ATT.items)||[];}
+function loadAttention(force){
+ if(!WHO)return;
+ if(!force&&ATT&&Date.now()-ATT_T<15000){attBadges();return;}
+ if(ATT_BUSY)return;ATT_BUSY=true;
+ apiGet("/api/attention").then(r=>{
+  const d=(r&&r.data)||{};
+  if(d&&d.ok){ATT=d;ATT_T=Date.now();attBadges();renderHome();if(isStaff())renderBrainBar();if(TAB==="monitor")renderQueue();}
+ }).catch(()=>{}).then(()=>{ATT_BUSY=false;});
+}
+/* 页签红点：新人看新任务/错题，导师看待验收/红灯 */
+function attBadges(){
+ document.querySelectorAll("#tabs button .tabBadge").forEach(x=>x.remove());
+ if(!ATT)return;
+ const put=(tab,n)=>{if(!n)return;const b=document.querySelector('#tabs button[data-tab="'+tab+'"]');
+  if(!b)return;const s=document.createElement("span");s.className="tabBadge";
+  s.textContent=n>99?"99+":String(n);b.appendChild(s);};
+ if(isStaff()){
+  put("plan",(ATT.counts&&ATT.counts.accept)||0);
+  put("monitor",attItems().filter(x=>x.level==="red").length);
+ }else{
+  put("plan",attItems().filter(x=>x.type==="new_task").length);
+  put("coach",attItems().filter(x=>x.type==="retest").length);
+ }
+}
+/* 任务定位：直接打开对应客户 + 任务，不用自己翻 */
+function jumpRef(d){
+ const kind=d.qgo;
+ if(kind==="issue"){setTab("assist");setTimeout(()=>{const el=document.getElementById("issueList");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ if(kind==="coach"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ const cid=d.qcar||"";
+ setTab("plan");
+ if(!cid)return;
+ CUI_CAR.open[cid]=true;
+ if(d.qact)CUI.open[cid+"."+d.qact]=true;
+ render();
+ setTimeout(()=>{const el=document.querySelector('[data-ctog="'+cid+'"]');if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);
+}
+function qRow(it){
+ const lv=it.level==="red"?"red":"yellow";
+ const ops=[];
+ if(it.type==="accept"&&isStaff()){
+  ops.push(`<button class="btn sm" data-qcfm="${esc(it.ref.carrierId+"."+it.ref.actionId)}">通过</button>`);
+  ops.push(`<button class="btn sm danger" data-qrej="${esc(it.ref.carrierId+"."+it.ref.actionId)}">退回</button>`);
+ }
+ const go=it.action==="retest"||it.action==="learn"?"coach":it.ref.kind==="issue"?"issue":"task";
+ ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">去处理</button>`);
+ return `<div class="qRow ${lv}"><div class="qt">
+   <div class="qtt">${it.level==="red"?'<span class="tag no" style="margin-right:6px">红</span>':""}${esc(it.title)}</div>
+   <div class="qdd">${esc(it.detail||"")}${it.wait&&String(it.detail||"").indexOf("已等")<0?` · 已等 ${it.wait} 天`:""}</div>
+  </div><div class="qops">${ops.join("")}</div></div>`;
+}
+function renderQueue(){
+ const box=document.getElementById("mQueue");if(!box)return;
+ if(!isStaff()){box.innerHTML="";return;}
+ const its=attItems();
+ if(!its.length){box.innerHTML='<div class="card pad"><div class="qEmpty">今天没有待验收、超期或待答复，按计划推进即可。</div></div>';return;}
+ const head=its.filter(x=>x.type==="accept").slice(0,5);
+ const rest=its.filter(x=>x.type!=="accept"&&x.type!=="new_task").slice(0,7);
+ const c=(ATT&&ATT.counts)||{};
+ box.innerHTML='<div class="card pad">'
+  +'<div class="muted" style="margin-bottom:10px">红灯 <b>'+(c.red||0)+'</b> · 今日新增 <b>'+(c.newToday||0)+'</b> · 待验收 <b>'+(c.accept||0)+'</b></div>'
+  +(head.length?'<div class="muted" style="font-weight:700;color:var(--ink2);margin-bottom:8px">待你验收 · '+head.length+'</div><div class="qWrap">'+head.map(qRow).join("")+'</div>':"")
+  +(rest.length?'<div class="muted" style="font-weight:700;color:var(--ink2);margin:'+(head.length?"16px":"0")+' 0 8px">其他需要处理 · '+rest.length+'</div><div class="qWrap">'+rest.map(qRow).join("")+'</div>':"")
+  +(its.length>head.length+rest.length?'<div class="muted" style="margin-top:10px;font-size:12.4px">还有 '+(its.length-head.length-rest.length)+' 项，按红灯优先依次处理</div>':"")
+  +'</div>';
+}
+/* 「去验收 / 待办」弹窗：新人看自己的，导师看全组 */
+function openQueue(){
+ const list=attItems();
+ const mine=isStaff()?list:list.filter(x=>x.who===WHO);
+ paintModal(`<h3 style="margin-bottom:4px">${isStaff()?"今天要处理":"我的待办"}</h3>
+  <div class="muted">按「红灯优先 + 等待时长」排序，共 ${mine.length} 项。</div>
+  <div class="qWrap" style="margin-top:12px">${mine.length?mine.map(qRow).join(""):'<div class="qEmpty">暂无待办</div>'}</div>`);
+}
+/* 任务操作抽到公共函数：客户卡片和待办队列共用同一套逻辑 */
+function taskPair(k){
+ const p=String(k).split(".");
+ const it=((DOC.carriers&&DOC.carriers.list)||[]).find(x=>x.id===p[0]);if(!it)return null;
+ const v=(it.actions||[]).find(x=>x.id===p[1]);return v?{it,v}:null;
+}
+function taskLog(v,text){v.log=v.log||[];v.log.push({id:uid(),by:WHO,at:nowT(),text});if((v.st||0)===0)v.st=1;}
+function taskCommit(o){o.v.updatedAt=nowT();o.it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();}
+function taskConfirm(k){
+ const o=taskPair(k);if(!o||!isStaff())return;
+ o.v.cfm=1;o.v.st=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();
+ taskLog(o.v,"导师验收通过，"+(o.v.kind==="项目"?"项目":"任务")+"闭环。");
+ taskCommit(o);loadAttention(true);
+}
+function taskReject(k){
+ const o=taskPair(k);if(!o||!isStaff())return;
+ const r=(window.prompt("退回原因（会写进进展记录，方便新人改进）","")||"").trim();
+ o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
+ taskLog(o.v,"导师退回："+(r||"请补充完成证据后再提交"));
+ taskCommit(o);loadAttention(true);
+}
 /* 段位路径：本段位节点从左到右，点亮即完成（不鼓励跳着做） */
 function pathStrip(who,L){
  const ns=NODES.filter(n=>n.level===L.k),done=ciDone(who);
@@ -1449,27 +1597,33 @@ function pathStrip(who,L){
 }
 /* 首页 · 今天三件事：按角色只给 3 个可执行动作，避免「打开不知道该干嘛」 */
 function threeThings(){
- const out=[];
+ const out=[],A=attItems();
  if(isNew()){
+  const nt=A.filter(x=>x.type==="new_task"),rt=A.filter(x=>x.type==="retest");
   const nn=nextNodeOf(WHO),rq=reviewQueue(WHO),back=returnedTasks(WHO);
-  out.push(nn
+  out.push(nt.length
+   ?{no:"第 1 件",tt:`${nt.length} 个新任务`,dd:String(nt[0].title||"").replace(/^新任务：/,""),btn:"去看任务",act:"queue"}
+   :nn
    ?{no:"第 1 件",tt:"学 1 个新节点",dd:`「${nn.t}」—— 学完做 5 题小测，今天就算进一格。`,btn:"现在去学",act:`node:${nn.id}`}
    :{no:"第 1 件",tt:"地图已通关",dd:"进入复习与真实交付：今天挑 1 个节点复习即可。",btn:"去帮扶",act:"tab:coach",ghost:true});
-  out.push(rq.length
+  out.push(rt.length
+   ?{no:"第 2 件",tt:`复练 ${rt.length} 道错题`,dd:"同类型变式题，答对 2 次即移出错题本。",btn:"去复练",act:"retest"}
+   :rq.length
    ?{no:"第 2 件",tt:`复习 ${Math.min(rq.length,3)} 个节点`,dd:"按首次成绩排的复习队列，先巩固最容易忘的。",btn:"去复习",act:"tab:coach"}
    :{no:"第 2 件",tt:"补 1 条打卡",dd:"学—测—用任一步有记录，连续天数就不断。",btn:"去打卡",act:"tab:coach",ghost:true});
   out.push(back
    ?{no:"第 3 件",tt:`改完 ${back} 个被退回的任务`,dd:"导师已退回并写了意见，改完再提交验收。",btn:"去处理",act:"tab:plan"}
    :{no:"第 3 件",tt:"推进 1 个客户任务",dd:"写一条进展，导师才看得见过程。",btn:"去看任务",act:"tab:plan",ghost:true});
  }else{
-  const rev=pendingReviews(),alerts=mapAlerts().length;
+  const rev=ATT?(ATT.counts&&ATT.counts.accept)||0:pendingReviews();
+  const red=ATT?A.filter(x=>x.level==="red").length:0;
   const unconfirmed=NEWCOMERS.filter(id=>!(DOC.plan&&DOC.plan.confirm&&DOC.plan.confirm[id])).length;
   out.push(rev
-   ?{no:"第 1 件",tt:`验收 ${rev} 个提交`,dd:"新人已提交验收，你确认后才会闭环。",btn:"去验收",act:"tab:plan"}
-   :{no:"第 1 件",tt:"暂无待验收",dd:"今天的验收队列已清空，可以去看看进展记录。",btn:"去看进展",act:"tab:plan",ghost:true});
-  out.push(alerts
-   ?{no:"第 2 件",tt:`处理 ${alerts} 条里程碑预警`,dd:"有新人节点进度落后，先对齐节奏。",btn:"去把控",act:"tab:monitor"}
-   :{no:"第 2 件",tt:"里程碑无预警",dd:"当前节奏正常，保持即可。",btn:"去把控",act:"tab:monitor",ghost:true});
+   ?{no:"第 1 件",tt:`验收 ${rev} 个提交`,dd:"新人已提交验收，你确认后才会闭环。",btn:"去验收",act:"queue"}
+   :{no:"第 1 件",tt:"暂无待验收",dd:"今天的验收队列已清空，可以去看看进展记录。",btn:"看待办",act:"queue",ghost:true});
+  out.push(red
+   ?{no:"第 2 件",tt:`${red} 项红灯待处理`,dd:"超期 / 长期停滞 / 求助未答复，已按紧急度排好。",btn:"去处理",act:"risk"}
+   :{no:"第 2 件",tt:"暂无红灯",dd:"没有超期、停滞或未答复的求助。",btn:"看待办",act:"queue",ghost:true});
   out.push(unconfirmed
    ?{no:"第 3 件",tt:`${unconfirmed} 份培养计划待确认`,dd:"新人还没确认计划，先让他们明确目标。",btn:"去规划",act:"tab:plan"}
    :{no:"第 3 件",tt:"计划都已确认",dd:"可以进入复盘与证据整理。",btn:"去复盘",act:"tab:review",ghost:true});
@@ -1593,6 +1747,9 @@ function actGo(kind,val){
  if(kind==="node"){setTab("coach");setTimeout(()=>{try{openCiNode(val);}catch(e){console.error(e);}},80);return;}
  if(kind==="tour"){openTour();return;}
  if(kind==="glossall"){openGlossAll();return;}
+ if(kind==="queue"){openQueue();return;}
+ if(kind==="risk"){setTab("monitor");setTimeout(()=>{const el=document.getElementById("attnSec");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});},90);return;}
+ if(kind==="retest"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
 }
 function bindCognitive(){
  document.addEventListener("click",e=>{
@@ -1607,7 +1764,14 @@ function bindCognitive(){
    return;
   }
   const a=e.target.closest&&e.target.closest("[data-act]");
-  if(a){e.preventDefault();const p=String(a.dataset.act).split(":");actGo(p[0],p[1]);}
+  if(a){e.preventDefault();const p=String(a.dataset.act).split(":");actGo(p[0],p[1]);return;}
+  /* 待办队列：验收 / 退回 / 定位（和客户卡片共用同一套任务函数） */
+  const qc=e.target.closest&&e.target.closest("[data-qcfm]");
+  if(qc){e.preventDefault();taskConfirm(qc.dataset.qcfm);closeOvl();return;}
+  const qr=e.target.closest&&e.target.closest("[data-qrej]");
+  if(qr){e.preventDefault();taskReject(qr.dataset.qrej);closeOvl();return;}
+  const qg=e.target.closest&&e.target.closest("[data-qgo]");
+  if(qg){e.preventDefault();jumpRef(qg.dataset);closeOvl();return;}
  });
 }
 
@@ -2022,13 +2186,8 @@ function renderCarriers(){
   o.v.st=1;o.v.cfm=3;pushLog(o.v,"已提交验收，等待导师确认。");saveAct(o);});
  document.querySelectorAll("[data-awd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.awd);if(!o)return;
   o.v.cfm=0;pushLog(o.v,"撤回提交验收，继续完善。");saveAct(o);});
- document.querySelectorAll("[data-acfm]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.acfm);if(!o||!isStaff())return;
-  o.v.cfm=1;o.v.st=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();
-  pushLog(o.v,"导师验收通过，"+(o.v.kind==="项目"?"项目":"任务")+"闭环。");saveAct(o);});
- document.querySelectorAll("[data-arej]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.arej);if(!o||!isStaff())return;
-  const r=(window.prompt("退回原因（会写进进展记录，方便新人改进）","")||"").trim();
-  o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
-  pushLog(o.v,"导师退回："+(r||"请补充完成证据后再提交"));saveAct(o);});
+ document.querySelectorAll("[data-acfm]").forEach(b=>b.onclick=()=>taskConfirm(b.dataset.acfm));
+ document.querySelectorAll("[data-arej]").forEach(b=>b.onclick=()=>taskReject(b.dataset.arej));
  document.querySelectorAll("[data-areopen]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.areopen);if(!o||!isStaff())return;
   if(!confirm("撤销验收后该任务会重新打开，确定？"))return;
   o.v.cfm=0;o.v.st=1;o.v.cfmBy="";o.v.cfmAt=0;
@@ -3111,15 +3270,17 @@ function renderBrainBar(){
  const el=document.getElementById("brainBar");if(!el)return;
  if(!isStaff()||!BRAIN){el.classList.add("hide");el.innerHTML="";return;}
  const g=BRAIN.global||{},L=BRAIN_ST[g.state]||BRAIN_ST.steady,first=(BRAIN.focus||[])[0];
+ const c=(ATT&&ATT.counts)||null;
  el.classList.remove("hide");
  el.innerHTML='<div class="card" style="border-left:4px solid '+L.c+';padding:14px 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
   +'<div style="flex:1;min-width:250px">'
   +'<div class="muted" style="font-size:12.2px;font-weight:700;letter-spacing:.3px">AI 主管 · '+L.t+(BRAIN.source==="model"?"":" · 规则版")+'</div>'
   +'<div style="font-size:14.6px;font-weight:700;margin-top:3px;line-height:1.6">'+esc(g.headline||"暂无判断")+'</div>'
   +(first?'<div class="muted" style="margin-top:3px;font-size:12.6px">先处理：<b>'+esc(first.name)+'</b> — '+esc(first.verdict||"")+'</div>':"")
-  +'</div><button class="btn sm" id="brainGo">看优先级</button></div>';
+  +(c?'<div class="muted" style="margin-top:4px;font-size:12.2px">今日待办 <b>'+c.total+'</b> 项 · 红灯 <b>'+c.red+'</b> · 今日新增 <b>'+c.newToday+'</b>　（清单在上方「今天先处理这些」）</div>':"")
+  +'</div><button class="btn sm" id="brainGo">看待办</button></div>';
  const go=document.getElementById("brainGo");
- if(go)go.onclick=()=>{const b=document.querySelector('#tabs button[data-tab="monitor"]');if(b)b.click();};
+ if(go)go.onclick=()=>{const el2=document.getElementById("attnSec");if(el2)el2.scrollIntoView({behavior:"smooth",block:"start"});};
 }
 function renderBrain(){
  const sec=document.getElementById("brainSec"),box=document.getElementById("brainBox");
@@ -3329,21 +3490,21 @@ function renderMonitor(){
       {t:"近 30 天演练 ≥ 2 次",got:d.n,need:2}];}},
    {k:"11 月末",due:"2026-11-30",items:id=>{
      const p=P(id),d=drill30(id);
-     return [{t:"客户档案 ≥ 3 份",got:p.carrier||0,need:3},
-      {t:"任务闭环 ≥ 3 项",got:p.doneTasks||0,need:3},
+     return [{t:"客户档案 ≥ 4 份",got:p.carrier||0,need:4},
+      {t:"任务闭环 ≥ 4 项",got:p.doneTasks||0,need:4},
       {t:"问题闭环 ≥ 3 条",got:p.issueClosed||0,need:3},
-      {t:"产品地图通关 ≥ 20 个节点",got:p.nodes||0,need:20},
+      {t:"产品地图通关 ≥ 28 个节点",got:p.nodes||0,need:28},
       {t:"近 30 天演练 ≥ 4 次",got:d.n,need:4},
-      {t:"演练均分 ≥ 75",got:d.avg,need:75},
+      {t:"演练均分 ≥ 78",got:d.avg,need:78},
       {t:"知识沉淀 ≥ 2 篇",got:p.deposit||0,need:2},
       {t:"10 月复盘已完成",got:rvStatus(0)(id),need:1}];}},
    {k:"12 月终评",due:"2026-12-20",items:id=>{
      const p=P(id),rt=(DOC.reviews.map||{})["tech."+id]||{};
-     return [{t:"客户档案 ≥ 4 份",got:p.carrier||0,need:4},
-      {t:"任务闭环 ≥ 6 项",got:p.doneTasks||0,need:6},
+     return [{t:"客户档案 ≥ 5 份",got:p.carrier||0,need:5},
+      {t:"任务闭环 ≥ 8 项",got:p.doneTasks||0,need:8},
       {t:"问题闭环 ≥ 6 条",got:p.issueClosed||0,need:6},
       {t:"FAE 初级条目全部达标",got:p.faeA1||0,need:p.faeT1||0},
-      {t:"FAE 中1 核心 ≥ 50%",got:p.faeA2||0,need:Math.ceil((p.faeT2||0)/2)},
+      {t:"FAE 中1 核心 ≥ 60%",got:p.faeA2||0,need:Math.ceil((p.faeT2||0)*0.6)},
       {t:"11 月复盘已完成",got:rvStatus(1)(id),need:1},
       {t:"技术评级已审批",got:rt.ok?1:0,need:1}];}}
   ];

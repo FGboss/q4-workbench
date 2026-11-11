@@ -14,6 +14,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const zlib = require("zlib");
+const attentionEngine = require("./engine/attention");
 const PORT = process.env.PORT || 3000;
 const APP_SECRET = process.env.APP_SECRET || "q4-workbench-2026";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -334,7 +335,8 @@ function emptyDoc() {
     carriers: { t: 0, list: [] }, issues: { t: 0, list: [] }, drills: { t: 0, list: [] },
     map: { t: 0, checks: [] }, kit: { t: 0, list: [] }, cards: { t: 0, list: [] }, quotes: { t: 0, list: [] },
     triggers: { t: 0, list: [] }, fae: { t: 0, map: {} }, reviews: { t: 0, map: {} }, checkins: { t: 0, list: [] },
-    quiz: { t: 0, list: [] }, deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] } };
+    quiz: { t: 0, list: [] }, deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] },
+    varState: {}, retests: { t: 0, list: [] }, feedback: { t: 0, list: [] } };
 }
 function mergeList(L, R) {
   const m = {};
@@ -359,14 +361,23 @@ function mergeMap(A, B) {
   return { t: Math.max((A && A.t) || 0, (B && B.t) || 0), map };
 }
 function mergePlain(A, B) { return ((A && A.t) || 0) >= ((B && B.t) || 0) ? (A || {}) : (B || {}); }
+/* 键值型小表（如 varState）：按条目 at 取最新，双方都没有的键不会丢 */
+function mergeKV(A, B) {
+  const m = {};
+  [A || {}, B || {}].forEach(s => { for (const k in s) { const e = m[k], c = s[k]; if (!e || (c.at || 0) >= (e.at || 0)) m[k] = c; } });
+  return m;
+}
 function mergeDoc(A, B) {
   const a = A || emptyDoc(), b = B || emptyDoc();
   const o = { v: 5, t: Math.max(a.t || 0, b.t || 0) };
   ["sec", "meta", "people", "plan"].forEach(k => o[k] = mergePlain(a[k], b[k]));
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals"].forEach(k => o[k] = mergeList(a[k], b[k]));
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "retests", "feedback"].forEach(k => o[k] = mergeList(a[k], b[k]));
   o.map = mergeChecks(a.map, b.map);
   o.fae = mergeMap(a.fae, b.fae);
   o.reviews = mergeMap(a.reviews, b.reviews);
+  /* 变式题审核状态属于「导师操作结果」，必须随 DOC 一起合并，
+     否则任何一次前端保存都会把它从内存里抹掉（点了通过、刷新又变回待审） */
+  o.varState = mergeKV(a.varState, b.varState);
   return o;
 }
 function normDoc(r) {
@@ -375,11 +386,13 @@ function normDoc(r) {
   const o = { v: 5, t: r.t || 0 };
   o.sec = (r.sec && r.sec.h) ? r.sec : e.sec;
   ["meta", "people", "plan"].forEach(k => o[k] = (r[k] && typeof r[k] === "object" && !Array.isArray(r[k])) ? r[k] : e[k]);
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals"].forEach(k =>
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "feedback"].forEach(k =>
     o[k] = (r[k] && Array.isArray(r[k].list)) ? r[k] : { t: (r[k] && r[k].t) || 0, list: [] });
   o.map = (r.map && Array.isArray(r.map.checks)) ? r.map : { t: 0, checks: [] };
   o.fae = (r.fae && r.fae.map && typeof r.fae.map === "object" && !Array.isArray(r.fae.map)) ? r.fae : { t: 0, map: {} };
   o.reviews = (r.reviews && r.reviews.map && typeof r.reviews.map === "object" && !Array.isArray(r.reviews.map)) ? r.reviews : { t: 0, map: {} };
+  o.varState = (r.varState && typeof r.varState === "object" && !Array.isArray(r.varState)) ? r.varState : {};
+  o.retests = (r.retests && Array.isArray(r.retests.list)) ? r.retests : { t: 0, list: [] };
   return o;
 }
 
@@ -1101,7 +1114,8 @@ function buildNewbieDaily(u, day, S0) {
   const open = allTasks.filter(taskOpen);
   const returned = open.filter(v => v.cfm === 2);
   const blocked = open.filter(v => v.blocked);
-  const mlines = latestEvalText(u, "daily").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const mlines = latestEvalRecent(u, "daily", 7).split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const aiLines = mlines.length ? [] : aiEvalLines(u);
   const steps = nextStepsFor(u, S, s, dayKey);
   const stepTitle = "我的下一步（按优先级）";
 
@@ -1153,7 +1167,10 @@ function buildNewbieDaily(u, day, S0) {
     ${mailBox("我的今日进展", progressTable, "green")}
     ${mailBox("卡住的地方", blockHtml, blockItems.length ? "red" : "green")}
     ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
-    ${mailBox("导师给你的要求", mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>` : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师暂未填写额外要求，按上面的下一步执行即可。</div>`, "yellow")}
+    ${mailBox(aiLines.length ? "AI 主管观察（导师暂未点评）" : "导师给你的要求",
+      mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>`
+      : aiLines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${aiLines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">AI 根据今天的打卡、小测和任务进展生成，不是导师原话；导师点评后以导师为准。</div>`
+      : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师暂未填写额外要求，按上面的下一步执行即可。</div>`, "yellow")}
   </div>`;
 }
 
@@ -1185,7 +1202,8 @@ function buildDailyReport(day, opts) {
     const open = allTasks.filter(taskOpen);
     const blocked = open.filter(v => v.blocked);
     const returned = open.filter(v => v.cfm === 2);
-    const mlines = latestEvalText(u, "daily").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+    const mlines = latestEvalRecent(u, "daily", 7).split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+    const aiLines = mlines.length ? [] : aiEvalLines(u);
     /* 今日一句话：与新人日报同口径 */
     const bits = [];
     if (closed.length) bits.push(`闭环 ${closed.length} 项（${closed.map(v => v.text).slice(0, 2).join("、")}）`);
@@ -1198,7 +1216,7 @@ function buildDailyReport(day, opts) {
     if (returned.length) bits.push(`有 ${returned.length} 项被退回待改`);
     const oneLine = bits.length ? "今天" + bits.join("、") + "。"
       : (s.activeAt ? "今天有登录/浏览动作，但没有产生可记录的推进。" : "今天还没有任何动作。");
-    return { u, s, risk, steps, logs, closed, newCars, touchedCars, submitted, nodeNames, todayIssues, drillsToday, blocked, returned, mlines, oneLine };
+    return { u, s, risk, steps, logs, closed, newCars, touchedCars, submitted, nodeNames, todayIssues, drillsToday, blocked, returned, mlines, aiLines, oneLine };
   });
   const reds = rows.filter(x => x.risk.level === "red");
   const yels = rows.filter(x => x.risk.level === "yellow");
@@ -1255,7 +1273,9 @@ function buildDailyReport(day, opts) {
       ${progress}
       <div style="margin-top:5px;font-size:12.6px;color:#8C2B1F"><b>卡点与风险：</b>${riskLine.length ? riskLine.slice(0, 4).map(h).join("；") : '<span style="color:#3C6B1A">今日无明显卡点</span>'}</div>
       <div style="margin-top:4px;font-size:12.6px;color:#1A5276"><b>建议下一步：</b>${x.steps.map(h).join("；")}</div>
-      <div style="margin-top:4px;font-size:12.6px;color:#7A4C12"><b>导师要求：</b>${x.mlines.length ? x.mlines.slice(0, 3).map(h).join("；") : '<span style="color:#7C8896">未填写，建议今天给一句明确要求</span>'}</div>
+      <div style="margin-top:4px;font-size:12.6px;color:#7A4C12"><b>${x.aiLines.length ? "AI 主管观察（导师暂未点评）" : "导师要求"}：</b>${x.mlines.length ? x.mlines.slice(0, 3).map(h).join("；")
+        : x.aiLines.length ? x.aiLines.slice(0, 3).map(h).join("；")
+        : '<span style="color:#7C8896">未填写，建议今天给一句明确要求</span>'}</div>
     </div>`;
   }).join("");
 
@@ -1420,7 +1440,8 @@ function buildNewbieWeekly(u, day, S0) {
   const prevDone = acts.filter(v => (v.st || 0) === 2 && prevDays.indexOf(bjKey(v.cfmAt || v.updatedAt)) >= 0);
   const returned = acts.filter(v => taskOpen(v) && v.cfm === 2);
   const blocked = acts.filter(v => taskOpen(v) && v.blocked);
-  const mlines = latestEvalText(u, "weekly").split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const mlines = latestEvalRecent(u, "weekly", 7).split(/\n+/).map(x => x.replace(/^\s*\d+[.、)]\s*/, "").trim()).filter(Boolean);
+  const aiLines = mlines.length ? [] : aiEvalLines(u);
   const steps = nextStepsFor(u, S, s, range.end);
   const stepTitle = "下周 3 件事（系统建议）";
 
@@ -1473,7 +1494,10 @@ function buildNewbieWeekly(u, day, S0) {
     ${mailBox("与上周对比", `<table style="border-collapse:collapse;width:100%;font-size:12.5px;margin-top:4px"><tr style="text-align:left"><td style="padding:5px 8px;color:#7C8896">指标</td><td style="padding:5px 8px;color:#7C8896">本周</td><td style="padding:5px 8px;color:#7C8896">上周同期</td></tr>${cmp}</table>`, "yellow")}
     ${mailBox("本周卡点与应对", blockHtml, blockItems.length ? "red" : "green")}
     ${mailBox(stepTitle, `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px;color:#1A5276">${steps.map(t => `<li>${h(t)}</li>`).join("")}</ol>`, "yellow")}
-    ${mailBox("导师评价", mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>` : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师本周未点评（系统已提醒导师）。有疑问可直接在工作台「② 协助」发起求助。</div>`, "green")}
+    ${mailBox(aiLines.length ? "AI 主管观察（导师本周未点评）" : "导师评价",
+      mlines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${mlines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">导师要求优先于上面的系统建议。</div>`
+      : aiLines.length ? `<ol style="margin:5px 0 0 18px;padding:0;font-size:13px">${aiLines.slice(0, 3).map(t => `<li>${h(t)}</li>`).join("")}</ol><div style="font-size:12px;color:#7C8896;margin-top:3px">AI 根据本周打卡、小测和任务数据生成，不是导师原话；导师点评后以导师为准。</div>`
+      : `<div style="font-size:12.8px;color:#7C8896;margin-top:4px">导师本周未点评（系统已提醒导师）。有疑问可直接在工作台「② 协助」发起求助。</div>`, "green")}
    </div>` };
 }
 
@@ -2003,6 +2027,8 @@ app.post("/api/save", async (req, res) => {
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
   const incoming = normDoc(req.body && req.body.doc);
   const oldIds = new Set(((DOC && DOC.issues && DOC.issues.list) || []).map(x => x.id));
+  const oldActs = new Set();
+  ((DOC && DOC.carriers && DOC.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => oldActs.add(c.id + "." + v.id)));
   DOC = DOC ? mergeDoc(DOC, incoming) : incoming;
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
@@ -2013,6 +2039,19 @@ app.post("/api/save", async (req, res) => {
     const fresh = ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && !oldIds.has(x.id) && findUser(x.who) && findUser(x.who).role === "newbie");
     if (fresh.length) notifyNewIssues(fresh);
   } catch (e) { console.error("[mail] issue", e.message); }
+  /* 导师/主管给新人新派的任务 → 邮件提醒新人（站内提示由待办引擎的 new_task 自动生成） */
+  try {
+    const assigned = [];
+    ((DOC.carriers && DOC.carriers.list) || []).filter(c => !c.del).forEach(c => (c.actions || []).forEach(v => {
+      if (v.del || oldActs.has(c.id + "." + v.id)) return;
+      const owner = findUser(v.owner || c.who);
+      if (!owner || owner.role !== "newbie") return;
+      const by = findUser(v.by);
+      if (!by || by.role === "newbie") return;          // 新人自己建的任务不算「派任务」
+      assigned.push({ ownerId: owner.id, carrierName: c.name, text: v.text || "", due: v.due || "" });
+    }));
+    if (assigned.length) notifyAssignedTasks(assigned);
+  } catch (e) { console.error("[mail] assign", e.message); }
   res.json({ ok: true, doc: docForClient(me, DOC) });
 });
 
@@ -2288,6 +2327,13 @@ function startBrainTimer() {
   }, 30 * 60000);
 }
 
+/* 待办扫描独立于 AI：AI 有 6 小时缓存会提前 return，自动升级不能跟着停。 */
+function startAttentionTimer() {
+  const tick = () => { runAttentionScan("timer").catch(e => console.error("[attention]", e.message)); };
+  setInterval(tick, 30 * 60000);
+  setTimeout(tick, 90 * 1000);
+}
+
 app.get("/api/brain_latest", (req, res) => {
   if (!requireStaff(req, res)) return;
   const stale = !BRAIN || Date.now() - (BRAIN.asOf || 0) > BRAIN_TTL_MS;
@@ -2386,6 +2432,20 @@ function latestEvalText(u, kind) {
   const e = (kind && latestEval(u, kind)) || latestEval(u, "");
   return e ? String(e.text || "") : "";
 }
+/* 只认最近 N 天的评价：导师不更新时，旧评价不再天天挂在邮件里 */
+function latestEvalRecent(u, kind, days) {
+  const cut = Date.now() - (days || 7) * 86400000;
+  const list = evalsOf(u)
+    .filter(e => (!kind || e.kind === kind) && toMs(e.at) >= cut)
+    .sort((a, b) => (b.at || 0) - (a.at || 0));
+  return list.length ? String(list[0].text || "") : "";
+}
+/* 没有新评价时的 AI 兜底：只引用 AI 判断里已有的结论，不另写一套规则 */
+function aiEvalLines(u) {
+  const f = ((BRAIN && BRAIN.focus) || []).filter(x => x.name === u.name)[0];
+  if (!f) return [];
+  return [String(f.verdict || "").trim()].concat((f.next || []).slice(0, 2)).filter(Boolean);
+}
 function evalPayload(u) {
   return evalsOf(u).slice().sort((a, b) => (b.at || 0) - (a.at || 0)).map(e => ({
     id: e.id || "", kind: e.kind === "weekly" ? "weekly" : "daily",
@@ -2483,6 +2543,126 @@ app.get("/api/risk", (req, res) => {
   });
   res.json({ ok: true, day, team: { total: red + yellow + green, red, yellow, green }, people });
 });
+
+/* ---------- 统一待办引擎：首页 / 把控队列 / 自动升级 共用这一份结果 ----------
+   规则在 engine/attention.js；这里只负责把 DOC 里的数据整理成引擎输入。
+   新增规则必须加到引擎里，禁止在页面或邮件里再写一套判断。 */
+function attentionPayload(me) {
+  const S = snapshot();
+  const now = Date.now(), day = bjKey(now);
+  const users = (USERS.users || []).filter(u => u.active !== false);
+  const newbies = users.filter(u => u.role === "newbie");
+  const people = users.map(u => ({ id: u.id, name: u.name, role: u.role, mentorId: u.mentorId || "", leadId: u.leadId || "" }));
+
+  const tasks = [];
+  S.carriers.forEach(c => (c.actions || []).filter(v => !v.del).forEach(v => tasks.push({
+    key: c.id + "." + v.id, actionId: v.id, carrierId: c.id, carrierName: c.name,
+    ownerId: v.owner || c.who, text: v.text || "", kind: v.kind || "任务", due: v.due || "",
+    st: v.st || 0, cfm: v.cfm || 0, by: v.by || "",
+    createdAt: v.createdAt || 0, updatedAt: v.updatedAt || 0,
+    logs: (v.log || []).filter(l => !l.del).map(l => ({ by: l.by, at: toMs(l.at) })),
+  })));
+
+  const customers = S.carriers.map(c => {
+    const acts = (c.actions || []).filter(v => !v.del);
+    const last = Math.max(toMs(c.updatedAt), ...acts.map(v => toMs(v.updatedAt)), toMs(c.createdAt));
+    return { id: c.id, name: c.name, ownerId: c.who, nextAt: carNext(c), goalAt: c.goalAt || "",
+      openCount: acts.filter(taskOpen).length, updatedAt: last, idleDays: waitDays(last) };
+  });
+
+  const issues = (S.issues || []).map(x => ({ id: x.id, who: x.who, text: x.text || "",
+    status: x.status || 0, createdAt: toMs(x.createdAt), updatedAt: toMs(x.updatedAt), src: x.src || "" }));
+
+  const learning = {}, retests = {};
+  newbies.forEach(u => {
+    const s = userStats(u, [day], S);
+    const lastLearn = Math.max(0,
+      ...S.checkins.filter(x => x.who === u.id).map(x => toMs(x.at || x.createdAt)),
+      ...S.quiz.filter(x => x.who === u.id).map(x => toMs(x.updatedAt || x.createdAt)));
+    learning[u.id] = { idleDays: lastLearn ? waitDays(lastLearn) : (s.joinsDays || 0),
+      joinsDays: s.joinsDays || 0, drill14: s.drill14 || 0, quizAcc: s.quizAcc };
+    const passes = retestPasses(u.id);
+    retests[u.id] = Object.keys(wrongBook(u.id))
+      .filter(k => approvedVariants(k).length && (passes[k] || 0) < 2).length;
+  });
+
+  const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
+    planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {}, retests, learning });
+  if (me && me.role === "newbie") {
+    data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
+    Object.assign(data, attentionEngine.summarize(data.items, day, now));
+  }
+  return data;
+}
+app.get("/api/attention", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  try { res.json(Object.assign({ ok: true }, attentionPayload(me))); }
+  catch (e) { console.error("[attention]", e.message); res.status(500).json({ ok: false, msg: "待办生成失败" }); }
+});
+
+/* 自动升级：超期 3 天 / 停滞 10 天 → 自动开一条「协助」，导师 48 小时不处理再升级主管。
+   幂等：同一条任务只开一条，键存在就跳过；定时器每次扫描都不会重复刷屏。 */
+function notifyAutoEscalation(items) {
+  if (!MAIL_ON || !items.length) return;
+  const rows = items.map(x => `<tr>
+    <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(nameOf(x.ownerId))}</td>
+    <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.proj || "")}<div style="color:#7C8896;font-size:12px">${h(x.text)}</div></td></tr>`).join("");
+  sendMail(`【超期升级】${items.length} 个任务需要导师介入`,
+    `<p>以下任务已超期或长期没有进展，系统已自动转入「协助」，请导师处理；48 小时未处理将升级主管。</p>
+     <table style="border-collapse:collapse;width:100%;font-size:13px">
+     <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">责任人</th><th style="padding:7px 9px">任务</th></tr>${rows}</table>`,
+    "由系统按规则自动升级，不需要新人手动提交。", { kind: "auto_escalate", trigger: "attention" });
+}
+async function runAttentionScan(trigger) {
+  if (!DOC) return { created: 0, escalated: 0 };
+  const data = attentionPayload(null);
+  DOC.issues = DOC.issues || { t: 0, list: [] };
+  DOC.issues.list = DOC.issues.list || [];
+  const created = [];
+  data.items.filter(it => (it.type === "overdue" && it.wait >= 3) || (it.type === "stale" && it.wait >= 10))
+    .forEach(it => {
+      const key = "auto:" + it.ref.carrierId + "." + it.ref.actionId;
+      if (DOC.issues.list.some(x => x.key === key && !x.del)) return;
+      const x = { id: uid(), key, who: it.ownerId, by: "system", type: "issue", src: "auto",
+        proj: String(it.detail || "").split(" · ")[0] || "", text: "【系统升级】" + it.title, status: 0, replies: [],
+        createdAt: Date.now(), updatedAt: Date.now() };
+      DOC.issues.list.push(x); created.push(x);
+    });
+  const escalated = [];
+  DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
+    && !x.escalatedAt && Date.now() - toMs(x.createdAt) >= 48 * 3600e3)
+    .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
+  if (created.length || escalated.length) { DOC.issues.t = Date.now(); persistDoc(); }
+  if (created.length) notifyAutoEscalation(created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })));
+  if (escalated.length) {
+    console.log(`[attention] 已升级主管 ${escalated.length} 条（${trigger || "scan"}）`);
+    notifyAutoEscalation(escalated.map(x => ({ ownerId: x.who, proj: "已等 48 小时未处理", text: x.text })));
+  }
+  return { created: created.length, escalated: escalated.length };
+}
+
+/* 导师派任务 → 新人站内提示（引擎 new_task）+ 邮件（这里）。同一人一次保存合并成一封。 */
+function notifyAssignedTasks(list) {
+  if (!MAIL_ON || !list.length) return;
+  const byWho = {};
+  list.forEach(a => { (byWho[a.ownerId] = byWho[a.ownerId] || []).push(a); });
+  Object.keys(byWho).forEach(who => {
+    const u = findUser(who); if (!u) return;
+    const mentor = findUser(u.mentorId) || null;
+    const to = [u.email, mentor && mentor.email].filter(Boolean);
+    const rows = byWho[who].slice(0, 8).map(a => `<tr>
+      <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(a.carrierName)}</td>
+      <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(a.text)}</td>
+      <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(a.due || "未设")}</td></tr>`).join("");
+    sendMail(`【新任务】${byWho[who].length} 项任务已派给你`,
+      `<p><b>${h(u.name)}</b>，导师刚给你派了任务，建议今天先看一眼截止时间。</p>
+       <table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">客户 / 项目</th><th style="padding:7px 9px">任务</th><th style="padding:7px 9px">截止</th></tr>${rows}</table>`,
+      "打开工作台「规划」页即可看到并开始处理。", { to: to.length ? to : undefined, kind: "task_assign", trigger: "assign" });
+  });
+}
+
 
 /* ---------- 邮件基础配置 / 订阅查询（配置入口统一在「账号管理」） ---------- */
 function mailCfgPayload() {
@@ -2789,7 +2969,12 @@ function docForClient(me, doc) {
     y.correct = g.correct; y.total = g.total;
     return y;
   });
-  return Object.assign({}, doc, { quiz: Object.assign({}, q, { list }) });
+  const out = Object.assign({}, doc, { quiz: Object.assign({}, q, { list }) });
+  /* 反馈只给自己看：新人之间不互相暴露吐槽内容 */
+  if (doc.feedback && Array.isArray(doc.feedback.list)) {
+    out.feedback = { t: doc.feedback.t || 0, list: doc.feedback.list.filter(x => x && x.who === me.id) };
+  }
+  return out;
 }
 
 app.get("/api/variants", (req, res) => {
@@ -2803,9 +2988,11 @@ app.post("/api/variants/review", (req, res) => {
   const b = req.body || {}, id = String(b.id || ""), action = String(b.action || "");
   if (!VARIANTS.some(v => v.id === id)) return res.status(404).json({ ok: false, msg: "变式题不存在" });
   if (!["approve", "reject", "reset"].includes(action)) return res.status(400).json({ ok: false, msg: "不支持的操作" });
+  if (!DOC) DOC = emptyDoc();               // 全新部署尚无业务数据时，第一次审核也要能落库
   DOC.varState = DOC.varState || {};
-  if (action === "reset") delete DOC.varState[id];
-  else DOC.varState[id] = { status: action === "approve" ? "approved" : "rejected", by: me.id, at: Date.now() };
+  /* 撤销审核也写一条 pending 记录（不删键）：
+     否则客户端里那份旧的 approved 会在下次保存合并时把「撤销」覆盖回来 */
+  DOC.varState[id] = { status: action === "approve" ? "approved" : action === "reject" ? "rejected" : "pending", by: me.id, at: Date.now() };
   persistDoc();
   res.json({ ok: true, list: VARIANTS.map(v => effVariant(v.id)) });
 });
@@ -2855,6 +3042,29 @@ app.post("/api/retest/submit", (req, res) => {
   DOC.retests.t = Date.now();
   persistDoc();
   res.json({ ok: true, result: { correct, total: detail.length }, detail });
+});
+
+/* 新人 / 导师对平台的反馈：不弹窗打断，一键提交，导师与主管在数据里可见。 */
+app.post("/api/feedback", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  const b = req.body || {};
+  const score = String(b.score || "").slice(0, 20);
+  const text = String(b.text || "").trim().slice(0, 1000);
+  if (!score && !text) return res.status(400).json({ ok: false, msg: "写一句或选一个再提交" });
+  if (!DOC) DOC = emptyDoc();
+  DOC.feedback = DOC.feedback || { t: 0, list: [] };
+  DOC.feedback.list.push({ id: uid(), who: me.id, role: me.role, score, text, at: Date.now(), updatedAt: Date.now() });
+  DOC.feedback.t = Date.now();
+  persistDoc();
+  res.json({ ok: true });
+});
+app.get("/api/feedback", (req, res) => {
+  if (!requireStaff(req, res)) return;
+  const list = ((DOC && DOC.feedback && DOC.feedback.list) || []).filter(x => !x.del)
+    .slice().sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 50)
+    .map(x => ({ id: x.id, who: x.who, name: nameOf(x.who), role: x.role, score: x.score, text: x.text, at: x.at }));
+  res.json({ ok: true, list });
 });
 
 /* ---------- 小测：服务端判卷 + 服务端落记录 ----------
@@ -2954,6 +3164,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报 / 周五 " + REPORT_HOUR + ":00 周报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
     startDailyReportTimer();
     startBrainTimer();
+    startAttentionTimer();
     console.log(`AI 判断层： ${brainThink.enabled() ? "已启用 · " + brainThink.modelName() : "未配置模型（使用规则版，页面照常可用）"}`);
     console.log("[账号] 超级管理员初始账号： admin / admin123（请首次登录后立即改密）；其余账号密码见上方日志或由管理员在「账号管理」里设置");
     console.log(`[账号] 当前 ${(USERS.users || []).length} 个账号：` + (USERS.users || []).map(u => `${u.username}(${ROLE_NAME[u.role]}${u.activated ? "" : "·待激活"})`).join(" · "));
