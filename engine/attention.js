@@ -65,8 +65,22 @@ function build(ctx) {
     const over = t.due ? Math.max(0, Math.floor((now - new Date(t.due + "T23:59:59+08:00").getTime()) / DAY)) : 0;
     const quiet = days(ms(t.updatedAt || t.createdAt), now);
 
+    /* 1.0 延期待批：球在导师这边，优先处理 */
+    if (t.state === "delay_pending") {
+      const wait = days(ms((t.delay && t.delay.reqAt) || t.updatedAt), now);
+      add({
+        type: "delay_request", role: "staff", level: "red",
+        who: staffOf(owner), ownerId: owner,
+        title: `延期待批：${t.text}`,
+        detail: `${nameOf(owner)} · ${t.carrierName || ""} · 新截止 ${(t.delay && t.delay.newDue) || "未填"}${t.delay && t.delay.reason ? ` · 理由：${t.delay.reason}` : ""}`,
+        ref: { kind: "task", carrierId: t.carrierId, actionId: t.actionId || t.key },
+        action: "delay", since: ms((t.delay && t.delay.reqAt) || t.updatedAt), wait,
+      });
+      return;
+    }
+
     /* 1.1 新人已提交，等导师验收：这是导师的第一优先级 */
-    if (t.cfm === 3) {
+    if (t.cfm === 3 || t.state === "submitted") {
       const wait = days(ms(t.updatedAt), now);
       add({
         type: "accept", role: "staff", level: wait >= 3 ? "red" : "yellow",

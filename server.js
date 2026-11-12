@@ -396,6 +396,25 @@ function snapDrills(doc) {
   ((doc && doc.drills && doc.drills.list) || []).forEach(x => { m[x.id] = { who: x.who, n: (x.scores || []).length, topic: x.topic || "" }; });
   return m;
 }
+/* 任务状态机：state = 当前阶段，holder = 现在轮到谁。
+   旧数据没有这两个字段，读取时按 st/cfm 推导，保存时自动补齐，不重置任何历史。 */
+function taskStateOf(v, ownerId) {
+  const d = v.delay || {};
+  if ((v.st || 0) === 2) return { state: "done", holder: "" };
+  if (d.status === "pending") return { state: "delay_pending", holder: "mentor" };
+  if ((v.cfm || 0) === 3) return { state: "submitted", holder: "mentor" };
+  if ((v.cfm || 0) === 2) return { state: "returned", holder: ownerId || "newbie" };
+  if ((v.st || 0) === 0) return { state: "todo", holder: ownerId || "newbie" };
+  return { state: "doing", holder: ownerId || "newbie" };
+}
+function normalizeTaskStates(doc) {
+  let changed = false;
+  ((doc && doc.carriers && doc.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => {
+    const s = taskStateOf(v, v.owner || c.who);
+    if (v.state !== s.state || v.holder !== s.holder) { v.state = s.state; v.holder = s.holder; changed = true; }
+  }));
+  return changed;
+}
 function reconcileDoc(doc) {
   if (!doc) return false;
   const now = Date.now(), today = bjKey(now);
@@ -406,7 +425,6 @@ function reconcileDoc(doc) {
     const c = carriers.filter(x => x.id === cid)[0];
     return c ? { c, v: (c.actions || []).filter(x => x.id === aid)[0] } : null;
   };
-
   /* 1. 客户档案归档：任务一并归档，关联协助关闭 */
   carriers.filter(c => c.del).forEach(c => {
     (c.actions || []).forEach(v => {
@@ -456,7 +474,46 @@ function reconcileDoc(doc) {
     }
   });
 
+  if (normalizeTaskStates(doc)) changed = true;
   if (changed) doc.t = now;
+  return changed;
+}
+
+/* 延期审批：新人只能「申请/撤回」，批准或驳回只能由导师/主管/超管操作。
+   服务端兜底校验，防止新人自己把延期改成通过。 */
+function enforceDelay(oldDoc, doc, me) {
+  if (!oldDoc || !doc || !me) return false;
+  const oldT = taskMap(oldDoc), newT = taskMap(doc);
+  const staff = ["admin", "lead", "mentor"].includes(me.role);
+  const now = Date.now();
+  let changed = false;
+  Object.keys(newT).forEach(k => {
+    const a = newT[k].v, b = oldT[k] && oldT[k].v;
+    if (!b || a.del) return;
+    const od = ((b.delay || {}).status) || "", nd = ((a.delay || {}).status) || "";
+    if (od === nd) return;
+    const owner = a.owner || newT[k].c.who;
+    if (!staff) {
+      const allowed = (nd === "pending" || nd === "") && owner === me.id;
+      if (!allowed) {
+        a.delay = b.delay ? JSON.parse(JSON.stringify(b.delay)) : undefined;
+        a.due = b.due; a.updatedAt = b.updatedAt; changed = true;
+      }
+      return;
+    }
+    if (nd === "approved" && a.delay) {
+      if (a.delay.newDue) a.due = a.delay.newDue;
+      a.delay.by = me.id; a.delay.at = now; a.st = 1; a.cfm = 0;
+      a.log = a.log || [];
+      a.log.push({ id: uid(), by: me.id, at: now, text: `延期批准，新截止 ${a.due || "—"}${a.delay.reason ? `：${a.delay.reason}` : ""}` });
+      a.updatedAt = now; newT[k].c.updatedAt = now; changed = true;
+    } else if (nd === "rejected") {
+      a.delay.by = me.id; a.delay.at = now; a.st = 1; a.cfm = 0;
+      a.log = a.log || [];
+      a.log.push({ id: uid(), by: me.id, at: now, text: `延期驳回${a.delay.reason ? `：${a.delay.reason}` : ""}` });
+      a.updatedAt = now; newT[k].c.updatedAt = now; changed = true;
+    }
+  });
   return changed;
 }
 
@@ -2184,7 +2241,9 @@ app.post("/api/save", async (req, res) => {
   ((DOC && DOC.carriers && DOC.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => oldActs.add(c.id + "." + v.id)));
   /* 保存前的状态快照：用于识别「换手」，只有真的变化才发通知 */
   const before = DOC ? { tasks: snapTasks(DOC), issues: snapIssues(DOC), drills: snapDrills(DOC) } : null;
+  const oldDoc = DOC;
   DOC = DOC ? mergeDoc(DOC, incoming) : incoming;
+  enforceDelay(oldDoc, DOC, me);
   reconcileDoc(DOC);
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
@@ -2717,6 +2776,7 @@ function attentionPayload(me) {
     key: c.id + "." + v.id, actionId: v.id, carrierId: c.id, carrierName: c.name,
     ownerId: v.owner || c.who, text: v.text || "", kind: v.kind || "任务", due: v.due || "",
     st: v.st || 0, cfm: v.cfm || 0, by: v.by || "",
+    state: v.state || "", holder: v.holder || "", delay: v.delay || null,
     createdAt: v.createdAt || 0, updatedAt: v.updatedAt || 0,
     logs: (v.log || []).filter(l => !l.del).map(l => ({ by: l.by, at: toMs(l.at) })),
   })));
@@ -2755,6 +2815,10 @@ function attentionPayload(me) {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
   }
+  /* 今日已处理：闭环任务 + 关闭的协助，用于页面「新增 / 已处理」对比 */
+  data.counts.resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || [])
+    .filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === day).length, 0)
+    + (S.issues || []).filter(x => (x.status || 0) === 2 && bjKey(x.updatedAt) === day).length;
   return data;
 }
 app.get("/api/attention", (req, res) => {

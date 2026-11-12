@@ -1541,6 +1541,11 @@ function qRow(it){
   ops.push(`<button class="btn sm" data-qcfm="${esc(it.ref.carrierId+"."+it.ref.actionId)}">通过</button>`);
   ops.push(`<button class="btn sm danger" data-qrej="${esc(it.ref.carrierId+"."+it.ref.actionId)}">退回</button>`);
  }
+ if(it.type==="delay_request"&&isStaff()){
+  const k=it.ref.carrierId+"."+it.ref.actionId;
+  ops.push(`<button class="btn sm" data-qdelay="approve" data-qkey="${esc(k)}">批准延期</button>`);
+  ops.push(`<button class="btn sm danger" data-qdelay="reject" data-qkey="${esc(k)}">驳回</button>`);
+ }
  const go=it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
  ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">去处理</button>`);
  return `<div class="qRow ${lv}"><div class="qt">
@@ -1557,7 +1562,7 @@ function renderQueue(){
  const rest=its.filter(x=>x.type!=="accept"&&x.type!=="new_task").slice(0,7);
  const c=(ATT&&ATT.counts)||{};
  box.innerHTML='<div class="card pad">'
-  +'<div class="muted" style="margin-bottom:10px">红灯 <b>'+(c.red||0)+'</b> · 今日新增 <b>'+(c.newToday||0)+'</b> · 待验收 <b>'+(c.accept||0)+'</b></div>'
+  +'<div class="muted" style="margin-bottom:10px">红灯 <b>'+(c.red||0)+'</b> · 今日新增 <b>'+(c.newToday||0)+'</b> · 今日已处理 <b>'+(c.resolvedToday||0)+'</b> · 待验收 <b>'+(c.accept||0)+'</b></div>'
   +(head.length?'<div class="muted" style="font-weight:700;color:var(--ink2);margin-bottom:8px">待你验收 · '+head.length+'</div><div class="qWrap">'+head.map(qRow).join("")+'</div>':"")
   +(rest.length?'<div class="muted" style="font-weight:700;color:var(--ink2);margin:'+(head.length?"16px":"0")+' 0 8px">其他需要处理 · '+rest.length+'</div><div class="qWrap">'+rest.map(qRow).join("")+'</div>':"")
   +(its.length>head.length+rest.length?'<div class="muted" style="margin-top:10px;font-size:12.4px">还有 '+(its.length-head.length-rest.length)+' 项，按红灯优先依次处理</div>':"")
@@ -1591,6 +1596,17 @@ function taskReject(k){
  o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
  taskLog(o.v,"导师退回："+(r||"请补充完成证据后再提交"));
  taskCommit(o);loadAttention(true);
+}
+/* 延期审批：状态写回任务，服务端补日志与决定人 */
+function delayDecide(k,act){
+ const o=taskPair(k);if(!o||!isStaff()||!o.v.delay)return;
+ if(act==="approve"){
+  o.v.delay.status="approved";
+  if(o.v.delay.newDue)o.v.due=o.v.delay.newDue;
+ }else o.v.delay.status="rejected";
+ o.v.st=1;o.v.cfm=0;
+ o.v.updatedAt=nowT();o.it.updatedAt=nowT();DOC.carriers.t=nowT();
+ touch();render();loadAttention(true);
 }
 
 /* ===================================================================
@@ -1841,6 +1857,8 @@ function bindCognitive(){
   if(qr){e.preventDefault();taskReject(qr.dataset.qrej);closeOvl();return;}
   const qg=e.target.closest&&e.target.closest("[data-qgo]");
   if(qg){e.preventDefault();jumpRef(qg.dataset);closeOvl();return;}
+  const qdl=e.target.closest&&e.target.closest("[data-qdelay]");
+  if(qdl){e.preventDefault();delayDecide(qdl.dataset.qkey,qdl.dataset.qdelay);closeOvl();return;}
  });
 }
 
@@ -2087,6 +2105,9 @@ function renderCarriers(){
       if(st===0&&canA)ops.push(`<button class="btn sm gh" data-astart="${key}">开始处理</button>`);
       if(st===1&&v.cfm!==3&&canA)ops.push(`<button class="btn sm" data-asub="${key}">提交验收</button>`);
       if(st===1&&v.cfm===3&&canA)ops.push(`<button class="btn sm gh" data-awd="${key}">撤回提交</button>`);
+      /* 新人可申请延期；导师在待办队列里批准/驳回 */
+      if(!isStaff()&&st!==2&&(v.owner||x.who)===WHO&&!(v.delay&&v.delay.status==="pending"))
+        ops.push(`<button class="btn sm gh" data-adelay="${key}">申请延期</button>`);
       if(isStaff()&&st!==2)ops.push(`<button class="btn sm gh" data-acfm="${key}">${v.cfm===3?"确认验收":"确认闭环"}</button>`);
       if(isStaff()&&st!==2)ops.push(`<button class="btn sm danger" data-arej="${key}">退回</button>`);
       if(isStaff()&&st===2)ops.push(`<button class="btn sm gh" data-areopen="${key}">撤销验收</button>`);
@@ -2094,6 +2115,8 @@ function renderCarriers(){
        <div class="taskTop">
          <div class="taskTitle">${esc(v.text)}</div>
          <div class="taskTags"><span class="tag gy">${esc(v.kind||"任务")}</span>${actTag(v)}
+           ${v.delay&&v.delay.status==="pending"?`<span class="tag wt">延期待批</span>`:""}
+           ${v.delay&&v.delay.status==="approved"?`<span class="tag gy">已延期</span>`:""}
            ${v.pri?`<span class="tag ${v.pri==="P0"?"no":"gy"}">${esc(v.pri)}</span>`:""}${actCfmTag(v)}
            ${linked?`<span class="tag wt">已转求助</span>`:""}</div>
        </div>
@@ -2255,6 +2278,16 @@ function renderCarriers(){
   o.v.st=1;o.v.cfm=3;pushLog(o.v,"已提交验收，等待导师确认。");saveAct(o);});
  document.querySelectorAll("[data-awd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.awd);if(!o)return;
   o.v.cfm=0;pushLog(o.v,"撤回提交验收，继续完善。");saveAct(o);});
+ document.querySelectorAll("[data-adelay]").forEach(b=>b.onclick=()=>{
+  const o=getAct(b.dataset.adelay);if(!o)return;
+  const reason=(window.prompt("延期理由（会发给导师）","")||"").trim();if(!reason)return;
+  const d0=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  const nd=(window.prompt("新的截止日期（YYYY-MM-DD）",d0)||"").trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){alert("日期格式：YYYY-MM-DD");return;}
+  o.v.delay={status:"pending",reason,newDue:nd,reqBy:WHO,reqAt:nowT()};
+  o.v.state="delay_pending";o.v.holder="mentor";
+  pushLog(o.v,"申请延期到 "+nd+"："+reason);
+  saveAct(o);loadAttention(true);});
  document.querySelectorAll("[data-acfm]").forEach(b=>b.onclick=()=>taskConfirm(b.dataset.acfm));
  document.querySelectorAll("[data-arej]").forEach(b=>b.onclick=()=>taskReject(b.dataset.arej));
  document.querySelectorAll("[data-areopen]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.areopen);if(!o||!isStaff())return;
@@ -3356,7 +3389,7 @@ function renderBrainBar(){
   +'<div style="font-size:14.6px;font-weight:700;margin-top:3px;line-height:1.6">'+esc(g.headline||"暂无判断")+'</div>'
   +(top?'<div class="muted" style="margin-top:3px;font-size:12.6px">现在最该处理：'+esc(top.title)+'</div>'
       :(first?'<div class="muted" style="margin-top:3px;font-size:12.6px">先处理：<b>'+esc(first.name)+'</b> — '+esc(first.verdict||"")+'</div>':""))
-  +(c?'<div class="muted" style="margin-top:4px;font-size:12.2px">今日待办 <b>'+c.total+'</b> 项 · 红灯 <b>'+c.red+'</b> · 今日新增 <b>'+c.newToday+'</b>'+(c.newToday?'':'（今天没有新增，不重复播报）')+'　（清单在上方「今天先处理这些」）</div>':"")
+  +(c?'<div class="muted" style="margin-top:4px;font-size:12.2px">今日待办 <b>'+c.total+'</b> 项 · 红灯 <b>'+c.red+'</b> · 新增 <b>'+c.newToday+'</b> · 已处理 <b>'+(c.resolvedToday||0)+'</b>'+(c.newToday?'':'（今天没有新增，不重复播报）')+'　（清单在上方「今天先处理这些」）</div>':"")
   +'</div><button class="btn sm" id="brainGo">看待办</button></div>';
  const go=document.getElementById("brainGo");
  if(go)go.onclick=()=>{const el2=document.getElementById("attnSec");if(el2)el2.scrollIntoView({behavior:"smooth",block:"start"});};
