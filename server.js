@@ -362,6 +362,136 @@ function mergeMap(A, B) {
   return { t: Math.max((A && A.t) || 0, (B && B.t) || 0), map };
 }
 function mergePlain(A, B) { return ((A && A.t) || 0) >= ((B && B.t) || 0) ? (A || {}) : (B || {}); }
+
+/* =====================================================================
+   状态联动（唯一写入后的对账层）
+   ---------------------------------------------------------------------
+   平台原来每个模块各改各的：任务归档了、协助还开着；协助闭环了、任务没动静。
+   这里在每次保存后做一次幂等对账，把「同一件事」在任务、协助、客户档案之间对齐：
+     1. 客户档案归档 → 其任务一并归档、关联协助关闭
+     2. 任务闭环/删除 → 关联协助关闭
+     3. 协助（人工）闭环 → 回写一条进展到关联任务、解除卡点
+     4. 自动升级的协助，在任务改期/闭环/删除后自动关闭
+   所有操作只改必要字段，并且带 updatedAt，重复执行不会产生副作用。
+   ===================================================================== */
+function taskMap(doc) {
+  const m = {};
+  ((doc && doc.carriers && doc.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => { m[c.id + "." + v.id] = { c, v }; }));
+  return m;
+}
+function snapTasks(doc) {
+  const m = {};
+  ((doc && doc.carriers && doc.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => {
+    m[c.id + "." + v.id] = { cfm: v.cfm || 0, st: v.st || 0, owner: v.owner || c.who, text: v.text || "", carrier: c.name || "" };
+  }));
+  return m;
+}
+function snapIssues(doc) {
+  const m = {};
+  ((doc && doc.issues && doc.issues.list) || []).forEach(x => { m[x.id] = { status: x.status || 0, who: x.who, text: x.text || "", closedBy: x.closedBy || "" }; });
+  return m;
+}
+function snapDrills(doc) {
+  const m = {};
+  ((doc && doc.drills && doc.drills.list) || []).forEach(x => { m[x.id] = { who: x.who, n: (x.scores || []).length, topic: x.topic || "" }; });
+  return m;
+}
+function reconcileDoc(doc) {
+  if (!doc) return false;
+  const now = Date.now(), today = bjKey(now);
+  let changed = false;
+  const issues = ((doc.issues && doc.issues.list) || []).filter(x => !x.del);
+  const carriers = (doc.carriers && doc.carriers.list) || [];
+  const findAct = (cid, aid) => {
+    const c = carriers.filter(x => x.id === cid)[0];
+    return c ? { c, v: (c.actions || []).filter(x => x.id === aid)[0] } : null;
+  };
+
+  /* 1. 客户档案归档：任务一并归档，关联协助关闭 */
+  carriers.filter(c => c.del).forEach(c => {
+    (c.actions || []).forEach(v => {
+      if (!v.del) { v.del = true; v.delBy = "system"; v.delAt = now; v.updatedAt = now; changed = true; }
+    });
+    issues.filter(x => x.fromCarrier === c.id && (x.status || 0) < 2).forEach(x => {
+      x.status = 2; x.closedBy = "system"; x.updatedAt = now; x.resolve = "客户档案已归档"; changed = true;
+    });
+  });
+
+  /* 2. 任务闭环 / 删除：关联协助关闭 */
+  carriers.forEach(c => (c.actions || []).forEach(v => {
+    if (!(v.del || (v.st || 0) === 2)) return;
+    issues.filter(x => x.fromAction === v.id && (x.status || 0) < 2).forEach(x => {
+      x.status = 2; x.closedBy = "system"; x.updatedAt = now;
+      x.resolve = v.del ? "任务已删除" : "任务已闭环"; changed = true;
+    });
+  }));
+
+  /* 3. 人工关闭的协助：回写一条进展到关联任务，并解除卡点 */
+  issues.filter(x => (x.status || 0) === 2 && x.fromAction && x.src !== "auto").forEach(x => {
+    const hit = findAct(x.fromCarrier || "", x.fromAction);
+    if (!hit || !hit.v || hit.v.del || (hit.v.st || 0) === 2) return;
+    const marker = "【协助已闭环 " + x.id + "】";
+    hit.v.log = hit.v.log || [];
+    if (!hit.v.log.some(l => l.text && l.text.indexOf(marker) >= 0)) {
+      hit.v.log.push({ id: uid(), by: x.closedBy || "system", at: x.updatedAt || now,
+        text: marker + String(x.resolve || "导师/主管已在协助里处理") });
+      hit.v.updatedAt = now; hit.c.updatedAt = now; changed = true;
+    }
+    if (hit.v.blocked || hit.v.need) {
+      hit.v.blocked = ""; hit.v.need = ""; hit.v.updatedAt = now; changed = true;
+    }
+  });
+
+  /* 4. 自动升级的协助：任务改期 / 闭环 / 删除后自动关闭 */
+  issues.filter(x => x.src === "auto" && (x.status || 0) < 2 && x.key).forEach(x => {
+    const key = String(x.key).replace(/^auto:/, "");
+    const p = key.split(".");
+    const hit = findAct(p[0], p[1]);
+    const v = hit && hit.v;
+    const due = v ? String(v.due || "").slice(0, 10) : "";
+    const still = v && !v.del && (v.st || 0) !== 2 && /^\d{4}-\d{2}-\d{2}$/.test(due) && due < today;
+    if (!still) {
+      x.status = 2; x.closedBy = "system"; x.updatedAt = now;
+      x.resolve = "任务已不再超期"; changed = true;
+    }
+  });
+
+  if (changed) doc.t = now;
+  return changed;
+}
+
+/* 换手通知：只在状态真的变化时发一次，不再让新人靠猜 */
+function notifyHandoffs(before, doc) {
+  if (!MAIL_ON || !before) return;
+  const ev = {};
+  const push = (who, text) => { if (who) (ev[who] = ev[who] || []).push(text); };
+  const nowT = taskMap(doc);
+  Object.keys(nowT).forEach(k => {
+    const a = nowT[k].v, b = before.tasks[k];
+    if (!b) return;
+    const who = a.owner || nowT[k].c.who;
+    if (b.cfm === 3 && (a.cfm || 0) === 2) push(who, `「${a.text}」被退回，请按导师回复补充后重新提交`);
+    else if (b.cfm === 3 && (a.st || 0) === 2) push(who, `「${a.text}」验收通过，已闭环`);
+    if (b.owner !== who) push(who, `任务「${a.text}」已转给你，请注意截止时间`);
+  });
+  ((doc.issues && doc.issues.list) || []).filter(x => !x.del).forEach(x => {
+    const b = before.issues[x.id];
+    if (b && b.status < 2 && (x.status || 0) === 2 && x.closedBy !== "system") {
+      push(x.who, `你的协助「${String(x.text || "").slice(0, 24)}」已闭环`);
+    }
+  });
+  ((doc.drills && doc.drills.list) || []).filter(x => !x.del).forEach(x => {
+    const b = before.drills[x.id];
+    if (b && (x.scores || []).length > b.n) push(x.who, `你的演练「${x.topic || ""}」已评分，去「帮扶」看点评`);
+  });
+  Object.keys(ev).forEach(who => {
+    const u = findUser(who); if (!u || !u.email) return;
+    const rows = ev[who].slice(0, 8).map(t => `<li>${h(t)}</li>`).join("");
+    sendMail(`【进度更新】${ev[who].length} 条变化`,
+      `<p><b>${h(u.name)}</b>，你的记录有了新进展：</p><ul style="margin:6px 0 0 18px;padding:0;font-size:13px">${rows}</ul>`,
+      "打开工作台首页即可看到当前该你处理的事。", { to: [u.email], kind: "handoff", trigger: "state" });
+  });
+}
 /* 键值型小表（如 varState）：按条目 at 取最新，双方都没有的键不会丢 */
 function mergeKV(A, B) {
   const m = {};
@@ -1250,6 +1380,11 @@ function buildDailyReport(day, opts) {
   slowIssues.slice(0, 2).forEach(x => todo.push({ p: 1, w: waitDays(x.createdAt), who: nameOf(x.who),
     what: `问题「${String(x.text || "").slice(0, 24)}」未答复`, act: "今天回复并给出方向", due: "今天" }));
   const topTodo = todo.sort((a, b) => a.p - b.p || b.w - a.w).slice(0, 3);
+  /* 今日变化：只讲「新增 / 已处理 / 仍在队列」，不再把同一批事每天重复一遍 */
+  const attNow = attentionPayload(null);
+  const resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || []).filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === today).length, 0)
+    + (S.issues || []).filter(x => (x.status || 0) === 2 && bjKey(x.updatedAt) === today).length;
+  const changeLine = `今日新增 <b>${attNow.counts.newToday}</b> 项 · 今日已处理 <b>${resolvedToday}</b> 项 · 仍在队列 <b>${attNow.counts.total}</b> 项`;
 
   const cardHtml = rows.map(x => {
     const r2 = (k, v) => `<tr><td style="padding:4px 8px;color:#5C6772;white-space:nowrap;vertical-align:top;font-size:12.5px">${k}</td><td style="padding:4px 8px;font-size:12.5px">${v}</td></tr>`;
@@ -1308,6 +1443,7 @@ function buildDailyReport(day, opts) {
 
   const html = `<p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#0B3A63">${today} 导师 / 主管日报</p>
      <div style="font-size:13.2px;color:#2C3E50">${head}${reviewRows.length ? ` 另有 <b>${reviewRows.length}</b> 项待你验收。` : ""}</div>
+     <div style="font-size:12.4px;color:#7C8896;margin-top:4px">${changeLine}</div>
      ${topTodo.length ? mailBox("今天必须处理的 " + topTodo.length + " 件事", `<table style="border-collapse:collapse;width:100%;font-size:12.6px;margin-top:6px"><tr style="text-align:left"><th style="padding:5px 6px">谁</th><th style="padding:5px 6px">什么事</th><th style="padding:5px 6px">建议动作</th><th style="padding:5px 6px">时限</th></tr>${topTodo.map(t => `<tr><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(t.who)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE">${h(t.what)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE">${h(t.act)}</td><td style="padding:5px 6px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${t.due}</td></tr>`).join("")}</table>`, "yellow") : mailBox("今天必须处理的事", `<div style="font-size:12.5px;color:#3C6B1A">暂无，保持关注即可。</div>`, "green")}
      ${mailBox("每位新人今天的情况", cardHtml || `<div style="font-size:12.5px;color:#7C8896">暂无新人账号</div>`, reds.length ? "red" : (yels.length ? "yellow" : "green"))}
      ${reviewHtml ? mailBox("待验收清单（你确认后才闭环）", reviewHtml, "yellow") : ""}
@@ -2046,7 +2182,10 @@ app.post("/api/save", async (req, res) => {
   const oldIds = new Set(((DOC && DOC.issues && DOC.issues.list) || []).map(x => x.id));
   const oldActs = new Set();
   ((DOC && DOC.carriers && DOC.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => oldActs.add(c.id + "." + v.id)));
+  /* 保存前的状态快照：用于识别「换手」，只有真的变化才发通知 */
+  const before = DOC ? { tasks: snapTasks(DOC), issues: snapIssues(DOC), drills: snapDrills(DOC) } : null;
   DOC = DOC ? mergeDoc(DOC, incoming) : incoming;
+  reconcileDoc(DOC);
   DOC.t = Date.now();
   ensureDir(); writeJson(STATE_FILE, DOC);
   broadcast();
@@ -2069,6 +2208,8 @@ app.post("/api/save", async (req, res) => {
     }));
     if (assigned.length) notifyAssignedTasks(assigned);
   } catch (e) { console.error("[mail] assign", e.message); }
+  /* 状态真的换了手：退回 / 通过 / 转派 / 协助闭环 / 演练评分 → 通知本人一次 */
+  try { notifyHandoffs(before, DOC); } catch (e) { console.error("[mail] handoff", e.message); }
   res.json({ ok: true, doc: docForClient(me, DOC) });
 });
 
@@ -2596,14 +2737,19 @@ function attentionPayload(me) {
     const lastLearn = Math.max(0,
       ...S.checkins.filter(x => x.who === u.id).map(x => toMs(x.at || x.createdAt)),
       ...S.quiz.filter(x => x.who === u.id).map(x => toMs(x.updatedAt || x.createdAt)));
+    const lastDrill = Math.max(0, ...S.drills.filter(x => x.who === u.id).map(x => toMs(x.createdAt)));
     learning[u.id] = { idleDays: lastLearn ? waitDays(lastLearn) : (s.joinsDays || 0),
-      joinsDays: s.joinsDays || 0, drill14: s.drill14 || 0, quizAcc: s.quizAcc };
+      joinsDays: s.joinsDays || 0, drill14: s.drill14 || 0, quizAcc: s.quizAcc,
+      drillIdleDays: lastDrill ? waitDays(lastDrill) : (s.joinsDays || 0) };
     const passes = retestPasses(u.id);
     retests[u.id] = Object.keys(wrongBook(u.id))
       .filter(k => approvedVariants(k).length && (passes[k] || 0) < 2).length;
   });
 
   const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
+    drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt) })),
+    triggers: (((DOC && DOC.triggers && DOC.triggers.list) || [])).filter(x => !x.del && x.who)
+      .map(x => ({ who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "" })),
     planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {}, retests, learning });
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
@@ -2688,6 +2834,7 @@ function notifyAutoEscalation(items) {
 }
 async function runAttentionScan(trigger) {
   if (!DOC) return { created: 0, escalated: 0 };
+  const reconciled = reconcileDoc(DOC);
   const data = attentionPayload(null);
   DOC.issues = DOC.issues || { t: 0, list: [] };
   DOC.issues.list = DOC.issues.list || [];
@@ -2698,6 +2845,7 @@ async function runAttentionScan(trigger) {
       if (DOC.issues.list.some(x => x.key === key && !x.del)) return;
       const x = { id: uid(), key, who: it.ownerId, by: "system", type: "issue", src: "auto",
         proj: String(it.detail || "").split(" · ")[0] || "", text: "【系统升级】" + it.title, status: 0, replies: [],
+        fromAction: it.ref.actionId || "", fromCarrier: it.ref.carrierId || "",
         createdAt: Date.now(), updatedAt: Date.now() };
       DOC.issues.list.push(x); created.push(x);
     });
@@ -2705,7 +2853,7 @@ async function runAttentionScan(trigger) {
   DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
     && !x.escalatedAt && Date.now() - toMs(x.createdAt) >= 48 * 3600e3)
     .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
-  if (created.length || escalated.length) { DOC.issues.t = Date.now(); persistDoc(); }
+  if (created.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }
   if (created.length) notifyAutoEscalation(created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })));
   if (escalated.length) {
     console.log(`[attention] 已升级主管 ${escalated.length} 条（${trigger || "scan"}）`);

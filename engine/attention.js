@@ -175,6 +175,16 @@ function build(ctx) {
         ref: { kind: "learn" }, action: "learn", since: now, wait: idle,
       });
     }
+    /* 缺练：14 天没有演练 → 生成一条可执行的练习待办，做完演练自动消失 */
+    if ((l.drill14 | 0) === 0 && (l.joinsDays | 0) >= 14) {
+      const dd = l.drillIdleDays | 0;
+      add({
+        type: "drill_due", role: "newbie", level: dd >= 21 ? "red" : "yellow", who: p.id, ownerId: p.id,
+        title: dd ? `已经 ${dd} 天没有演练` : "还没有演练记录",
+        detail: "安排一次真实场景讲解或客户培训，导师评分后闭环",
+        ref: { kind: "drill" }, action: "drill", since: now, wait: dd,
+      });
+    }
     const rt = (ctx.retests || {})[p.id] | 0;
     if (rt > 0) {
       add({
@@ -183,6 +193,19 @@ function build(ctx) {
         ref: { kind: "retest" }, action: "retest", since: now, wait: 0,
       });
     }
+  });
+
+  /* ---------- 5. 触发式加练：登记了触发条件但还没安排演练 ---------- */
+  (ctx.triggers || []).forEach(tg => {
+    if (!tg.who) return;
+    const done = (ctx.drills || []).some(d => d.who === tg.who && ms(d.at) >= ms(tg.at));
+    if (done) return;
+    add({
+      type: "drill_trigger", role: "newbie", level: "red", who: tg.who, ownerId: tg.who,
+      title: `触发加练未落实：${tg.reason}`,
+      detail: tg.action || "登记后需要安排一次演练并评分",
+      ref: { kind: "drill" }, action: "drill", since: ms(tg.at), wait: days(ms(tg.at), now),
+    });
   });
 
   /* ---------- 排序与汇总 ---------- */

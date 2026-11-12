@@ -844,6 +844,9 @@ async function push(){
   if(r.data&&r.data.ok){
    const merged=mergeDoc(DOC,norm(r.data.doc));
    if(JSON.stringify(merged)!==JSON.stringify(DOC)){DOC=merged;render();}
+   /* 任何一次保存都可能换了手：待办立即失效重算，不等 15 秒缓存 */
+   ATT_T=0;loadAttention(false);
+   REC_T=0;loadRecognition(false);
    setSync("ok");
   }else{dirty=true;setSync("err",(r.data&&r.data.msg)||"保存失败");}
  }catch(e){dirty=true;setSync("err","离线（本地已保存，联网后自动补传）");}
@@ -1496,7 +1499,7 @@ let ATT=null,ATT_T=0,ATT_BUSY=false;
 function attItems(){return (ATT&&ATT.items)||[];}
 function loadAttention(force){
  if(!WHO)return;
- if(!force&&ATT&&Date.now()-ATT_T<15000){attBadges();return;}
+ if(!force&&ATT&&Date.now()-ATT_T<15000){attBadges();if(TAB==="monitor")renderQueue();return;}
  if(ATT_BUSY)return;ATT_BUSY=true;
  apiGet("/api/attention").then(r=>{
   const d=(r&&r.data)||{};
@@ -1522,7 +1525,7 @@ function attBadges(){
 function jumpRef(d){
  const kind=d.qgo;
  if(kind==="issue"){setTab("assist");setTimeout(()=>{const el=document.getElementById("issueList");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
- if(kind==="coach"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ if(kind==="coach"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox")||document.getElementById("drillBlk");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
  const cid=d.qcar||"";
  setTab("plan");
  if(!cid)return;
@@ -1538,7 +1541,7 @@ function qRow(it){
   ops.push(`<button class="btn sm" data-qcfm="${esc(it.ref.carrierId+"."+it.ref.actionId)}">通过</button>`);
   ops.push(`<button class="btn sm danger" data-qrej="${esc(it.ref.carrierId+"."+it.ref.actionId)}">退回</button>`);
  }
- const go=it.action==="retest"||it.action==="learn"?"coach":it.ref.kind==="issue"?"issue":"task";
+ const go=it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
  ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">去处理</button>`);
  return `<div class="qRow ${lv}"><div class="qt">
    <div class="qtt">${it.level==="red"?'<span class="tag no" style="margin-right:6px">红</span>':""}${esc(it.title)}</div>
@@ -2287,7 +2290,13 @@ function renderCarriers(){
  document.querySelectorAll("[data-alogadd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.alogadd);if(!o)return;
   const k=b.dataset.alogadd;const inp=document.querySelector(`[data-alogin="${k}"]`);
   const t=((CUI.draft[k]!==undefined?CUI.draft[k]:(inp&&inp.value)||"")||"").trim();if(!t){if(inp)inp.focus();return;}
-  pushLog(o.v,t);delete CUI.draft[k];saveAct(o);});
+  /* 导师在「待验收」下回复 = 退回待改：球交给新人，不再继续挂导师队列 */
+  if(isStaff()&&(o.v.cfm||0)===3&&(o.v.st||0)!==2){
+   o.v.cfm=2;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.st=1;
+   o.v.log=o.v.log||[];
+   o.v.log.push({id:uid(),by:WHO,at:nowT(),text:"导师退回："+t});
+  }else pushLog(o.v,t);
+  delete CUI.draft[k];saveAct(o);});
 
  document.querySelectorAll("[data-agoal]").forEach(s=>s.onchange=()=>{const o=getAct(s.dataset.agoal);if(!o)return;
   o.v.goal=s.value;saveAct(o);});
@@ -2664,14 +2673,15 @@ function renderCoach(){
   :`<div class="empty">暂无触发记录</div>`;
  document.getElementById("trigNew").classList.toggle("hide",!isStaff());
  const tn=document.getElementById("trigNew");if(tn)tn.onclick=()=>{const f=document.getElementById("trigForm");
-  f.innerHTML=`<div class="form" style="margin-top:10px"><input id="tReason" placeholder="触发原因（如：客户交付异常）">
-   <input id="tAction" placeholder="处理动作（导师加练 / 主管介入…）">
-   <div class="row"><button class="btn" id="tSave">保存</button><button class="btn gh" id="tCancel">取消</button></div></div>`;
+  f.innerHTML=`<div class="form" style="margin-top:10px"><select id="tWho">${ppl().map(id=>`<option value="${esc(id)}">${esc(WHO_NAME[id]||id)}</option>`).join("")}</select>
+   <input id="tReason" placeholder="触发原因（如：客户交付异常）">
+   <input id="tAction" placeholder="处理动作（安排演练 / 主管介入…）">
+   <div class="row"><button class="btn" id="tSave">保存并生成加练待办</button><button class="btn gh" id="tCancel">取消</button></div></div>`;
   document.getElementById("tCancel").onclick=()=>{f.innerHTML="";};
   document.getElementById("tSave").onclick=()=>{const r=document.getElementById("tReason").value.trim();if(!r)return;
    DOC.triggers.list=DOC.triggers.list||[];
-   DOC.triggers.list.push({id:uid(),reason:r,action:document.getElementById("tAction").value.trim(),by:WHO,createdAt:nowT(),updatedAt:nowT()});
-   DOC.triggers.t=nowT();f.innerHTML="";touch();render();};};
+   DOC.triggers.list.push({id:uid(),who:document.getElementById("tWho").value||WHO,reason:r,action:document.getElementById("tAction").value.trim(),by:WHO,createdAt:nowT(),updatedAt:nowT()});
+   DOC.triggers.t=nowT();f.innerHTML="";touch();render();loadAttention(true);};};
  document.querySelectorAll("[data-tdel]").forEach(b=>b.onclick=()=>{const x=DOC.triggers.list.find(i=>i.id===b.dataset.tdel);if(!x)return;
   x.del=true;x.updatedAt=nowT();DOC.triggers.t=nowT();touch();render();});
 }
@@ -3337,13 +3347,16 @@ function renderBrainBar(){
  if(!isStaff()||!BRAIN){el.classList.add("hide");el.innerHTML="";return;}
  const g=BRAIN.global||{},L=BRAIN_ST[g.state]||BRAIN_ST.steady,first=(BRAIN.focus||[])[0];
  const c=(ATT&&ATT.counts)||null;
+ /* 顶部这一行永远取实时待办，避免 AI 文案还没重算时显示“待验收 1 项”这类旧结论 */
+ const top=(ATT&&ATT.items||[])[0];
  el.classList.remove("hide");
  el.innerHTML='<div class="card" style="border-left:4px solid '+L.c+';padding:14px 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
   +'<div style="flex:1;min-width:250px">'
   +'<div class="muted" style="font-size:12.2px;font-weight:700;letter-spacing:.3px">AI 主管 · '+L.t+(BRAIN.source==="model"?"":" · 规则版")+'</div>'
   +'<div style="font-size:14.6px;font-weight:700;margin-top:3px;line-height:1.6">'+esc(g.headline||"暂无判断")+'</div>'
-  +(first?'<div class="muted" style="margin-top:3px;font-size:12.6px">先处理：<b>'+esc(first.name)+'</b> — '+esc(first.verdict||"")+'</div>':"")
-  +(c?'<div class="muted" style="margin-top:4px;font-size:12.2px">今日待办 <b>'+c.total+'</b> 项 · 红灯 <b>'+c.red+'</b> · 今日新增 <b>'+c.newToday+'</b>　（清单在上方「今天先处理这些」）</div>':"")
+  +(top?'<div class="muted" style="margin-top:3px;font-size:12.6px">现在最该处理：'+esc(top.title)+'</div>'
+      :(first?'<div class="muted" style="margin-top:3px;font-size:12.6px">先处理：<b>'+esc(first.name)+'</b> — '+esc(first.verdict||"")+'</div>':""))
+  +(c?'<div class="muted" style="margin-top:4px;font-size:12.2px">今日待办 <b>'+c.total+'</b> 项 · 红灯 <b>'+c.red+'</b> · 今日新增 <b>'+c.newToday+'</b>'+(c.newToday?'':'（今天没有新增，不重复播报）')+'　（清单在上方「今天先处理这些」）</div>':"")
   +'</div><button class="btn sm" id="brainGo">看待办</button></div>';
  const go=document.getElementById("brainGo");
  if(go)go.onclick=()=>{const el2=document.getElementById("attnSec");if(el2)el2.scrollIntoView({behavior:"smooth",block:"start"});};
@@ -3381,6 +3394,7 @@ function renderBrain(){
   +'</div><button class="btn sm gh" id="brainRe">重新判断</button></div>'
   +(BRAIN_RUNNING?'<div class="muted" style="margin-top:8px;font-size:12.2px">正在更新…</div>':"")
   +'<div class="muted" style="margin-top:8px;font-size:11.8px">判断时间 '+fmt(BRAIN.asOf)+' · 只读，不改任何数据</div>'
+  +((ATT&&BRAIN&&ATT_T>BRAIN.asOf)?'<div class="muted" style="margin-top:4px;font-size:12px;color:var(--amber-d)">数据已经更新，下面这段是上次判断的快照；以「今天先处理这些」为准，点「重新判断」可刷新。</div>':"")
   +'</div>'
   +focus
   +(others?'<div class="card pad" style="margin-top:12px"><h3>其余人</h3>'+others+'</div>':"")
