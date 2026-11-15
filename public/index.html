@@ -525,6 +525,7 @@
             <button class="chip b on" data-carf="all">全部</button>
             <button class="chip b" data-carf="risk">只看预警</button>
             <button class="chip b" data-carf="open">只看未闭环</button>
+            <button class="chip b" data-carf="archived" id="carFArch" style="display:none">已归档</button>
           </div>
         </div>
         <div class="row" id="carrierTop" style="margin-bottom:10px"></div>
@@ -1717,7 +1718,7 @@ function threeThings(){
  }else{
   const rev=ATT?(ATT.counts&&ATT.counts.accept)||0:pendingReviews();
   const red=ATT?A.filter(x=>x.level==="red").length:0;
-  const unconfirmed=NEWCOMERS.filter(id=>!(DOC.plan&&DOC.plan.confirm&&DOC.plan.confirm[id])).length;
+  const unconfirmed=NEWCOMERS.filter(id=>!planConfirmed(id)).length;
   out.push(rev
    ?{no:"第 1 件",tt:`验收 ${rev} 个提交`,dd:"新人已提交验收，你确认后才会闭环。",btn:"去验收",act:"queue"}
    :{no:"第 1 件",tt:"暂无待验收",dd:"今天的验收队列已清空，可以去看看进展记录。",btn:"看待办",act:"queue",ghost:true});
@@ -1734,7 +1735,7 @@ function threeThings(){
 function firstWeekList(){
  return [
   {k:"进入平台并看到首页",on:true},
-  {k:"确认自己的培养计划",on:!!(DOC.plan&&DOC.plan.confirm&&DOC.plan.confirm[WHO])},
+  {k:"确认自己的培养计划",on:planConfirmed(WHO)},
   {k:"完成第 1 个节点（学完 + 小测）",on:ciDone(WHO).size>=1},
   {k:"完成第 1 次演练",on:((DOC.drills&&DOC.drills.list)||[]).some(x=>!x.del&&x.who===WHO)},
   {k:"发起第 1 次求助 / 问题",on:((DOC.issues&&DOC.issues.list)||[]).some(x=>!x.del&&x.who===WHO)}
@@ -2010,6 +2011,22 @@ function renderPassport(){
 }
 
 /* ---------- ① 规划 ---------- */
+/* 计划指纹：与服务端 planFp 完全一致；导师改了计划内容，指纹就对不上，需要新人重新确认。 */
+function stableStr(v){
+ if(v==null)return "null";
+ if(Array.isArray(v))return "["+v.map(stableStr).join(",")+"]";
+ if(typeof v==="object")return "{"+Object.keys(v).sort().map(k=>JSON.stringify(k)+":"+stableStr(v[k])).join(",")+"}";
+ return JSON.stringify(v);
+}
+function planFpOf(id){
+ const src=stableStr({p:(DOC.people||{})[id]||null,w:((DOC.plan||{}).wants||{})[id]||""});
+ let h=5381;for(let i=0;i<src.length;i++)h=((h<<5)+h+src.charCodeAt(i))|0;
+ return (h>>>0).toString(36);
+}
+function planConfirmed(id){
+ const PL=DOC.plan||{};
+ return !!((PL.confirm&&PL.confirm[id])&&(!(PL.confirmHash&&PL.confirmHash[id])||PL.confirmHash[id]===planFpOf(id)));
+}
 function renderPlan(){
  const m=DOC.meta||{};
  document.getElementById("planGoal").innerHTML=
@@ -2024,10 +2041,10 @@ function renderPlan(){
 
  const P=DOC.people||{},PL=DOC.plan||{};
  document.getElementById("planPeople").innerHTML=ppl().map(id=>{
-  const p=P[id]||{},confirmed=PL.confirm&&PL.confirm[id],wants=(PL.wants&&PL.wants[id])||"";
+  const p=P[id]||{},rawConfirmed=!!(PL.confirm&&PL.confirm[id]),confirmed=planConfirmed(id),stale=rawConfirmed&&!confirmed,wants=(PL.wants&&PL.wants[id])||"";
   return `<div class="card pad">
    <div class="row" style="justify-content:space-between"><h3>${esc(p.nm||WHO_NAME[id])}</h3>
-     <span class="tag ${confirmed?"ok":"wt"}">${confirmed?"计划已确认":"待新人确认"}</span></div>
+     <span class="tag ${confirmed?"ok":"wt"}">${confirmed?"计划已确认":(stale?"计划已更新，请重新确认":"待新人确认")}</span></div>
    <div class="muted" style="margin-top:3px">${esc(p.rl||"")}</div>
    <div class="muted" style="margin-top:9px;font-weight:700;color:var(--ink2)">重点补强</div>
    <div class="chips" style="margin-top:5px">${(p.short||[]).map(s=>`<span class="chip b">${esc(s)}</span>`).join("")}</div>
@@ -2040,7 +2057,12 @@ function renderPlan(){
  document.querySelectorAll("[data-wants]").forEach(t=>t.onchange=()=>{const id=t.dataset.wants;
   DOC.plan.wants=DOC.plan.wants||{};DOC.plan.wants[id]=t.value;DOC.plan.t=nowT();touch();});
  document.querySelectorAll("[data-confirm]").forEach(b=>b.onclick=()=>{const id=b.dataset.confirm;
-  DOC.plan.confirm=DOC.plan.confirm||{};DOC.plan.confirm[id]=!DOC.plan.confirm[id];DOC.plan.t=nowT();touch();render();});
+  DOC.plan.confirm=DOC.plan.confirm||{};DOC.plan.confirmAt=DOC.plan.confirmAt||{};DOC.plan.confirmHash=DOC.plan.confirmHash||{};
+  const ok=planConfirmed(id);
+  DOC.plan.confirm[id]=!ok;
+  DOC.plan.confirmAt[id]=nowT();
+  if(!ok)DOC.plan.confirmHash[id]=planFpOf(id);else delete DOC.plan.confirmHash[id];
+  DOC.plan.t=nowT();touch();render();loadAttention(true);});
 
  renderCarriers();
 }
@@ -2078,7 +2100,7 @@ const canLog=y=>isStaff()||y.by===WHO;
 /* ---- 客户档案：搜索 / 筛选 / 折叠 ----
    人与客户都会持续变多，所以默认只显示摘要行，点开才看任务与表单；
    搜索和筛选状态放模块级，输入框是静态节点，重绘不会丢焦点。 */
-let CAR_Q="",CAR_F="all",CAR_TIMER=null;
+let CAR_Q="",CAR_F="all",CAR_ARCH=false,CAR_TIMER=null;
 const CUI_CAR={open:{},pClosed:{}};
 function carIssues(x){
  const acts=(x.actions||[]).filter(v=>!v.del),h=carHealth(x),out=[];
@@ -2108,7 +2130,11 @@ const carFilterOn=()=>!!CAR_Q.trim()||CAR_F!=="all";
 
 
 function renderCarriers(){
- const C=DOC.carriers||{list:[]};const list=(C.list||[]).filter(x=>!x.del);const ids=ppl();
+ const C=DOC.carriers||{list:[]};
+ const archBtn=document.getElementById("carFArch");if(archBtn)archBtn.style.display=isStaff()?"":"none";
+ if(!isStaff())CAR_ARCH=false;
+ const list=(C.list||[]).filter(x=>CAR_ARCH?x.del:!x.del);
+ const ids=CAR_ARCH?[...new Set(list.map(x=>x.who).filter(Boolean))]:ppl();
  const g=id=>list.filter(x=>x.who===id);
  const sum=id=>g(id).reduce((a,x)=>{const h=carHealth(x);a.files++;a.total+=h.open+h.done;a.open+=h.open;a.done+=h.done;a.review+=h.review;a.over+=h.over;a.stale+=h.stale;return a;},{files:0,total:0,open:0,done:0,review:0,over:0,stale:0});
  document.getElementById("carrierTop").innerHTML=ids.map(id=>{const h=sum(id);
@@ -2129,7 +2155,7 @@ function renderCarriers(){
       <button class="carToggle" data-ctog="${x.id}" title="${open?"收起任务与表单":"展开任务与表单"}"><span class="arw">${open?"▾":"▸"}</span><span class="carName">${esc(x.name)}</span><span class="ctBtn">${open?"收起":"展开"}</span></button>
       <span class="taskTags">${iss.slice(0,2).map(t=>`<span class="tag ${/超期|已过/.test(t)?"no":"wt"}">${esc(t)}</span>`).join("")}
       <span class="tag ${h.open?"gy":"ok"}">闭环 ${h.done}/${h.done+h.open}</span>
-      ${canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:""}</span>
+      ${x.del?(isStaff()?`<button class="btn sm gh" data-cundel="${x.id}">恢复档案</button>`:""):(canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:"")}</span>
     </div>
     <div class="carMeta">
       <span class="mchip">来源 / 档位：${esc(x.src||"未填")}</span>
@@ -2142,6 +2168,7 @@ function renderCarriers(){
     ${x.note?`<div class="muted" style="margin-top:8px">备注：${esc(x.note)}</div>`:""}
     ${ed?`<div class="form formLG" style="margin-top:12px;grid-template-columns:1fr 1fr;background:#F7F9FB;border:1px solid var(--line);border-radius:11px;padding:13px 14px">
       <div style="grid-column:1/-1"><label>客户 / 项目名称（必填）</label><input data-cef="${x.id}.name" value="${esc(ed.name||"")}" placeholder="例：某商场 P2.5 项目"></div>
+      ${isStaff()?`<div><label>负责人（转交客户时改这里）</label><select data-ceown="${x.id}" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 14px;font-size:14px;background:#fff">${ppl().map(p=>`<option value="${p}" ${(ed.who||x.who)===p?"selected":""}>${esc(WHO_NAME[p]||p)}</option>`).join("")}</select></div>`:""}
       <div><label>来源 / 销售档位</label><input data-cef="${x.id}.src" value="${esc(ed.src||"")}" placeholder="例：销售分配 · A 档"></div>
       <div><label>销售搭档</label><input data-cef="${x.id}.partner" value="${esc(ed.partner||"")}" placeholder="例：张三"></div>
       <div><label>本阶段目标（这一步要做到什么）</label><input data-cef="${x.id}.goal" value="${esc(ed.goal||"")}" placeholder="例：完成现场调试并交付验收"></div>
@@ -2163,6 +2190,7 @@ function renderCarriers(){
       /* 新人可申请延期；导师在待办队列里批准/驳回 */
       if(!isStaff()&&st!==2&&(v.owner||x.who)===WHO&&!(v.delay&&v.delay.status==="pending"))
         ops.push(`<button class="btn sm gh" data-adelay="${key}">申请延期</button>`);
+      if(isStaff()&&v.hold&&v.hold.until)ops.push(`<button class="btn sm gh" data-aunhold="${key}">解除挂起</button>`);
       if(isStaff()&&st!==2)ops.push(`<button class="btn sm gh" data-acfm="${key}">${v.cfm===3?"确认验收":"确认闭环"}</button>`);
       if(isStaff()&&st!==2)ops.push(`<button class="btn sm danger" data-arej="${key}">退回</button>`);
       if(isStaff()&&st===2)ops.push(`<button class="btn sm gh" data-areopen="${key}">撤销验收</button>`);
@@ -2267,8 +2295,13 @@ function renderCarriers(){
   }
  }
  document.querySelectorAll("[data-carf]").forEach(b=>{
-  b.classList.toggle("on",CAR_F===b.dataset.carf);
-  b.onclick=()=>{CAR_F=b.dataset.carf;render();};
+  const arch=b.dataset.carf==="archived";
+  b.classList.toggle("on",arch?CAR_ARCH:(!CAR_ARCH&&CAR_F===b.dataset.carf));
+  b.onclick=()=>{
+   if(arch){CAR_ARCH=!CAR_ARCH;if(CAR_ARCH)CAR_F="all";}
+   else{CAR_ARCH=false;CAR_F=b.dataset.carf;}
+   render();
+  };
  });
  document.querySelectorAll("[data-ctog]").forEach(b=>b.onclick=()=>{
   const k=b.dataset.ctog;CUI_CAR.open[k]=!CUI_CAR.open[k];render();});
@@ -2293,21 +2326,34 @@ function renderCarriers(){
  document.querySelectorAll("[data-cedit]").forEach(b=>b.onclick=()=>{
   const x=(DOC.carriers.list||[]).find(y=>y.id===b.dataset.cedit);if(!x)return;
   CUI_CAR.open[x.id]=true;
-  CUI.editCar[x.id]={name:x.name||"",src:x.src||"",partner:x.partner||"",goal:x.goal||"",goalAt:x.goalAt||"",nextAt:x.nextAt||x.nextDate||"",note:x.note||""};
+  CUI.editCar[x.id]={name:x.name||"",who:x.who||"",src:x.src||"",partner:x.partner||"",goal:x.goal||"",goalAt:x.goalAt||"",nextAt:x.nextAt||x.nextDate||"",note:x.note||""};
   render();});
+ document.querySelectorAll("[data-ceown]").forEach(s=>s.onchange=()=>{
+  const e=CUI.editCar[s.dataset.ceown];if(e)e.who=s.value;});
  document.querySelectorAll("[data-cef]").forEach(i=>i.oninput=()=>{
   const p=i.dataset.cef.split(".");const e=CUI.editCar[p[0]];if(e)e[p[1]]=i.value;});
  document.querySelectorAll("[data-cesave]").forEach(b=>b.onclick=()=>{
   const x=(DOC.carriers.list||[]).find(y=>y.id===b.dataset.cesave),e=CUI.editCar[b.dataset.cesave];
   if(!x||!e)return;const n=(e.name||"").trim();if(!n){alert("客户 / 项目名称不能为空");return;}
+  if(isStaff()&&e.who&&e.who!==x.who){
+    const ok=confirm("把客户「"+n+"」转交给 "+(WHO_NAME[e.who]||e.who)+"？\n转交后，未闭环任务和协助一起跟着走，历史记录保留。");
+    if(!ok){e.who=x.who;render();return;}
+    const old=x.who;x.who=e.who;
+    (x.actions||[]).forEach(v=>{ if(!v.owner||v.owner===old){v.owner="";v.updatedAt=nowT();} });
+  }
   x.name=n;x.src=(e.src||"").trim();x.partner=(e.partner||"").trim();x.goal=(e.goal||"").trim();
   x.goalAt=e.goalAt||"";x.nextAt=e.nextAt||"";x.note=(e.note||"").trim();
   x.updatedAt=nowT();delete CUI.editCar[x.id];DOC.carriers.t=nowT();touch();render();});
  document.querySelectorAll("[data-cecancel]").forEach(b=>b.onclick=()=>{delete CUI.editCar[b.dataset.cecancel];render();});
  document.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=()=>{
   const it=(DOC.carriers.list||[]).find(x=>x.id===b.dataset.cdel);if(!it)return;
-  if(!confirm("归档后该客户档案及其任务将不再显示，确定？"))return;
+  if(!confirm("归档后该客户档案及其任务将暂停显示，相关协助会标记「已解除」。\n需要时可在「已归档」里恢复，确定归档？"))return;
   it.del=true;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
+ document.querySelectorAll("[data-cundel]").forEach(b=>b.onclick=()=>{
+  if(!isStaff())return;
+  const it=(DOC.carriers.list||[]).find(x=>x.id===b.dataset.cundel);if(!it)return;
+  if(!confirm("恢复「"+it.name+"」？归档时暂停的任务会一起回来，被解除的协助会重新开启。"))return;
+  it.del=false;it.updatedAt=nowT();DOC.carriers.t=nowT();touch();render();});
 
  /* ---- 任务 / 项目：闭环流程 = 开始处理 → 更新进展 → 提交验收 → 导师确认 ---- */
  const getAct=k=>{const p=String(k).split(".");
@@ -2334,6 +2380,10 @@ function renderCarriers(){
   o.v.st=1;o.v.cfm=3;pushLog(o.v,"已提交验收，等待导师确认。");saveAct(o);});
  document.querySelectorAll("[data-awd]").forEach(b=>b.onclick=()=>{const o=getAct(b.dataset.awd);if(!o)return;
   o.v.cfm=0;pushLog(o.v,"撤回提交验收，继续完善。");saveAct(o);});
+ document.querySelectorAll("[data-aunhold]").forEach(b=>b.onclick=()=>{
+  const o=getAct(b.dataset.aunhold);if(!o||!isStaff())return;
+  o.v.hold=null;delete o.v.hold;
+  pushLog(o.v,"导师解除挂起，恢复跟进。");saveAct(o);loadAttention(true);});
  document.querySelectorAll("[data-adelay]").forEach(b=>b.onclick=()=>{
   const o=getAct(b.dataset.adelay);if(!o)return;
   const reason=(window.prompt("延期理由（会发给导师）","")||"").trim();if(!reason)return;
@@ -2538,6 +2588,7 @@ function renderAssist(){
      <button class="btn sm" data-rsend="${x.id}">回复</button></div>`:""}
    <div class="row" style="margin-top:7px">
      ${(owner||isStaff())&&st<2?`<button class="btn sm gh" data-iclose="${x.id}">标记已闭环</button>`:""}
+     ${isStaff()&&st===3?`<button class="btn sm gh" data-ireopen="${x.id}">重新开启</button>`:""}
      ${isStaff()&&!wish?`<button class="btn sm gh" data-icard="${x.id}">沉淀为一问题一卡片</button>`:""}
      ${isStaff()&&(x.replies||[]).length?`<button class="btn sm gh" data-iquot="${x.id}">萃一句金句</button>`:""}
      ${isStaff()||owner?`<button class="btn sm danger" data-idel="${x.id}">删除</button>`:""}</div>
@@ -2561,6 +2612,10 @@ function renderAssist(){
   x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
  document.querySelectorAll("[data-iclose]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.iclose);if(!x)return;
   x.status=2;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+ document.querySelectorAll("[data-ireopen]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.ireopen);if(!x||!isStaff())return;
+  x.status=0;x.waitingSince=nowT();x.resolve="";x.releasedBy="";x.closedBy="";x.replies=x.replies||[];
+  x.replies.push({id:uid(),by:"system",at:nowT(),text:"导师重新开启该协助。"});
+  x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();loadAttention(true);});
  document.querySelectorAll("[data-idel]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.idel);if(!x)return;
   x.del=true;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
  document.querySelectorAll("[data-icard]").forEach(b=>b.onclick=()=>{const x=DOC.issues.list.find(i=>i.id===b.dataset.icard);if(!x)return;

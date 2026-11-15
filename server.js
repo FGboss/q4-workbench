@@ -348,6 +348,73 @@ function mergeList(L, R) {
   }));
   return { t: Math.max((L && L.t) || 0, (R && R.t) || 0), list: Object.values(m) };
 }
+/* 客户档案里嵌套了任务；如果只按档案 updatedAt 合并，A 端改了任务、B 端改的是同一档案，
+   整份档案会被旧版本覆盖，任务改动就丢了。这里对 actions 再做一层按 id+updatedAt 合并。 */
+function mergeCarriers(A, B) {
+  const la = (A && A.list) || [], lb = (B && B.list) || [];
+  const ids = [...new Set([...la.map(x => x.id), ...lb.map(x => x.id)])];
+  const list = ids.map(id => {
+    const x = la.filter(v => v.id === id)[0], y = lb.filter(v => v.id === id)[0];
+    if (!x || !y) return x || y;
+    const base = ((x.updatedAt || 0) >= (y.updatedAt || 0)) ? x : y;
+    const c = Object.assign({}, base);
+    c.actions = mergeList({ list: x.actions || [] }, { list: y.actions || [] }).list;
+    return c;
+  });
+  return { t: Math.max((A && A.t) || 0, (B && B.t) || 0), list };
+}
+/* 协助的回复是追加数组，整对象合并会丢另一端的回复；按 id 合并 */
+function mergeIssues(A, B) {
+  const m = mergeList(A, B);
+  m.list = m.list.map(x => {
+    const a = ((A && A.list) || []).filter(i => i.id === x.id)[0];
+    const b = ((B && B.list) || []).filter(i => i.id === x.id)[0];
+    const all = [].concat((a && a.replies) || [], (b && b.replies) || []);
+    const rm = {};
+    all.forEach(r => { if (r && r.id) rm[r.id] = r; });
+    if (!Object.keys(rm).length) return x;
+    return Object.assign({}, x, { replies: Object.values(rm).sort((p, q) => (p.at || 0) - (q.at || 0)) });
+  });
+  return m;
+}
+/* 稳定序列化：只用于计算指纹，保证同一份计划内容在任何机器上得到同一个字符串 */
+function stableStr(v) {
+  if (v == null) return "null";
+  if (Array.isArray(v)) return "[" + v.map(stableStr).join(",") + "]";
+  if (typeof v === "object") return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + stableStr(v[k])).join(",") + "}";
+  return JSON.stringify(v);
+}
+/* 培养计划指纹（djb2）：内容一变，指纹就变；前端用同一算法，不一致就说明导师改过计划。
+   只算「计划内容」，不含确认状态本身，避免确认动作反而把计划标成已更新。 */
+function planFp(doc, id) {
+  const src = stableStr({
+    p: ((doc && doc.people) || {})[id] || null,
+    w: (((doc && doc.plan) || {}).wants || {})[id] || "",
+  });
+  let h = 5381;
+  for (let i = 0; i < src.length; i++) h = ((h << 5) + h + src.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+/* 培养计划是「共享对象 + 每人一个键」：整对象按 t 覆盖会丢掉另一端刚做的确认/留言。
+   这里对按人存储的键做逐键合并，其余字段仍按 t 取整份。 */
+function mergePlan(A, B) {
+  const a = A || {}, b = B || {};
+  const base = ((a.t || 0) >= (b.t || 0)) ? a : b;
+  const other = (base === a) ? b : a;
+  const o = Object.assign({}, base);
+  ["confirm", "confirmHash", "confirmAt", "wants", "remind"].forEach(k => {
+    const m = Object.assign({}, other[k] || {});
+    Object.keys(base[k] || {}).forEach(id => { m[id] = base[k][id]; });
+    o[k] = m;
+  });
+  /* 同一人的确认在两端同时操作：以 confirmAt 更晚的一端为准 */
+  const ca = a.confirm || {}, cb = b.confirm || {}, ta = a.confirmAt || {}, tb = b.confirmAt || {};
+  [...new Set([...Object.keys(ca), ...Object.keys(cb)])].forEach(id => {
+    const xa = ta[id] || 0, xb = tb[id] || 0;
+    if (xa !== xb) o.confirm[id] = (xa > xb) ? ca[id] : cb[id];
+  });
+  return o;
+}
 function mergeChecks(A, B) {
   const m = {};
   [(A && A.checks) || [], (B && B.checks) || []].forEach(a => a.forEach(x => {
@@ -409,7 +476,15 @@ function taskStateOf(v, ownerId) {
 }
 function normalizeTaskStates(doc) {
   let changed = false;
+  const now = Date.now(), today = bjKey(now);
   ((doc && doc.carriers && doc.carriers.list) || []).forEach(c => (c.actions || []).forEach(v => {
+    /* 挂起到期：到日子自动恢复跟进，避免「挂起至 11-10」永远挂着、红灯被悄悄吞掉 */
+    const until = v.hold && String(v.hold.until || "").slice(0, 10);
+    if (until && /^\d{4}-\d{2}-\d{2}$/.test(until) && until < today) {
+      v.log = v.log || [];
+      v.log.push({ id: uid(), by: "system", at: now, text: `挂起到期（${until}），系统自动恢复跟进。` });
+      v.hold = null; v.updatedAt = now; changed = true;
+    }
     const s = taskStateOf(v, v.owner || c.who);
     if (v.state !== s.state || v.holder !== s.holder) { v.state = s.state; v.holder = s.holder; changed = true; }
   }));
@@ -428,15 +503,33 @@ function reconcileDoc(doc) {
   /* 1. 客户档案归档：任务一并归档，关联协助关闭
      系统自动解除用 status=3（已解除），不能伪装成「人确认的问题已闭环」 */
   carriers.filter(c => c.del).forEach(c => {
+    if (!c.delAt) { c.delAt = now; changed = true; }
     (c.actions || []).forEach(v => {
       if (!v.del) { v.del = true; v.delBy = "system"; v.delAt = now; v.updatedAt = now; changed = true; }
     });
     issues.filter(x => x.fromCarrier === c.id && (x.status || 0) < 2).forEach(x => {
-      x.status = x.src === "auto" ? 3 : 2;
-      x.closedBy = "system"; x.updatedAt = now;
-      x.resolve = x.src === "auto" ? "客户档案已归档，升级解除" : "客户档案已归档";
+      x.status = 3; x.closedBy = "system"; x.releasedBy = "archive"; x.updatedAt = now;
+      x.resolve = x.src === "auto" ? "客户档案已归档，升级解除" : "客户档案已归档，问题随档案解除";
       changed = true;
     });
+  });
+
+  /* 1.5 误归档可恢复：把归档时被系统暂停的任务和协助一起还原。
+     人工删除（delBy=操作人）不动，避免把真正删掉的东西复活。 */
+  carriers.filter(c => !c.del).forEach(c => {
+    let back = 0;
+    (c.actions || []).forEach(v => {
+      if (v.del && v.delBy === "system") {
+        v.del = false; v.delBy = ""; v.delAt = 0; v.updatedAt = now; back++;
+      }
+    });
+    issues.filter(x => x.fromCarrier === c.id && (x.status || 0) === 3 && x.releasedBy === "archive").forEach(x => {
+      x.status = 0; x.closedBy = ""; x.releasedBy = ""; x.resolve = ""; x.updatedAt = now;
+      x.replies = x.replies || [];
+      x.replies.push({ id: uid(), by: "system", at: now, text: "客户档案已恢复，协助重新开启。" });
+      back++;
+    });
+    if (back) { delete c.delAt; changed = true; }
   });
 
   /* 2. 任务闭环 / 删除：关联协助关闭（按 客户+任务 双键匹配，避免不同客户同 id 误伤） */
@@ -449,6 +542,21 @@ function reconcileDoc(doc) {
       changed = true;
     });
   }));
+
+  /* 2.5 任务/客户换手：未闭环的协助跟着新责任人走。
+     否则旧责任人还被「必回」追着，新责任人看不到上下文，导师以为已经转交完成。 */
+  issues.filter(x => (x.status || 0) < 2 && x.fromCarrier).forEach(x => {
+    const hit = findAct(x.fromCarrier, x.fromAction || "");
+    const c = hit ? hit.c : carriers.filter(y => y.id === x.fromCarrier)[0];
+    if (!c || c.del) return;
+    const owner = (hit && hit.v && hit.v.owner) || c.who || "";
+    if (!owner || owner === x.who) return;
+    const oldName = (findUser(x.who) || {}).name || x.who || "原责任人";
+    const newName = (findUser(owner) || {}).name || owner;
+    x.who = owner; x.updatedAt = now; changed = true;
+    x.replies = x.replies || [];
+    x.replies.push({ id: uid(), by: "system", at: now, text: `责任人已由 ${oldName} 变更为 ${newName}，协助自动转交。` });
+  });
 
   /* 3. 人工关闭的协助：回写一条进展到关联任务，并解除卡点 */
   issues.filter(x => (x.status || 0) === 2 && x.fromAction && x.src !== "auto").forEach(x => {
@@ -530,10 +638,15 @@ function reconcileDoc(doc) {
 
   /* 3.6 触发式加练：完成一次「同主题」演练才算落实；主题不匹配不能自动关。
      历史登记没有完成日期：默认给 7 天期限，先降为「已安排」，逾期再回红。 */
-  ((doc.triggers && doc.triggers.list) || []).filter(tg => !tg.del && tg.status !== "done").forEach(tg => {
+  ((doc.triggers && doc.triggers.list) || []).filter(tg => !tg.del).forEach(tg => {
     const hit = ((doc.drills && doc.drills.list) || []).find(d => !d.del && d.who === tg.who && toMs(d.createdAt) >= toMs(tg.createdAt)
       && (!d.topic || !tg.reason || String(d.topic).indexOf(tg.reason) >= 0 || String(tg.reason).indexOf(d.topic) >= 0));
-    if (hit) { tg.status = "done"; tg.drillId = hit.id; tg.updatedAt = now; changed = true; return; }
+    if (hit) {
+      if (tg.status !== "done") { tg.status = "done"; tg.drillId = hit.id; tg.updatedAt = now; changed = true; }
+      return;
+    }
+    /* 演练被删除/改主题后，已完成的加练要退回「已安排」，不能永久关闭 */
+    if (tg.status === "done") { tg.status = "scheduled"; tg.drillId = ""; tg.updatedAt = now; changed = true; }
     if (!tg.due) {
       tg.due = bjKey(toMs(tg.createdAt || now) + 7 * 864e5);
       tg.status = "scheduled"; tg.updatedAt = now; changed = true;
@@ -624,8 +737,11 @@ function mergeKV(A, B) {
 function mergeDoc(A, B) {
   const a = A || emptyDoc(), b = B || emptyDoc();
   const o = { v: 5, t: Math.max(a.t || 0, b.t || 0) };
-  ["sec", "meta", "people", "plan"].forEach(k => o[k] = mergePlain(a[k], b[k]));
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "retests", "feedback"].forEach(k => o[k] = mergeList(a[k], b[k]));
+  ["sec", "meta", "people"].forEach(k => o[k] = mergePlain(a[k], b[k]));
+  o.plan = mergePlan(a.plan, b.plan);
+  o.carriers = mergeCarriers(a.carriers, b.carriers);
+  o.issues = mergeIssues(a.issues, b.issues);
+  ["drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "retests", "feedback"].forEach(k => o[k] = mergeList(a[k], b[k]));
   o.map = mergeChecks(a.map, b.map);
   o.fae = mergeMap(a.fae, b.fae);
   o.reviews = mergeMap(a.reviews, b.reviews);
@@ -2484,6 +2600,19 @@ app.post("/api/user_delete", (req, res) => {
   if (!u) return res.status(404).json({ ok: false, msg: "账号不存在" });
   if (u.role === "admin" && (USERS.users || []).filter(x => x.role === "admin").length <= 1)
     return res.status(400).json({ ok: false, msg: "至少保留一个超级管理员" });
+  /* 删人不删业务：名下还有客户/未闭环任务/未关闭协助时直接拒绝，
+     否则这些数据会变成谁提醒不到、谁也算不清的孤儿。 */
+  const carriers = ((DOC && DOC.carriers && DOC.carriers.list) || []).filter(c => !c.del);
+  const owns = carriers.filter(c => c.who === id).length;
+  const openTasks = carriers.reduce((n, c) => n + (c.actions || [])
+    .filter(v => !v.del && (v.st || 0) !== 2 && (v.owner || c.who) === id).length, 0);
+  const openIssues = ((DOC && DOC.issues && DOC.issues.list) || [])
+    .filter(x => !x.del && (x.status || 0) < 2 && x.who === id).length;
+  if (owns || openTasks || openIssues) {
+    return res.status(409).json({ ok: false, msg:
+      `该账号名下还有 ${owns} 个客户、${openTasks} 个未闭环任务、${openIssues} 条未关闭协助。\n` +
+      "请先到「客户档案 → 编辑」把客户转交给其他新人、把任务负责人改掉，再删除账号。" });
+  }
   USERS.users = USERS.users.filter(x => x.id !== id);
   /* 删人后清理悬空关系，避免新人还挂在一个已不存在的导师/主管名下 */
   (USERS.users || []).forEach(n => {
@@ -2872,12 +3001,21 @@ function attentionPayload(me) {
       .filter(k => approvedVariants(k).length && (passes[k] || 0) < 2).length;
   });
 
+  /* 计划确认必须绑定「当时确认的那版内容」：导师后来又改了计划，就不能再算已确认。
+     历史数据没有指纹（旧版本确认的）按已确认处理，不追溯打扰。 */
+  const planConfirm = {};
+  const rawConfirm = (DOC && DOC.plan && DOC.plan.confirm) || {};
+  const rawHash = (DOC && DOC.plan && DOC.plan.confirmHash) || {};
+  Object.keys(rawConfirm).forEach(id => {
+    planConfirm[id] = !!rawConfirm[id] && (!rawHash[id] || rawHash[id] === planFp(DOC, id));
+  });
+
   const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
     drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt), topic: x.topic || "" })),
     triggers: (((DOC && DOC.triggers && DOC.triggers.list) || [])).filter(x => !x.del && x.who)
       .map(x => ({ id: x.id, who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "",
         due: x.due || "", status: x.status || "" })),
-    planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {}, retests, learning });
+    planConfirm, retests, learning });
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
@@ -2893,6 +3031,17 @@ app.get("/api/attention", (req, res) => {
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
   try { res.json(Object.assign({ ok: true }, attentionPayload(me))); }
   catch (e) { console.error("[attention]", e.message); res.status(500).json({ ok: false, msg: "待办生成失败" }); }
+});
+
+/* 手动重算：立即执行一次扫描（自动升级/回收/加练状态），不用等定时器 */
+app.post("/api/attention/scan", async (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  if (!["admin", "lead", "mentor"].includes(me.role)) return res.status(403).json({ ok: false, msg: "没有权限" });
+  try {
+    const r = await runAttentionScan("manual");
+    res.json({ ok: true, created: r.created, reopened: r.reopened, escalated: r.escalated });
+  } catch (e) { console.error("[scan]", e.message); res.status(500).json({ ok: false, msg: "重算失败" }); }
 });
 
 /* 导师看到「培养计划待确认」时的唯一有效动作：提醒新人本人确认。
@@ -2998,11 +3147,21 @@ async function runAttentionScan(trigger) {
   const data = attentionPayload(null);
   DOC.issues = DOC.issues || { t: 0, list: [] };
   DOC.issues.list = DOC.issues.list || [];
-  const created = [];
+  const created = [], reopened = [];
   data.items.filter(it => (it.type === "overdue" && it.wait >= 3) || (it.type === "stale" && it.wait >= 10))
     .forEach(it => {
       const key = "auto:" + it.ref.carrierId + "." + it.ref.actionId;
-      if (DOC.issues.list.some(x => x.key === key && !x.del)) return;
+      const old = DOC.issues.list.find(x => x.key === key && !x.del);
+      if (old && (old.status || 0) < 2) return;
+      if (old) {
+        /* 任务再次超期/停更：重新开启原协助，保留历史对话，不另起一条 */
+        old.status = 0; old.waitingSince = Date.now();
+        old.closedBy = ""; old.releasedBy = ""; old.resolve = "";
+        old.reopened = (old.reopened || 0) + 1; old.escalatedAt = 0; old.updatedAt = Date.now();
+        old.replies = old.replies || [];
+        old.replies.push({ id: uid(), by: "system", at: Date.now(), text: "任务再次触发升级，系统重新开启该协助。" });
+        reopened.push(old); return;
+      }
       const x = { id: uid(), key, who: it.ownerId, by: "system", type: "issue", src: "auto",
         autoKind: it.type,
         proj: String(it.detail || "").split(" · ")[0] || "", text: "【系统升级】" + it.title, status: 0, replies: [],
@@ -3014,13 +3173,14 @@ async function runAttentionScan(trigger) {
   DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
     && !x.escalatedAt && Date.now() - toMs(x.createdAt) >= 48 * 3600e3)
     .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
-  if (created.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }
+  if (created.length || reopened.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }
   if (created.length) notifyAutoEscalation(created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })));
+  if (reopened.length) console.log(`[attention] 重新开启 ${reopened.length} 条（${trigger || "scan"}）`);
   if (escalated.length) {
     console.log(`[attention] 已升级主管 ${escalated.length} 条（${trigger || "scan"}）`);
     notifyAutoEscalation(escalated.map(x => ({ ownerId: x.who, proj: "已等 48 小时未处理", text: x.text })));
   }
-  return { created: created.length, escalated: escalated.length };
+  return { created: created.length, reopened: reopened.length, escalated: escalated.length };
 }
 
 /* 导师派任务 → 新人站内提示（引擎 new_task）+ 邮件（这里）。同一人一次保存合并成一封。 */
