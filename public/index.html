@@ -2952,7 +2952,9 @@ const NODE_ST_LABEL={not_started:"未开始",learning:"学习中",quiz_done:"待
 const NODE_ST_CLS={not_started:"gy",learning:"wt",quiz_done:"wt",applied:"ok",reviewed:"pri"};
 function nodeRecLocal(who,nid){return ((DOC.nodeState&&DOC.nodeState.list)||[]).find(x=>!x.del&&x.who===who&&x.nodeId===nid)||null;}
 function nodeStateOf(who,nid){
- const rec=nodeRecLocal(who,nid),q=!!qzLatestDone(who,nid),c=!!ciRec(who,nid);
+ const rec=nodeRecLocal(who,nid),c=!!ciRec(who,nid);
+ /* 老版打卡里自带 total/correct 的，等同「已交卷」，不能误判成学习中 */
+ const q=!!(qzLatestDone(who,nid)||((ciRec(who,nid)||{}).total>0));
  let s="not_started";
  if(rec&&rec.state==="learning")s="learning";
  if(c)s="learning";

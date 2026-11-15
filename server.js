@@ -3366,7 +3366,10 @@ function nodeDerived(who, nodeId) {
   const rec = nodeRecOf(who, nodeId);
   const cks = ((DOC && DOC.checkins && DOC.checkins.list) || []).filter(x => !x.del && x.who === who && x.nodeId === nodeId);
   const qzs = ((DOC && DOC.quiz && DOC.quiz.list) || []).filter(x => !x.del && x.who === who && x.nodeId === nodeId && x.status === "done" && (+x.total) > 0);
-  const hasCheckin = cks.length > 0, quizDone = qzs.length > 0;
+  const hasCheckin = cks.length > 0;
+  /* 旧版把成绩直接写在打卡记录里（total>0），迁移前也必须算「已交卷」，
+     否则老节点会被误判成学习中，还会多报“节点卡住”。 */
+  const quizDone = qzs.length > 0 || cks.some(x => (+x.total) > 0);
   let state = "not_started";
   if (rec && rec.state === "learning") state = "learning";   // 打开过节点也算「学习中」
   if (hasCheckin) state = "learning";
