@@ -435,10 +435,10 @@ function reconcileDoc(doc) {
     });
   });
 
-  /* 2. 任务闭环 / 删除：关联协助关闭 */
+  /* 2. 任务闭环 / 删除：关联协助关闭（按 客户+任务 双键匹配，避免不同客户同 id 误伤） */
   carriers.forEach(c => (c.actions || []).forEach(v => {
     if (!(v.del || (v.st || 0) === 2)) return;
-    issues.filter(x => x.fromAction === v.id && (x.status || 0) < 2).forEach(x => {
+    issues.filter(x => x.fromAction === v.id && (!x.fromCarrier || x.fromCarrier === c.id) && (x.status || 0) < 2).forEach(x => {
       x.status = 2; x.closedBy = "system"; x.updatedAt = now;
       x.resolve = v.del ? "任务已删除" : "任务已闭环"; changed = true;
     });
@@ -460,14 +460,48 @@ function reconcileDoc(doc) {
     }
   });
 
-  /* 4. 自动升级的协助：任务改期 / 闭环 / 删除后自动关闭 */
+  /* 3.5 协助会话状态：最后一条回复是谁，球就在谁那边。
+     导师回复 → status=1（等新人），立刻退出“必回”；新人回复 → status=0（等导师）。
+     同时把导师回复同步成任务进展，任务侧不用再重复写一遍。 */
+  issues.filter(x => (x.status || 0) < 2).forEach(x => {
+    const rs = x.replies || [];
+    const last = rs[rs.length - 1];
+    if (!last || last.by === "system") return;
+    const u = findUser(last.by);
+    const staff = !!u && u.role !== "newbie";
+    const want = staff ? 1 : 0;
+    if ((x.status || 0) !== want) { x.status = want; x.updatedAt = now; changed = true; }
+    if (x.waitingSince !== last.at) { x.waitingSince = last.at; changed = true; }
+    x.holder = staff ? "newbie" : "staff";
+    if (staff && last.id && x.syncedReply !== last.id && x.fromAction) {
+      const hit = findAct(x.fromCarrier || "", x.fromAction);
+      if (hit && hit.v && !hit.v.del && (hit.v.st || 0) !== 2) {
+        hit.v.log = hit.v.log || [];
+        hit.v.log.push({ id: uid(), by: "system", at: now,
+          text: `【协助回复】${String(last.text || "").slice(0, 80)}` });
+        hit.v.updatedAt = now; hit.c.updatedAt = now;
+      }
+      x.syncedReply = last.id; changed = true;
+    }
+  });
+
+  /* 4. 自动升级的协助：任务改期 / 闭环 / 删除后才关闭。
+     注意区分「超期」和「长期没更新」：后者没有截止日，不能按 due 判断。 */
   issues.filter(x => x.src === "auto" && (x.status || 0) < 2 && x.key).forEach(x => {
     const key = String(x.key).replace(/^auto:/, "");
     const p = key.split(".");
     const hit = findAct(p[0], p[1]);
     const v = hit && hit.v;
-    const due = v ? String(v.due || "").slice(0, 10) : "";
-    const still = v && !v.del && (v.st || 0) !== 2 && /^\d{4}-\d{2}-\d{2}$/.test(due) && due < today;
+    const kind = x.autoKind || (/没更新/.test(x.text || "") ? "stale" : "overdue");
+    let still = false;
+    if (v && !v.del && (v.st || 0) !== 2) {
+      if (kind === "stale") {
+        still = waitDays(toMs(v.updatedAt || v.createdAt)) >= 10;
+      } else {
+        const due = String(v.due || "").slice(0, 10);
+        still = /^\d{4}-\d{2}-\d{2}$/.test(due) && due < today;
+      }
+    }
     if (!still) {
       x.status = 2; x.closedBy = "system"; x.updatedAt = now;
       x.resolve = "任务已不再超期"; changed = true;
@@ -2809,7 +2843,7 @@ function attentionPayload(me) {
   const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
     drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt) })),
     triggers: (((DOC && DOC.triggers && DOC.triggers.list) || [])).filter(x => !x.del && x.who)
-      .map(x => ({ who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "" })),
+      .map(x => ({ id: x.id, who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "" })),
     planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {}, retests, learning });
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
@@ -2826,6 +2860,33 @@ app.get("/api/attention", (req, res) => {
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
   try { res.json(Object.assign({ ok: true }, attentionPayload(me))); }
   catch (e) { console.error("[attention]", e.message); res.status(500).json({ ok: false, msg: "待办生成失败" }); }
+});
+
+/* 导师看到「培养计划待确认」时的唯一有效动作：提醒新人本人确认。
+   以前这个卡片对导师是死按钮，点了没反应，也没有说明为什么不能代确认。 */
+app.post("/api/plan/remind", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
+  if (!["admin", "lead", "mentor"].includes(me.role)) return res.status(403).json({ ok: false, msg: "只有导师/主管可以提醒" });
+  const who = String((req.body && req.body.who) || "");
+  const u = findUser(who);
+  if (!u || u.role !== "newbie") return res.status(400).json({ ok: false, msg: "新人不存在" });
+  if (!DOC) DOC = emptyDoc();
+  DOC.plan = DOC.plan || { t: 0, confirm: {}, remind: {} };
+  DOC.plan.remind = DOC.plan.remind || {};
+  DOC.plan.remind[who] = Date.now();
+  DOC.plan.t = Date.now();
+  persistDoc();
+  let mailed = false;
+  try {
+    if (MAIL_ON && u.email) {
+      mailed = sendMail("【培养计划待确认】请花 2 分钟确认你的 Q4 培养目标",
+        `<p><b>${h(u.name)}</b>，你的培养计划还差最后一步：</p>
+         <p>打开工作台首页 →「培养计划」→ 点「确认计划」。确认后导师才能按计划给你排节点和考核。</p>`,
+        "如果目标有异议，先在计划页留言，再让导师调整。", { to: [u.email], kind: "plan", trigger: "mentor" });
+    }
+  } catch (e) { console.error("[mail] plan", e.message); }
+  res.json({ ok: true, mailed });
 });
 
 /* ---------- 认可引擎：把新人真实做过的事讲出来（不是打分，不排名） ----------
@@ -2856,7 +2917,9 @@ function recognitionAll() {
     quiz: S.quiz.map(x => ({ who: x.who, at: toMs(x.updatedAt || x.finishedAt || x.createdAt),
       correct: x.correct || 0, total: x.total || 0, nodeId: x.nodeId })),
     tasks,
-    issues: S.issues.map(x => ({ who: x.who, createdAt: toMs(x.createdAt), status: x.status || 0,
+    issues: S.issues.map(x => ({ id: x.id, who: x.who, text: x.text || "", createdAt: toMs(x.createdAt),
+      updatedAt: toMs(x.updatedAt), status: x.status || 0, src: x.src || "",
+      waitingSince: toMs(x.waitingSince || 0),
       replies: (x.replies || []).map(r => ({ by: r.by, at: toMs(r.at) })) })),
     drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt), score: x.score || "", topic: x.topic || "" })),
     deposits: S.deposits.map(x => ({ who: x.who, at: toMs(x.createdAt), title: x.title || "" })),
@@ -2908,6 +2971,7 @@ async function runAttentionScan(trigger) {
       const key = "auto:" + it.ref.carrierId + "." + it.ref.actionId;
       if (DOC.issues.list.some(x => x.key === key && !x.del)) return;
       const x = { id: uid(), key, who: it.ownerId, by: "system", type: "issue", src: "auto",
+        autoKind: it.type,
         proj: String(it.detail || "").split(" · ")[0] || "", text: "【系统升级】" + it.title, status: 0, replies: [],
         fromAction: it.ref.actionId || "", fromCarrier: it.ref.carrierId || "",
         createdAt: Date.now(), updatedAt: Date.now() };

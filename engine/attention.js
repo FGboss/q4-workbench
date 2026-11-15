@@ -51,7 +51,13 @@ function build(ctx) {
   const seen = {};
 
   const add = (it) => {
-    const id = it.type + ":" + it.refKey;
+    /* 稳定 id：类型 + 业务主键。没有主键就会退化成 type:undefined，
+       同类型多条待办会互相覆盖（验收 4 条只剩 1 条就是这么来的）。 */
+    const r = it.ref || {};
+    const biz = (r.actionId ? (r.carrierId ? r.carrierId + "." + r.actionId : r.actionId) : "")
+      || r.issueId || r.nodeId || r.triggerId || r.key
+      || (r.carrierId ? r.carrierId + (it.who ? "." + it.who : "") : (it.who || "all"));
+    const id = it.type + ":" + (it.refKey || biz);
     if (seen[id]) return;                       // 同一件事只出现一次
     seen[id] = 1;
     items.push(Object.assign({ id, at: now }, it));
@@ -134,18 +140,20 @@ function build(ctx) {
     }
   });
 
-  /* ---------- 2. 客户：跟进日过期 / 没有下一步 ---------- */
+  /* ---------- 2. 客户：跟进日过期 / 没有下一步 ----------
+     没有跟进日属于「同一类低优先级提醒」，按人聚合成一条；
+     过期跟进有明确时限，仍然逐客户列出（通常很少）。 */
+  const noNext = {};
   (ctx.customers || []).forEach(c => {
     if (!c.ownerId || !c.openCount) return;
     const next = String(c.nextAt || "").slice(0, 10);
     const late = next && next < ctx.day ? Math.round((new Date(ctx.day + "T00:00:00Z") - new Date(next + "T00:00:00Z")) / DAY) : 0;
     if (!next) {
-      if (c.idleDays >= 7) add({
-        type: "followup_none", role: "newbie", level: "yellow", who: c.ownerId, ownerId: c.ownerId,
-        title: `客户「${c.name}」没有下一步跟进日`,
-        detail: `${c.openCount} 项未闭环 · 已 ${c.idleDays} 天没进展`,
-        ref: { kind: "carrier", carrierId: c.id }, action: "followup", since: ms(c.updatedAt), wait: c.idleDays,
-      });
+      if (c.idleDays >= 7) {
+        const g = noNext[c.ownerId] = noNext[c.ownerId] || { n: 0, max: 0, names: [] };
+        g.n++; g.max = Math.max(g.max, c.idleDays);
+        if (g.names.length < 3) g.names.push(c.name);
+      }
     } else if (late >= 1) {
       add({
         type: "followup_late", role: "newbie", level: late >= 3 ? "red" : "yellow", who: c.ownerId, ownerId: c.ownerId,
@@ -155,12 +163,21 @@ function build(ctx) {
       });
     }
   });
+  Object.keys(noNext).forEach(who => {
+    const g = noNext[who];
+    add({
+      type: "followup_none", role: "newbie", level: "yellow", who, ownerId: who,
+      title: `${g.n} 个客户没有下一步跟进日`,
+      detail: `最早 ${g.max} 天没进展 · 例如：${g.names.join("、")}${g.n > 3 ? " 等" : ""}`,
+      ref: { kind: "carriers", who, carrierId: "", count: g.n },
+      action: "followups", since: now - g.max * DAY, wait: g.max,
+    });
+  });
 
-  /* ---------- 3. 协助：导师/主管未答复（48 小时升级） ---------- */
+  /* ---------- 3. 协助：只有「等导师/主管回复」才算待办 ---------- */
   (ctx.issues || []).forEach(x => {
-    if ((x.status || 0) >= 2) return;
-    const wait = days(ms(x.createdAt), now);
-    if (wait < 2) return;
+    if ((x.status || 0) !== 0) return;          // 1=已回复等新人，2=已闭环
+    const wait = days(ms(x.waitingSince || x.createdAt), now);
     add({
       type: "issue_wait", role: "staff", level: wait >= 3 ? "red" : "yellow",
       who: staffOf(x.who), ownerId: x.who,
@@ -218,7 +235,7 @@ function build(ctx) {
       type: "drill_trigger", role: "newbie", level: "red", who: tg.who, ownerId: tg.who,
       title: `触发加练未落实：${tg.reason}`,
       detail: tg.action || "登记后需要安排一次演练并评分",
-      ref: { kind: "drill" }, action: "drill", since: ms(tg.at), wait: days(ms(tg.at), now),
+      ref: { kind: "trigger", triggerId: tg.id || "", who: tg.who }, action: "drill", since: ms(tg.at), wait: days(ms(tg.at), now),
     });
   });
 

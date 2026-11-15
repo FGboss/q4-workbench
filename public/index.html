@@ -1526,6 +1526,12 @@ function jumpRef(d){
  const kind=d.qgo;
  if(kind==="issue"){setTab("assist");setTimeout(()=>{const el=document.getElementById("issueList");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
  if(kind==="coach"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox")||document.getElementById("drillBlk");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ if(kind==="plan"||kind==="carriers"){
+  setTab("plan");
+  setTimeout(()=>{const kw=kind==="carriers"?"客户档案":"培养计划";
+   const el=[...document.querySelectorAll("h2,h3")].find(e=>(e.textContent||"").indexOf(kw)>=0);
+   if(el)el.scrollIntoView({behavior:"smooth",block:"start"});},120);
+  return;}
  const cid=d.qcar||"";
  setTab("plan");
  if(!cid)return;
@@ -1546,7 +1552,9 @@ function qRow(it){
   ops.push(`<button class="btn sm" data-qdelay="approve" data-qkey="${esc(k)}">批准延期</button>`);
   ops.push(`<button class="btn sm danger" data-qdelay="reject" data-qkey="${esc(k)}">驳回</button>`);
  }
- const go=it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
+ /* 计划确认只能新人本人做；导师端给「提醒」而不是死按钮 */
+ if(it.type==="plan_unconfirmed"&&isStaff()) ops.push(`<button class="btn sm" data-qplan="${esc(it.who)}">提醒新人确认</button>`);
+ const go=it.action==="followups"?"carriers":it.type==="plan_unconfirmed"?"plan":it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
  ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">去处理</button>`);
  return `<div class="qRow ${lv}"><div class="qt">
    <div class="qtt">${it.level==="red"?'<span class="tag no" style="margin-right:6px">红</span>':""}${esc(it.title)}</div>
@@ -1859,7 +1867,17 @@ function bindCognitive(){
   if(qg){e.preventDefault();jumpRef(qg.dataset);closeOvl();return;}
   const qdl=e.target.closest&&e.target.closest("[data-qdelay]");
   if(qdl){e.preventDefault();delayDecide(qdl.dataset.qkey,qdl.dataset.qdelay);closeOvl();return;}
+  const qp=e.target.closest&&e.target.closest("[data-qplan]");
+  if(qp){e.preventDefault();remindPlan(qp.dataset.qplan);closeOvl();return;}
  });
+}
+async function remindPlan(who){
+ try{
+  const r=await apiPost("/api/plan/remind",{who});
+  const g=r&&r.data;
+  if(g&&g.ok)alert("已提醒 "+(WHO_NAME[who]||who)+" 确认计划"+(g.mailed?"，邮件已发出":"（站内记录已保存）"));
+  else alert((g&&g.msg)||"提醒失败，请稍后重试");
+ }catch(e){alert("提醒失败，请稍后重试");}
 }
 
 /* ---------- 成长护照（新人首页）----------
@@ -2461,9 +2479,11 @@ function renderAssist(){
      ${x.card?'<span class="tag ok" style="margin-left:6px">已沉淀卡片</span>':""}
      ${wish&&x.priv?'<span class="tag gy" style="margin-left:6px">仅导师可见</span>':""}
      ${wish?"":`<span class="tag gy" style="margin-left:6px">${esc(x.cat||"")}</span>`}</div>
-     <span class="tag ${st===2?"ok":st===1?"wt":"no"}">${wish?"":["待答复","已答复","已闭环"][st]}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
+     <span class="tag ${st===2?"ok":st===1?"wt":"no"}">${wish?"":["待答复","等新人回应","已闭环"][st]}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
    <div class="meta">${WHO_NAME[x.who]} · ${fmt(x.createdAt)}</div>
    <div class="body">${nl(x.text)}</div>
+   ${(function(){const lk=issueTask(x);const lg=lk&&(lk.v.log||[]).slice(-1)[0];
+     return lg?`<div class="muted" style="margin-top:5px;font-size:12.2px">任务最新进展：${esc(lg.text)}${lg.at?` · ${fmt(lg.at)}`:""}</div>`:"";})()}
    ${x.chk||x.blk||x.need?`<div class="body" style="color:var(--ink3)">${x.chk?`<b>已排查：</b>${nl(x.chk)}<br>`:""}${x.blk?`<b>卡点与判断：</b>${nl(x.blk)}<br>`:""}${x.need?`<b>需要谁：</b>${nl(x.need)}`:""}</div>`:""}
    ${(x.replies||[]).map(r=>{const hs=helpScore(r),ac=helpAcks(r);return `<div class="bubble ${mineP(r.by)?"me":"co"}">
      <div class="who">${WHO_NAME[r.by]||"—"}${r.help?'<span class="tag gy" style="margin-left:5px">互助支招</span>':""}${hs>=3?'<span class="tag ok" style="margin-left:5px">双评通过 +3</span>':hs===1?'<span class="tag wt" style="margin-left:5px">已认可一方 +1</span>':""} · ${fmt(r.at)}</div>
@@ -2486,7 +2506,9 @@ function renderAssist(){
   const inp=document.querySelector(`[data-rp="${x.id}"]`);const t=inp.value.trim();if(!t)return;
   const help=isNew()&&x.who!==WHO;   /* 新人给同伴支招，进入导师/主管认定流程 */
   x.replies=x.replies||[];x.replies.push({id:uid(),by:WHO,text:t,at:nowT(),help});
-  if((x.status||0)===0&&isStaff())x.status=1;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+  const staff=isStaff();
+  if(staff){x.status=1;x.holder="newbie";}else{x.status=0;x.holder="staff";}
+  x.waitingSince=nowT();x.lastBy=WHO;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
  /* 支招认定：导师 + 主管各认可一次 → 双评通过 */
  document.querySelectorAll("[data-hacc]").forEach(b=>b.onclick=()=>{
   const [iid,rid]=String(b.dataset.hacc).split(".");
@@ -3879,6 +3901,22 @@ function issueFirstStaffReply(x){
  const ids=staffIds();
  return (x.replies||[]).filter(r=>ids.indexOf(r.by)>=0).sort((a,b)=>(a.at||0)-(b.at||0))[0]||null;}
 function dutyLv(ms){return ms<=TWO_H?1:ms<=EIGHT_H?2:3;}
+/* 协助对应的任务（用于在协助里显示任务最新进展，避免两边信息不一致） */
+function issueTask(x){
+ if(!x||!x.fromAction)return null;
+ const cs=(DOC.carriers&&DOC.carriers.list)||[];
+ const pick=onlyCarrier=>{
+  for(const c of cs){
+   if(c.del)continue;
+   if(onlyCarrier&&x.fromCarrier&&c.id!==x.fromCarrier)continue;
+   const v=(c.actions||[]).find(a=>a.id===x.fromAction&&!a.del);
+   if(v)return{c,v};
+  }
+  return null;
+ };
+ /* 先按「客户+任务」双键找，找不到再退回只按任务 id，避免不同客户同 id 时串台 */
+ return pick(true)||pick(false);
+}
 function fmtDur(ms){if(!ms||ms<0)return"0 分钟";const m=ms/60000;if(m<60)return Math.max(1,Math.round(m))+" 分钟";
  const h=ms/3600000;if(h<24)return (Math.round(h*10)/10)+" 小时";return (Math.round(h/24*10)/10)+" 天";}
 function dutyCard(v,k,tone){return `<div class="duty ${tone||""}"><div class="dnum">${esc(String(v))}</div><div class="dlab">${esc(k)}</div></div>`;}
@@ -3980,7 +4018,9 @@ function renderDuty(){
  const now=nowT();
  const I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
  const open=I.filter(x=>(x.status||0)<2);
- const queue=open.map(x=>{const r=issueFirstStaffReply(x);const w=(r?r.at:now)-(x.createdAt||now);
+ /* 只把「还没有导师回复」的放进必回队列；已回复的球在新人那边 */
+ const queue=open.filter(x=>!issueFirstStaffReply(x)).map(x=>{
+   const w=now-(x.createdAt||now);
    return {x,w,lv:dutyLv(w)};}).sort((a,b)=>b.w-a.w);
  const over2=queue.filter(q=>q.w>TWO_H).length, over8=queue.filter(q=>q.w>EIGHT_H).length;
  const resp=I.map(x=>{const r=issueFirstStaffReply(x);return r?((r.at||0)-(x.createdAt||0)):null;}).filter(v=>v!=null);
@@ -4069,7 +4109,8 @@ function renderDuty(){
   const x=(DOC.issues.list||[]).find(i=>i.id===b.dataset.drrep);if(!x)return;
   const inp=document.querySelector(`[data-drun="${x.id}"]`);const t=(inp&&inp.value||"").trim();if(!t)return;
   x.replies=x.replies||[];x.replies.push({id:uid(),by:WHO,text:t,at:nowT()});
-  if((x.status||0)===0)x.status=1;x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
+  x.status=1;x.holder="newbie";x.waitingSince=nowT();x.lastBy=WHO;
+  x.updatedAt=nowT();DOC.issues.t=nowT();touch();render();});
 }
 
 /* ---------- ⑤ 复盘 ---------- */
