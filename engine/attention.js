@@ -256,8 +256,23 @@ function build(ctx) {
     });
   });
 
-  /* ---------- 排序与汇总 ---------- */
-  items.sort((a, b) => (RANK[a.level] - RANK[b.level]) || (b.wait - a.wait) || (b.at - a.at));
+  /* ---------- 5.5 节点卡住：学了 / 考了却一直没通关 ---------- */
+  (ctx.nodeStuck || []).forEach(ns => {
+    if (!ns || !ns.who || !ns.nodeId) return;
+    add({
+      type: "node_stuck", role: "newbie", level: ns.days >= 14 ? "red" : "yellow",
+      who: ns.who, ownerId: ns.who,
+      title: `节点「${ns.title}」停了 ${ns.days} 天`,
+      detail: ns.state === "quiz_done" ? "已交卷但还没打卡，补一条学/用笔记就能通关" : "学了但还没交卷，先把 5 题小测做完",
+      ref: { kind: "node", nodeId: ns.nodeId }, action: "node", since: ms(ns.since), wait: ns.days,
+    });
+  });
+
+  /* ---------- 排序与汇总 ----------
+     反馈闭环：同一类提醒被导师连续标记「没用」，只在本级内降权（不会把红灯藏掉）。 */
+  const demote = ctx.demote || {};
+  const rankOf = it => RANK[it.level] + (demote[it.type] ? 0.5 : 0);
+  items.sort((a, b) => (rankOf(a) - rankOf(b)) || (b.wait - a.wait) || (b.at - a.at));
   return Object.assign({ at: now, day: ctx.day, items }, summarize(items, ctx.day, now));
 }
 

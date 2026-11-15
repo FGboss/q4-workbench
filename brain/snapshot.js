@@ -17,7 +17,9 @@ function dayOf(ms) {
 function build(ctx) {
   const { day, users, S } = ctx;
   const h = ctx.helpers;
-  const all = (users || []).filter(u => u.role === "newbie" && u.active !== false).slice(0, MAX_PEOPLE);
+  const all = (users || []).filter(u => u.role === "newbie" && u.active !== false)
+    .filter(u => !ctx.newbieIds || ctx.newbieIds.indexOf(u.id) >= 0)
+    .slice(0, MAX_PEOPLE);
 
   const refs = {};
   const people = [];

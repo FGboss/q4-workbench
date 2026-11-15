@@ -110,6 +110,12 @@ const GH_DISPATCH_REPO = process.env.GH_DISPATCH_REPO || GH_REPO || "FGboss/q4-w
 const RELAY_TOKEN = process.env.RELAY_TOKEN || GH_DISPATCH_TOKEN || "";
 const GHA_ON = !!GH_DISPATCH_TOKEN;
 const MAIL_ON = !!(GHA_ON || SMTP_ON || WECOM_ON || BREVO_KEY || RESEND_KEY);
+/* 测试收件人保护：设置后所有邮件（含自动日报/事件提醒/测试）只发到这个地址，
+   主题加 [测试] 前缀。演练、联调时统一用 MAIL_SAFE_TO=liwf@novastar.tech，
+   绝不因为测试数据打扰客户或其他同事。
+   本地 / CI 用 /tmp 作为数据目录时自动启用（默认发给 liwf），忘记配也不会误发。 */
+const MAIL_SAFE_TO = String(process.env.MAIL_SAFE_TO ||
+  (String(DATA_DIR).indexOf("/tmp") === 0 ? "liwf@novastar.tech" : "")).trim();
 const MAIL_CHANNEL = GHA_ON ? "github-actions" : SMTP_ON ? "smtp" : (WECOM_ON ? "wecom" : (BREVO_KEY ? "brevo" : (RESEND_KEY ? "resend" : "")));
 const MAIL_STATE_FILE = path.join(DATA_DIR, "mail_state.json");
 
@@ -337,7 +343,8 @@ function emptyDoc() {
     map: { t: 0, checks: [] }, kit: { t: 0, list: [] }, cards: { t: 0, list: [] }, quotes: { t: 0, list: [] },
     triggers: { t: 0, list: [] }, fae: { t: 0, map: {} }, reviews: { t: 0, map: {} }, checkins: { t: 0, list: [] },
     quiz: { t: 0, list: [] }, deposits: { t: 0, list: [] }, reveals: { t: 0, list: [] },
-    varState: {}, retests: { t: 0, list: [] }, feedback: { t: 0, list: [] } };
+    varState: {}, retests: { t: 0, list: [] }, feedback: { t: 0, list: [] },
+    nodeState: { t: 0, list: [] }, brainFeedback: { t: 0, list: [] } };
 }
 function mergeList(L, R) {
   const m = {};
@@ -741,7 +748,7 @@ function mergeDoc(A, B) {
   o.plan = mergePlan(a.plan, b.plan);
   o.carriers = mergeCarriers(a.carriers, b.carriers);
   o.issues = mergeIssues(a.issues, b.issues);
-  ["drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "retests", "feedback"].forEach(k => o[k] = mergeList(a[k], b[k]));
+  ["drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "retests", "feedback", "nodeState", "brainFeedback"].forEach(k => o[k] = mergeList(a[k], b[k]));
   o.map = mergeChecks(a.map, b.map);
   o.fae = mergeMap(a.fae, b.fae);
   o.reviews = mergeMap(a.reviews, b.reviews);
@@ -756,7 +763,7 @@ function normDoc(r) {
   const o = { v: 5, t: r.t || 0 };
   o.sec = (r.sec && r.sec.h) ? r.sec : e.sec;
   ["meta", "people", "plan"].forEach(k => o[k] = (r[k] && typeof r[k] === "object" && !Array.isArray(r[k])) ? r[k] : e[k]);
-  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "feedback"].forEach(k =>
+  ["carriers", "issues", "drills", "kit", "cards", "quotes", "triggers", "checkins", "quiz", "deposits", "reveals", "feedback", "nodeState", "brainFeedback"].forEach(k =>
     o[k] = (r[k] && Array.isArray(r[k].list)) ? r[k] : { t: (r[k] && r[k].t) || 0, list: [] });
   o.map = (r.map && Array.isArray(r.map.checks)) ? r.map : { t: 0, checks: [] };
   o.fae = (r.fae && r.fae.map && typeof r.fae.map === "object" && !Array.isArray(r.fae.map)) ? r.fae : { t: 0, map: {} };
@@ -984,28 +991,41 @@ function mailShell(subject, inner, note) {
     </div></div>`;
 }
 async function sendMail(subject, inner, note, opts) {
-  const o = opts || {};
-  const r = await sendMailRaw(subject, inner, note, o);
+  const o = Object.assign({}, opts || {});
+  let subj = subject;
+  let msg = note;
+  /* 测试收件人模式：无论订阅规则、事件收件人是谁，统一改投测试邮箱，并标明 [测试] */
+  if (MAIL_SAFE_TO) {
+    o.to = [MAIL_SAFE_TO];
+    subj = "[测试] " + subject;
+    msg = (msg ? msg + " · " : "") + "测试收件人模式：仅发送到 " + MAIL_SAFE_TO;
+  }
+  const r = await sendMailRaw(subj, inner, msg, o);
   try {
-    logMail({ kind: o.kind || "mail", trigger: o.trigger || "", subject,
+    logMail({ kind: o.kind || "mail", trigger: o.trigger || "", subject: subj,
       to: (r && r.to) || o.to || [], ok: !!(r && r.ok), msg: (r && r.msg) || "", channel: (r && r.channel) || "" });
   } catch (e) { console.error("[mail] log", e.message); }
   return r;
 }
 async function sendMailRaw(subject, inner, note, opts) {
-  const o = opts || {};
-  const to = (o.to && o.to.length ? o.to : mailTo());
+  const o = Object.assign({}, opts || {});
+  let subj = subject;
+  let to = (o.to && o.to.length ? o.to : mailTo());
+  if (MAIL_SAFE_TO) {
+    to = [MAIL_SAFE_TO];
+    if (subj.indexOf("[测试]") !== 0) subj = "[测试] " + subj;
+  }
   if (!MAIL_ON) return { ok: false, to, msg: "未配置邮件通道（GH_DISPATCH_TOKEN 或 SMTP_USER/SMTP_PASS 或 RESEND_API_KEY），已记录事件但未发送" };
   if (!to.length) return { ok: false, to: [], msg: "没有收件人（配置 ALERT_TO 或给账号填邮箱）" };
-  const html = mailShell(subject, inner, note);
+  const html = mailShell(subj, inner, note);
   try {
-    if (GHA_ON) return await dispatchViaGithub({ to, subject, html, from: MAIL_FROM, replyTo: MAIL_REPLY_TO });
+    if (GHA_ON) return await dispatchViaGithub({ to, subject: subj, html, from: MAIL_FROM, replyTo: MAIL_REPLY_TO });
     if (SMTP_ON) {
-      const opt = { from: MAIL_FROM, to: to.join(","), subject, html };
+      const opt = { from: MAIL_FROM, to: to.join(","), subject: subj, html };
       if (MAIL_REPLY_TO) opt.replyTo = MAIL_REPLY_TO;
       const info = await getSmtp().sendMail(opt);
       MS.lastSent = Date.now(); saveMS();
-      console.log("[mail] 已发送(" + SMTP_HOST + ")：" + subject + " → " + to.join(",") + " · " + (info.messageId || ""));
+      console.log("[mail] 已发送(" + SMTP_HOST + ")：" + subj + " → " + to.join(",") + " · " + (info.messageId || ""));
       return { ok: true, id: info.messageId || "", to, channel: "smtp" };
     }
     if (WECOM_ON) {
@@ -1013,7 +1033,7 @@ async function sendMailRaw(subject, inner, note, opts) {
       const r = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/exmail/app/compose_send?access_token=${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: { emails: to }, subject, content: html, content_type: "html" }),
+        body: JSON.stringify({ to: { emails: to }, subject: subj, content: html, content_type: "html" }),
       });
       const j = await r.json().catch(() => ({}));
       if (j.errcode) {
@@ -1024,13 +1044,13 @@ async function sendMailRaw(subject, inner, note, opts) {
         return { ok: false, msg };
       }
       MS.lastSent = Date.now(); saveMS();
-      console.log("[mail] 已发送(wecom)：" + subject + " → " + to.join(","));
+      console.log("[mail] 已发送(wecom)：" + subj + " → " + to.join(","));
       return { ok: true, id: "", to, channel: "wecom" };
     }
     if (BREVO_KEY) {
       const m = String(MAIL_FROM).match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
       const sender = m ? { name: m[1] || "Q4 工作台", email: m[2] } : { name: "Q4 工作台", email: String(MAIL_FROM).trim() };
-      const payload = { sender, to: to.map(email => ({ email })), subject, htmlContent: html };
+      const payload = { sender, to: to.map(email => ({ email })), subject: subj, htmlContent: html };
       if (MAIL_REPLY_TO) payload.replyTo = { email: MAIL_REPLY_TO };
       const r = await fetch("https://api.brevo.com/v3/smtp/email", {
         method: "POST",
@@ -1040,10 +1060,10 @@ async function sendMailRaw(subject, inner, note, opts) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { console.error("[mail] Brevo 发送失败", r.status, j.message || j.code || j); return { ok: false, msg: j.message || ("HTTP " + r.status) }; }
       MS.lastSent = Date.now(); saveMS();
-      console.log("[mail] 已发送(brevo)：" + subject + " → " + to.join(","));
+      console.log("[mail] 已发送(brevo)：" + subj + " → " + to.join(","));
       return { ok: true, id: j.messageId || "", to, channel: "brevo" };
     }
-    const payload = { from: MAIL_FROM, to, subject, html };
+    const payload = { from: MAIL_FROM, to, subject: subj, html };
     if (MAIL_REPLY_TO) payload.reply_to = MAIL_REPLY_TO;
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -1059,7 +1079,7 @@ async function sendMailRaw(subject, inner, note, opts) {
       return { ok: false, msg };
     }
     MS.lastSent = Date.now(); saveMS();
-    console.log("[mail] 已发送(resend)：" + subject + " → " + to.join(","));
+    console.log("[mail] 已发送(resend)：" + subj + " → " + to.join(","));
     return { ok: true, id: j.id, to, channel: "resend" };
   } catch (e) {
     console.error("[mail]", e.message);
@@ -1922,6 +1942,143 @@ function buildRiskReport(users, day) {
 /* ---------- 合并汇总：同一账号勾选的多项内容 → 只发 1 封 ----------
    withWeekly=true 时才带上周报（仅周五）。
    新人账号固定只发「自己的」内容：勾了整体日报/风险预警也按个人范围处理，避免收到别人的数据。 */
+/* ---------- 邮件「只发变化 + 一键直达」 ----------
+   原则：自动邮件只讲「上次邮件之后发生了什么」和「现在还需要你处理什么」，
+   不再把整份日报重新贴一遍；没有任何变化时不发（周报日除外）。
+   每封邮件里的每一项都带一个 hash 深链，点开直接落到对应页面 / 协助 / 任务。 */
+let BANK_NODES = null, BANK_NODES_SRC = null;
+function bankNodes() {
+  let b = null;
+  try { b = BANK_DATA || BANK; } catch (e) { b = BANK; }
+  if (!b) return [];
+  if (BANK_NODES && BANK_NODES_SRC === b) return BANK_NODES;
+  BANK_NODES_SRC = b; BANK_NODES = [];
+  (b.levels || []).forEach(L => (L.nodes || []).forEach(nd => BANK_NODES.push({ id: nd.id, t: nd.t || nd.id, level: L.n || L.k })));
+  return BANK_NODES;
+}
+function nodeTitle(id) {
+  const n = bankNodes().filter(x => x.id === id)[0];
+  return n ? n.t : String(id || "");
+}
+const appLink = (hash, label) => {
+  if (!PUBLIC_URL) return h(label || hash);
+  return `<a href="${h(PUBLIC_URL + "/" + (hash || ""))}" style="color:#17558F;text-decoration:none">${h(label || "打开")}</a>`;
+};
+/* 事实变化流：页面 diff、AI 判断、邮件共用同一份口径 */
+function factDiff(scopeIds, sinceMs, untilMs) {
+  const S = snapshot();
+  const since = +sinceMs || 0, until = +untilMs || Date.now();
+  const ids = (scopeIds === null || scopeIds === undefined) ? null : new Set(scopeIds);
+  const inScope = who => !ids || ids.has(who);
+  const nameOf = id => (findUser(id) || {}).name || id;
+  const out = [];
+  const seen = {};
+  const add = (at, kind, who, text, link) => {
+    const t = toMs(at);
+    if (!t || t <= since || t > until || !who || !inScope(who)) return;
+    const k = kind + "|" + who + "|" + text;
+    if (seen[k]) return;
+    seen[k] = 1;
+    out.push({ at: t, kind, who, name: nameOf(who), text: String(text || ""), link: link || "" });
+  };
+  S.carriers.forEach(c => {
+    if (!inScope(c.who)) return;
+    add(c.createdAt, "customer", c.who, `新登记客户「${c.name}」`, "#tab=plan");
+    (c.actions || []).filter(v => !v.del).forEach(v => {
+      const owner = v.owner || c.who;
+      const link = "#tab=plan&task=" + c.id + "." + v.id;
+      add(v.createdAt, "task_new", owner, `新任务：「${v.text}」`, link);
+      if ((v.st || 0) === 2 && v.cfmAt) add(v.cfmAt, "task_done", owner, `任务「${v.text}」已闭环`, link);
+      else if ((v.cfm || 0) === 3) add(v.cfmAt || v.updatedAt, "task_submit", owner, `提交验收：「${v.text}」`, link);
+      else if ((v.cfm || 0) === 2) add(v.cfmAt || v.updatedAt, "task_back", owner, `任务「${v.text}」被退回待改`, link);
+      if (v.delay && v.delay.status === "pending" && v.delay.reqAt) add(v.delay.reqAt, "delay", owner, `申请延期「${v.text}」至 ${v.delay.newDue || ""}`, link);
+      (v.log || []).filter(y => !y.del && y.by === owner).forEach(y => {
+        add(y.at, "task_log", owner, `更新「${v.text}」：${String(y.text || "").slice(0, 60)}`, link);
+      });
+    });
+  });
+  S.issues.forEach(x => {
+    const link = "#tab=assist&issue=" + x.id;
+    add(x.createdAt, "issue_new", x.who, `发起协助：「${String(x.text || "").slice(0, 40)}」`, link);
+    (x.replies || []).filter(r => !r.del && r.by && r.by !== "system").forEach(r => {
+      const u = findUser(r.by);
+      add(r.at, "issue_reply", x.who, `${u && u.role !== "newbie" ? "导师回复" : "新人回复"}：「${String(x.text || "").slice(0, 30)}」`, link);
+    });
+    if ((x.status || 0) === 2 && x.updatedAt) add(x.updatedAt, "issue_closed", x.who, `协助已闭环：${String(x.text || "").slice(0, 30)}`, link);
+  });
+  S.drills.forEach(d => add(d.createdAt, "drill", d.who, `完成演练「${d.topic || ""}」${d.score ? " · " + d.score : ""}`, "#tab=coach"));
+  S.checkins.forEach(c => add(c.createdAt, "checkin", c.who, `学习打卡：${nodeTitle(c.nodeId)}`, "#tab=plan&node=" + c.nodeId));
+  S.quiz.filter(q => q.status === "done").forEach(q => add(q.finishedAt || q.updatedAt, "quiz", q.who,
+    `小测交卷：${nodeTitle(q.nodeId)} ${q.correct || 0}/${q.total || 0}`, "#tab=plan&node=" + q.nodeId));
+  const plan = (DOC && DOC.plan) || {};
+  Object.keys(plan.confirmAt || {}).forEach(id => {
+    if (plan.confirm && plan.confirm[id]) add(plan.confirmAt[id], "plan", id, "确认了培养计划", "#tab=plan&plan=" + id);
+  });
+  ((DOC && DOC.triggers && DOC.triggers.list) || []).filter(x => !x.del)
+    .forEach(tg => add(tg.createdAt, "trigger", tg.who, `触发加练：${tg.reason || ""}`, "#tab=coach"));
+  out.sort((a, b) => b.at - a.at);
+  const counts = {};
+  out.forEach(x => { counts[x.kind] = (counts[x.kind] || 0) + 1; });
+  return { since, until, items: out.slice(0, 60), counts };
+}
+function dayStartMs(dayKey) { return Date.parse(dayKey + "T00:00:00+08:00") || Date.now(); }
+/* 变化区块：给邮件和 AI 共用；没有变化返回 null */
+function changePartFor(target, theDay, weekly) {
+  const last = (MS.lastDigestAt && MS.lastDigestAt[String(target.email || "").toLowerCase()]) || 0;
+  const since = Math.max(last, weekly ? dayStartMs(dayAdd(theDay, -6)) : dayStartMs(theDay) - 864e5);
+  const diff = factDiff(target.ids, since, Date.now());
+  if (!diff.items.length) return null;
+  const items = diff.items.slice(0, 14);
+  const rows = items.map(x => `<div style="padding:7px 0;border-top:1px dashed #E3E8EE;font-size:12.8px;color:#2C3E50">
+      <span style="color:#7C8896;font-size:11.8px;white-space:nowrap">${h(bjTime(x.at))}</span>
+      <b style="margin-left:6px">${h(x.name)}</b>
+      <span style="margin-left:6px">${h(x.text)}</span>
+      ${x.link && PUBLIC_URL ? `<span style="margin-left:6px">${appLink(x.link, "打开")}</span>` : ""}
+    </div>`).join("");
+  return {
+    key: "change", label: `变化 ${diff.items.length} 条（自 ${bjKey(since)} 起）`, short: "变化",
+    count: diff.items.length, items,
+    html: `<div style="font-size:12.6px;color:#5C6772;margin-bottom:2px">只列上次邮件之后的新变化，按时间倒序；点「打开」直达对应页面。</div>${rows}
+      ${diff.items.length > items.length ? `<div style="font-size:12px;color:#7C8896;margin-top:6px">另有 ${diff.items.length - items.length} 条变化未展开，打开工作台查看全部。</div>` : ""}`,
+  };
+}
+function todoItemsFor(target) {
+  let data;
+  try { data = attentionPayload(null); } catch (e) { return []; }
+  const ids = target.ids === null || target.ids === undefined ? null : new Set(target.ids);
+  const isNew = target.role === "newbie";
+  let items = (data.items || []).filter(x => {
+    if (isNew) return x.role === "newbie" && (!ids || ids.has(x.who));
+    return (!ids || ids.has(x.who) || ids.has(x.ownerId));
+  });
+  /* 同一件事只留最高优先级的一条 */
+  const seen = {};
+  return items.filter(x => {
+    const k = x.type + "|" + (x.ownerId || x.who) + "|" + (x.ref && (x.ref.carrierId || "") + "." + (x.ref.actionId || ""));
+    if (seen[k]) return false; seen[k] = 1; return true;
+  }).slice(0, 6);
+}
+function todoPartFor(target, items) {
+  const list = items || todoItemsFor(target);
+  if (!list.length) return null;
+  const isNew = target.role === "newbie";
+  const linkOf = it => {
+    if (it.ref && it.ref.issueId) return "#tab=assist&issue=" + it.ref.issueId;
+    if (it.type === "drill_due" || it.type === "drill_trigger") return "#tab=coach";
+    if (it.type === "retest") return "#tab=plan";
+    if (it.type === "node_stuck") return "#tab=plan&node=" + (it.ref.nodeId || "");
+    if (it.type === "plan_unconfirmed") return "#tab=plan&plan=" + (it.who || "");
+    if (it.type === "followup_late" || it.type === "followup_none" || it.type === "customer_goal") return "#tab=plan";
+    return isNew ? "#tab=plan" : "#tab=monitor";
+  };
+  const rows = list.map(it => `<div style="padding:7px 0;border-top:1px dashed #E3E8EE;font-size:12.8px;color:#2C3E50">
+      <span class="tag" style="background:${it.level === "red" ? "#FDEDEA" : "#FBF1E1"};color:${it.level === "red" ? "#8C2B1F" : "#7A4C12"};padding:1px 8px;border-radius:999px;font-size:11.6px">${it.level === "red" ? "红灯" : "关注"}</span>
+      <span style="margin-left:6px">${h(it.title)}</span>
+      ${it.detail ? `<span style="color:#7C8896;font-size:11.8px;margin-left:6px">${h(it.detail)}</span>` : ""}
+      ${PUBLIC_URL ? `<span style="margin-left:6px">${appLink(linkOf(it), "去处理")}</span>` : ""}
+    </div>`).join("");
+  return { key: "todo", label: `现在需要处理 ${list.length} 件`, short: "待处理", html: rows, count: list.length };
+}
 function digestSubscribers(withWeekly) {
   const alive = new Set((USERS.users || []).filter(u => u.role === "newbie" && u.active).map(u => u.id));
   const map = new Map();
@@ -1951,12 +2108,47 @@ function digestSubscribers(withWeekly) {
   return [...map.values()].map(e => ({ email: e.email, role: e.role, types: e.types, ids: e.all ? null : [...e.ids] }))
     .filter(e => e.ids === null || e.ids.length);
 }
-function buildDigestParts(theDay, target) {
+function buildDigestParts(theDay, target, mode) {
   const ids = target.ids;
   const isNewbie = target.role === "newbie";
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = ids === null ? allNewbies : allNewbies.filter(u => ids.indexOf(u.id) >= 0);
   const parts = [];
+  /* 自动邮件：只发变化 + 现在要处理的事（+ 周五周报）。
+     完整日报/个人汇总/风险预警仍保留给「邮件中心」手动预览和补发。 */
+  if (mode === "auto") {
+    const hasDaily = ["daily", "personal", "risk"].some(t => target.types.has(t));
+    if (hasDaily) {
+      const ch = changePartFor(target, theDay);
+      const items = todoItemsFor(target);
+      const red = items.filter(x => x.level === "red").length;
+      parts.red = red;
+      const lastRed = MS.lastRed && MS.lastRed[String(target.email || "").toLowerCase()];
+      const grew = lastRed == null ? red > 0 : red > lastRed;
+      /* 没有变化、红灯也没变多：不发。红灯变多说明有新东西冒出来，必须提醒。 */
+      if (ch || grew) {
+        parts.push(ch || { key: "change", label: "红灯比上次多了", short: "红灯新增",
+          html: `<div style="font-size:12.8px;color:#5C6772">上次邮件之后没有任务 / 协助 / 学习变化，但红灯数量增加了，具体见下面待处理。</div>` });
+        const td = todoPartFor(target, items);
+        if (td) parts.push(td);
+      }
+    }
+    if (target.types.has("weekly")) {
+      if (isNewbie && newbies.length) {
+        const u = newbies[0];
+        const r = buildNewbieWeekly(u, theDay);
+        parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+      } else {
+        const r = buildWeeklyReport(theDay, { newbieIds: ids === null ? undefined : ids });
+        parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+      }
+      if (!parts.length || (parts.length === 1 && parts[0].key === "weekly")) {
+        parts.unshift({ key: "change", label: "本周没有新增变化", short: "无变化",
+          html: `<div style="font-size:12.8px;color:#5C6772">上次邮件之后没有新的任务、协助、学习或计划变化。下面是本周汇总，用于回顾。</div>` });
+      }
+    }
+    return parts;
+  }
   if (target.types.has("daily")) {
     const r = buildDailyReport(theDay, { newbieIds: ids === null ? undefined : ids });
     parts.push({ key: "daily", label: "导师 / 主管日报", short: "日报", html: r.html });
@@ -2012,9 +2204,13 @@ async function sendDigestAll(day, opts) {
   const onlyTypes = Array.isArray(o.onlyTypes) && o.onlyTypes.length
     ? new Set(o.onlyTypes.filter(t => DIGEST_TYPES.indexOf(t) >= 0)) : null;
   const pick = types => onlyTypes ? new Set([...types].filter(t => onlyTypes.has(t))) : types;
+  /* auto：自动邮件，只发变化+待办（周五加周报）；full：邮件中心手动预览/补发，保留完整报表 */
+  const mode = o.mode || (onlyTo || onlyTypes ? "full" : "auto");
   const note = onlyTypes
     ? `手动补发 · ${withWeekly ? "本周周报" : "指定内容"} · ${theDay}。`
-    : `自动发送 · 工作日 ${cfg.reportHour}:00 · 按角色固定内容合并为 1 封（登录 / 问题提醒为即时单发）${withWeekly ? " · 周五含本周周报" : ""}。`;
+    : mode === "auto"
+      ? `自动发送 · 只讲上次邮件之后的变化 + 现在要处理的事；没有变化不发${withWeekly ? "（周五附本周周报）" : ""}。`
+      : `手动发送 · 工作日 ${cfg.reportHour}:00 自动只发变化；本封为完整报表。`;
   const onlyUser = onlyTo ? (USERS.users || []).find(u => String(u.email || "").toLowerCase() === onlyTo) : null;
   const onlyRole = onlyUser ? onlyUser.role : "staff";
   const onlyIds = onlyUser && onlyUser.role === "newbie" ? [onlyUser.id] : null;
@@ -2034,16 +2230,26 @@ async function sendDigestAll(day, opts) {
     const fb = hasStaffEmail ? [] : mailTo();
     if (!fb.length) return { ok: true, to: [], skipped: true, results, msg: "没有自动订阅收件人" };
     const types = pick(new Set(["daily"].concat(withWeekly ? ["weekly"] : [])));
-    const parts = buildDigestParts(theDay, { types, ids: null, role: "staff" });
+    const parts = buildDigestParts(theDay, { types, ids: null, role: "staff" }, mode);
+    if (!parts.length) return { ok: true, to: [], skipped: true, results, msg: "没有变化，也没有待处理事项，不发送" };
     const subject = digestSubject(theDay, parts);
     const x = await sendMail(subject, renderDigest(parts), note, { to: fb, kind: "digest", trigger: o.trigger || "" });
     return Object.assign({ to: fb, subject, merged: true, results: [Object.assign({ to: fb }, x)] }, x);
   }
   for (const t of targets) {
-    const parts = buildDigestParts(theDay, t);
-    if (!parts.length) { results.push({ to: [t.email], skipped: true, msg: "本日无符合条件的内容" }); continue; }
+    const parts = buildDigestParts(theDay, t, mode);
+    if (!parts.length) { results.push({ to: [t.email], skipped: true, msg: "没有变化，不发送" }); continue; }
     const subject = digestSubject(theDay, parts);
     const x = await sendMail(subject, renderDigest(parts), note, { to: [t.email], kind: "digest", trigger: o.trigger || "" });
+    /* 记录每位收件人的「上次变化邮件时间」，下次只算这之后的变化。
+       测试收件人模式（MAIL_SAFE_TO）或手动补发不更新，避免影响真实收件人的节奏。 */
+    if (x && x.ok && mode === "auto" && !MAIL_SAFE_TO && !onlyTo && !onlyTypes) {
+      MS.lastDigestAt = MS.lastDigestAt || {};
+      MS.lastDigestAt[String(t.email).toLowerCase()] = Date.now();
+      MS.lastRed = MS.lastRed || {};
+      MS.lastRed[String(t.email).toLowerCase()] = parts.red || 0;
+      saveMS();
+    }
     results.push(Object.assign({ to: [t.email], subject, merged: true,
       types: parts.map(p => p.key), labels: parts.map(p => p.label) }, x));
   }
@@ -2341,8 +2547,12 @@ app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*");
 
 /* 登录页需要：角色清单 + 企业微信是否可用（不对外暴露任何账号密码） */
 app.get("/api/config", (req, res) => {
+  const me = tokenFromReq(req);
+  /* 我的可见新人范围：超管=全部；导师/主管=名下；新人=本人。
+     前端用它把「客户 / 帮扶 / 认可 / 待办」都收在自己的组里。 */
+  const myNewbies = !me ? null : (me.role === "admin" ? null : autoScopeFor(me));
   res.json({ ok: true, roles: ROLES, roleName: ROLE_NAME,
-    users: (USERS.users || []).filter(u => u.active).map(pubUser),
+    users: (USERS.users || []).filter(u => u.active).map(pubUser), myNewbies,
     initialized: !!(DOC && Object.keys(DOC.people || {}).length),
     wecom: { enabled: WECOM_ON, corpid: WECOM_CORPID, agentid: WECOM_AGENTID },
     github: GH_ON, supabase: SB_ON, publicUrl: PUBLIC_URL });
@@ -2517,6 +2727,72 @@ app.post("/api/users", (req, res) => {
     mailScopeMode: u.mailScopeMode, mailScope: u.mailScope }) });
 });
 
+/* ---------- 账号停用 / 删除前的数据交接 ----------
+   一个人离开时，客户、任务、未闭环协助不能留在孤儿账号名下；
+   要么明确转交给另一个人，要么直接拒绝操作并告诉管理员还差什么。 */
+function userDataCounts(id) {
+  const carriers = ((DOC && DOC.carriers && DOC.carriers.list) || []).filter(c => !c.del);
+  const owns = carriers.filter(c => c.who === id).length;
+  const openTasks = carriers.reduce((n, c) => n + (c.actions || [])
+    .filter(v => !v.del && (v.st || 0) !== 2 && (v.owner || c.who) === id).length, 0);
+  const openIssues = ((DOC && DOC.issues && DOC.issues.list) || [])
+    .filter(x => !x.del && (x.status || 0) < 2 && x.who === id).length;
+  const openTriggers = ((DOC && DOC.triggers && DOC.triggers.list) || [])
+    .filter(x => !x.del && x.who === id && x.status !== "done").length;
+  return { owns, openTasks, openIssues, openTriggers, total: owns + openTasks + openIssues + openTriggers };
+}
+function handoverTargetOf(u, toId) {
+  if (!toId || !u) return null;
+  const t = findUser(String(toId));
+  if (!t || t.id === u.id || t.active === false) return null;
+  if (u.role === "newbie" ? t.role !== "newbie" : t.role === "newbie") return null;
+  return t;
+}
+function handoverUserData(id, toId) {
+  if (!DOC || !toId || toId === id) return null;
+  const to = findUser(toId);
+  if (!to) return null;
+  const now = Date.now();
+  let cars = 0, tasks = 0, issues = 0, triggers = 0;
+  ((DOC.carriers && DOC.carriers.list) || []).filter(c => !c.del).forEach(c => {
+    if (c.who === id) { c.who = toId; c.updatedAt = now; cars++; }
+    (c.actions || []).forEach(v => {
+      if (!v.del && v.owner === id) { v.owner = ""; v.updatedAt = now; tasks++; }
+    });
+  });
+  ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && (x.status || 0) < 2 && x.who === id).forEach(x => {
+    x.who = toId; x.updatedAt = now;
+    x.replies = x.replies || [];
+    x.replies.push({ id: uid(), by: "system", at: now, text: `原责任人账号已停用/删除，协助转交给 ${to.name}。` });
+    issues++;
+  });
+  /* 加练是个人训练任务，不转给别人；直接关闭并留痕 */
+  ((DOC.triggers && DOC.triggers.list) || []).filter(x => !x.del && x.who === id && x.status !== "done").forEach(x => {
+    x.who = ""; x.status = "cancelled";
+    x.note = (x.note ? x.note + "；" : "") + "原责任人账号已停用/删除，加练关闭";
+    x.updatedAt = now; triggers++;
+  });
+  if (DOC.plan) {
+    ["confirm", "confirmHash", "confirmAt"].forEach(k => { if (DOC.plan[k]) delete DOC.plan[k][id]; });
+  }
+  DOC.carriers.t = now; DOC.issues.t = now;
+  if (DOC.triggers) DOC.triggers.t = now;
+  if (DOC.plan) DOC.plan.t = now;
+  return { to: toId, toName: to.name, cars, tasks, issues, triggers };
+}
+function notifyHandover(ho, fromName) {
+  if (!ho || !MAIL_ON) return;
+  const u = findUser(ho.to);
+  if (!u || !u.email) return;
+  sendMail(`【转交】${fromName} 名下的记录已转到你这里`,
+    `<p><b>${h(u.name)}</b>，原责任人「${h(fromName)}」的账号已停用 / 删除，以下记录已转给你：</p>
+     <ul style="margin:6px 0 0 18px;padding:0;font-size:13px">
+       <li>客户档案 ${ho.cars} 个</li><li>未闭环任务 ${ho.tasks} 个</li>
+       <li>未关闭协助 ${ho.issues} 条</li><li>已关闭加练 ${ho.triggers} 条</li></ul>
+     <p style="margin-top:8px">请打开工作台确认截止时间；有新进展及时更新，不要压着不动。</p>`,
+    "任务转交后，待办会在你的首页出现。", { to: [u.email], kind: "handover", trigger: "account" }).catch(e => console.error("[mail] handover", e.message));
+}
+
 app.post("/api/user_update", (req, res) => {
   const me = requireAdmin(req, res); if (!me) return;
   const b = req.body || {};
@@ -2537,8 +2813,29 @@ app.post("/api/user_update", (req, res) => {
       if (!u.track) u.track = "all";
     }
   }
+  let handover = null;
   if (b.active != null) {
     if (u.id === me.id && !b.active) return res.status(400).json({ ok: false, msg: "不能停用当前登录账号" });
+    if (b.active === false) {
+      /* 停用前必须安排交接：否则客户/任务留在停用账号名下，谁都不会再收到提醒 */
+      const counts = userDataCounts(u.id);
+      const target = handoverTargetOf(u, String(b.handoverTo || ""));
+      if (counts.total && !target) {
+        return res.status(409).json({ ok: false, msg:
+          `「${u.name}」名下还有 ${counts.owns} 个客户、${counts.openTasks} 个未闭环任务、${counts.openIssues} 条未关闭协助。\n` +
+          "请选择一位接手的同事完成转交，再停用账号。" });
+      }
+      if (target) {
+        handover = handoverUserData(u.id, target.id);
+        if (u.role !== "newbie") {
+          (USERS.users || []).forEach(n => {
+            if (n.mentorId === u.id) n.mentorId = "";
+            if (n.leadId === u.id) n.leadId = "";
+          });
+          applyAutoScopes();
+        }
+      }
+    }
     u.active = !!b.active;
   }
   if (b.wecom != null) u.wecom = String(b.wecom).trim();
@@ -2576,7 +2873,11 @@ app.post("/api/user_update", (req, res) => {
   }
   applyAutoScopes();
   USERS.changed = true; saveUsers();
-  res.json({ ok: true, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "",
+  if (handover) {
+    persistDoc();
+    notifyHandover(handover, u.name);
+  }
+  res.json({ ok: true, handover, user: Object.assign(pubUser(u), { inviteUrl: u.invite ? inviteUrl(u) : "",
     track: u.track || "", mailScopeMode: u.mailScopeMode || "custom",
     mailScope: u.role === "newbie" ? [u.id] : (u.mailScope === "all" ? "all" : (Array.isArray(u.mailScope) ? u.mailScope.slice() : [])) }) });
 });
@@ -2602,17 +2903,15 @@ app.post("/api/user_delete", (req, res) => {
     return res.status(400).json({ ok: false, msg: "至少保留一个超级管理员" });
   /* 删人不删业务：名下还有客户/未闭环任务/未关闭协助时直接拒绝，
      否则这些数据会变成谁提醒不到、谁也算不清的孤儿。 */
-  const carriers = ((DOC && DOC.carriers && DOC.carriers.list) || []).filter(c => !c.del);
-  const owns = carriers.filter(c => c.who === id).length;
-  const openTasks = carriers.reduce((n, c) => n + (c.actions || [])
-    .filter(v => !v.del && (v.st || 0) !== 2 && (v.owner || c.who) === id).length, 0);
-  const openIssues = ((DOC && DOC.issues && DOC.issues.list) || [])
-    .filter(x => !x.del && (x.status || 0) < 2 && x.who === id).length;
-  if (owns || openTasks || openIssues) {
+  const counts = userDataCounts(id);
+  const target = handoverTargetOf(u, String((req.body && req.body.handoverTo) || ""));
+  if (counts.total && !target) {
     return res.status(409).json({ ok: false, msg:
-      `该账号名下还有 ${owns} 个客户、${openTasks} 个未闭环任务、${openIssues} 条未关闭协助。\n` +
-      "请先到「客户档案 → 编辑」把客户转交给其他新人、把任务负责人改掉，再删除账号。" });
+      `该账号名下还有 ${counts.owns} 个客户、${counts.openTasks} 个未闭环任务、${counts.openIssues} 条未关闭协助。\n` +
+      "请选择一位接手的同事完成转交，再删除账号。" });
   }
+  const handover = target ? handoverUserData(id, target.id) : null;
+  const fromName = u.name;
   USERS.users = USERS.users.filter(x => x.id !== id);
   /* 删人后清理悬空关系，避免新人还挂在一个已不存在的导师/主管名下 */
   (USERS.users || []).forEach(n => {
@@ -2621,7 +2920,8 @@ app.post("/api/user_delete", (req, res) => {
   });
   applyAutoScopes();
   USERS.changed = true; saveUsers();
-  res.json({ ok: true });
+  if (handover) { persistDoc(); notifyHandover(handover, fromName); }
+  res.json({ ok: true, handover });
 });
 
 /* ---------- 团队关系：一张表维护「新人 → 业务线 / 直属导师 / 直属主管」 ----------
@@ -2694,12 +2994,84 @@ let BRAIN = readJson(BRAIN_FILE, null);
 let brainInFlight = null;
 let brainLastAt = 0;
 
-function brainBuildSnap(day) {
+function brainBuildSnap(day, newbieIds) {
   const S = snapshot();
   return brainSnap.build({
-    day, users: USERS.users || [], S,
+    day, users: USERS.users || [], S, newbieIds: newbieIds || null,
     helpers: { userStats, riskOf, tasksOf, taskOpen, taskOverDays, waitDays, carNext, bjKey },
   });
+}
+/* ---------- AI 事实 diff：今天和昨天比，变了什么 ----------
+   dayStats 只存每天最后一次算出的汇总，保留最近 40 天；用于「红灯 +2 / 待验收 -1」这种真实变化。 */
+function recordDayStats(day, counts) {
+  const s = USERS.dayStats = USERS.dayStats || {};
+  const next = { red: counts.red || 0, yellow: counts.yellow || 0, total: counts.total || 0,
+    review: counts.accept || 0, newToday: counts.newToday || 0, updatedAt: Date.now() };
+  const cur = s[day];
+  if (!cur || cur.red !== next.red || cur.yellow !== next.yellow || cur.total !== next.total ||
+      cur.review !== next.review || cur.newToday !== next.newToday) {
+    s[day] = next;
+    const keys = Object.keys(s).sort();
+    keys.slice(0, Math.max(0, keys.length - 40)).forEach(k => delete s[k]);
+    USERS.changed = true; saveUsers();
+  }
+}
+function dayStatsDelta(day, counts) {
+  const s = USERS.dayStats || {};
+  const prev = Object.keys(s).filter(k => k < day).sort().pop() || "";
+  const p = prev ? s[prev] : null;
+  const delta = {};
+  if (p) ["red", "yellow", "total", "review", "newToday"].forEach(k => { delta[k] = (counts[k] || 0) - (p[k] || 0); });
+  return { prevDay: prev, delta, hasPrev: !!p };
+}
+/* ---------- AI 反馈闭环：导师标记「有用/没用」，重复没用的类型自动降权 ---------- */
+function brainFeedbackStats(me) {
+  const list = ((DOC && DOC.brainFeedback && DOC.brainFeedback.list) || [])
+    .filter(x => !x.del && (!me || x.by === me.id));
+  const cut = Date.now() - 14 * 864e5;
+  const recent = list.filter(x => toMs(x.at) >= cut);
+  const byType = {};
+  recent.forEach(x => {
+    const t = byType[x.type] = byType[x.type] || { useful: 0, useless: 0 };
+    if (x.verdict === "useful") t.useful++; else t.useless++;
+  });
+  const demote = {};
+  Object.keys(byType).forEach(t => {
+    if (byType[t].useless >= 2 && byType[t].useless > byType[t].useful) demote[t] = byType[t].useless;
+  });
+  return { total: recent.length, byType, demote, last: recent.slice(-3).map(x => ({ type: x.type, verdict: x.verdict, at: x.at })) };
+}
+/* 模型版 / 规则版共用：给不同角色返回各自范围（超管=全量，导师/主管=名下新人） */
+const BRAIN_SCOPED = {};
+function decorateBrain(b, me, scopeIds) {
+  if (!b) return null;
+  const day = bjKey(Date.now());
+  const since = dayStartMs(day) - 864e5;
+  return Object.assign({}, b, {
+    diff: factDiff(scopeIds === null ? null : scopeIds, since, Date.now()),
+    statsDelta: dayStatsDelta(day),
+    feedback: brainFeedbackStats(me),
+  });
+}
+async function brainFor(me, force) {
+  const day = bjKey(Date.now());
+  if (!me || me.role === "admin") {
+    let b = (force && !brainInFlight) ? await runBrain("manual:refresh") : BRAIN;
+    if (!b || Date.now() - (b.asOf || 0) > BRAIN_TTL_MS) {
+      if (!brainInFlight && Date.now() - brainLastAt > 60000) b = await runBrain("auto:view");
+    }
+    return decorateBrain(b || null, me, null);
+  }
+  const scope = autoScopeFor(me);
+  const key = scope.slice().sort().join(",");
+  const hit = BRAIN_SCOPED[me.id];
+  if (!force && hit && hit.key === key && Date.now() - hit.t < BRAIN_TTL_MS) return decorateBrain(hit.data, me, scope);
+  const snap = brainBuildSnap(day, scope);
+  const data = brainFallback.build(snap);
+  const out = Object.assign({ v: 1, asOf: Date.now(), day, source: "rules", model: "", trigger: "scoped",
+    team: snap.team, refs: snap.refs, scoped: true, scopeCount: scope.length }, data);
+  BRAIN_SCOPED[me.id] = { t: Date.now(), key, data: out };
+  return decorateBrain(out, me, scope);
 }
 
 async function runBrain(trigger) {
@@ -2746,12 +3118,12 @@ function startAttentionTimer() {
   setTimeout(tick, 90 * 1000);
 }
 
-app.get("/api/brain_latest", (req, res) => {
-  if (!requireStaff(req, res)) return;
+app.get("/api/brain_latest", async (req, res) => {
+  const me = requireStaff(req, res); if (!me) return;
   const stale = !BRAIN || Date.now() - (BRAIN.asOf || 0) > BRAIN_TTL_MS;
-  if (stale && !brainInFlight && Date.now() - brainLastAt > 60000) runBrain("auto");
+  const brain = await brainFor(me, false);
   res.json({
-    ok: true, brain: BRAIN, running: !!brainInFlight, stale,
+    ok: true, brain, running: !!brainInFlight, stale,
     enabled: brainThink.enabled(), model: brainThink.modelName(), ttl: BRAIN_TTL_MS,
     day: bjKey(Date.now()),
   });
@@ -2759,9 +3131,27 @@ app.get("/api/brain_latest", (req, res) => {
 
 app.post("/api/brain_run", async (req, res) => {
   const me = requireStaff(req, res); if (!me) return;
-  if (brainInFlight) return res.json({ ok: true, running: true, brain: BRAIN, enabled: brainThink.enabled() });
-  const b = await runBrain("manual:" + me.id);
+  const b = await brainFor(me, true);
   res.json({ ok: !!b, brain: b || null, enabled: brainThink.enabled(), model: brainThink.modelName() });
+});
+
+/* 导师/主管对 AI 判断的反馈：有用 / 没用。
+   连续两次以上「没用」的待办类型会自动降低排序（不改业务数据，只影响提醒顺序）。 */
+app.post("/api/brain_feedback", (req, res) => {
+  const me = requireStaff(req, res); if (!me) return;
+  const b = req.body || {};
+  const type = String(b.type || "").slice(0, 40);
+  if (!/^[a-z_]{2,40}$/.test(type)) return res.status(400).json({ ok: false, msg: "反馈类型不正确" });
+  if (!DOC) DOC = emptyDoc();
+  DOC.brainFeedback = DOC.brainFeedback || { t: 0, list: [] };
+  DOC.brainFeedback.list.push({
+    id: uid(), by: me.id, type, verdict: b.verdict === "useful" ? "useful" : "useless",
+    note: String(b.note || "").slice(0, 200), day: bjKey(Date.now()), at: Date.now(), updatedAt: Date.now(),
+  });
+  DOC.brainFeedback.list = DOC.brainFeedback.list.slice(-300);
+  DOC.brainFeedback.t = Date.now();
+  persistDoc();
+  res.json({ ok: true, stats: brainFeedbackStats(me) });
 });
 
 app.get("/api/mail_status", (req, res) => {
@@ -2773,7 +3163,8 @@ app.get("/api/mail_status", (req, res) => {
   const sentToday = (st.sentTo && st.sentTo[today]) || [];
   const targets = digestSubscribers(withWeekly).map(t => t.email);
   res.json({ ok: true, enabled: MAIL_ON, channel: MAIL_CHANNEL, smtpHost: SMTP_ON ? SMTP_HOST : "", smtpUser: SMTP_ON ? SMTP_USER : "",
-    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: mailTo(), reportHour: cfg.reportHour,
+    from: MAIL_FROM, replyTo: MAIL_REPLY_TO, to: MAIL_SAFE_TO ? [MAIL_SAFE_TO] : mailTo(), reportHour: cfg.reportHour,
+    safeTo: MAIL_SAFE_TO, mode: "changes",
     lastSent: MS.lastSent || 0, lastReport: MS.lastReport || "", today,
     schedule: { hour: cfg.reportHour, weekday: WEEKLY_WEEKDAY, weekdayName: "周五", timezone: "北京时间" },
     todayState: {
@@ -2795,11 +3186,12 @@ app.post("/api/mail_test", async (req, res) => {
   const b = req.body || {};
   const ask = (Array.isArray(b.to) ? b.to : String(b.to || "").split(",")).map(x => String(x).trim()).filter(validEmail);
   const self = validEmail(me.email) ? me.email : "";
-  const to = ask.length ? ask : (self ? [self] : []);
+  /* 测试收件人保护开启时，默认就发给测试邮箱，避免因为操作人没填邮箱而无法验证 */
+  const to = ask.length ? ask : (self ? [self] : (MAIL_SAFE_TO ? [MAIL_SAFE_TO] : []));
   if (!to.length) return res.status(400).json({ ok: false, msg: "你的账号还没填邮箱，无法给自己发测试邮件（也可以手动填一个收件邮箱）" });
   const r = await sendMail("【测试】Q4 工作台邮件通知链路已连通",
     `<p>这是一封测试邮件。</p><p>收到它说明邮件通道（QQ 邮箱 SMTP / Resend）、发件人、收件人都已配置正确。</p>
-     <p style="color:#5C6772;font-size:13px">后续会在工作日 ${getMailCfg().reportHour}:00 自动发送：整体日报 + 个人汇总 + 风险预警，周五加发本周周报（按账号订阅合并为 1 封）。</p>`,
+     <p style="color:#5C6772;font-size:13px">后续工作日 ${getMailCfg().reportHour}:00 自动发送「上次邮件之后的变化 + 现在要处理的事」，没有变化不发；周五附本周周报。每项都带直达链接。</p>`,
     "测试邮件 · 手动触发", { to, kind: "test", trigger: "manual" });
   res.status(r.ok ? 200 : 400).json(r);
 });
@@ -2865,9 +3257,10 @@ function evalPayload(u) {
   }));
 }
 app.get("/api/next_steps", (req, res) => {
-  if (!requireStaff(req, res)) return;
+  const me = requireStaff(req, res); if (!me) return;
+  const scope = me.role === "admin" ? null : new Set(autoScopeFor(me));
   const map = {};
-  (USERS.users || []).filter(u => u.role === "newbie").forEach(u => { map[u.id] = { evals: evalPayload(u) }; });
+  (USERS.users || []).filter(u => u.role === "newbie").filter(u => !scope || scope.has(u.id)).forEach(u => { map[u.id] = { evals: evalPayload(u) }; });
   res.json({ ok: true, map });
 });
 app.post("/api/next_steps", (req, res) => {
@@ -2875,6 +3268,9 @@ app.post("/api/next_steps", (req, res) => {
   const b = req.body || {};
   const u = findUser(String(b.id || ""));
   if (!u || u.role !== "newbie") return res.status(404).json({ ok: false, msg: "新人账号不存在" });
+  if (me.role !== "admin" && autoScopeFor(me).indexOf(u.id) < 0) {
+    return res.status(403).json({ ok: false, msg: "只能评价自己名下的新人" });
+  }
   const op = String(b.op || "add");
   const list = Array.isArray(u.mentorEvals) ? u.mentorEvals.slice() : [];
   const text = String(b.text || "").trim().slice(0, NEXT_MAX);
@@ -2941,12 +3337,13 @@ function customerRisks(u, S, day) {
   return out;
 }
 app.get("/api/risk", (req, res) => {
-  if (!requireStaff(req, res)) return;
+  const me = requireStaff(req, res); if (!me) return;
   const S = snapshot();
   const day = bjKey(Date.now());
+  const scope = me.role === "admin" ? null : new Set(autoScopeFor(me));
   const people = {};
   let red = 0, yellow = 0, green = 0;
-  (USERS.users || []).filter(u => u.role === "newbie" && u.active).forEach(u => {
+  (USERS.users || []).filter(u => u.role === "newbie" && u.active).filter(u => !scope || scope.has(u.id)).forEach(u => {
     const s = userStats(u, [day], S);
     const r = riskOf(u, S, s, day);
     if (r.level === "red") red++; else if (r.level === "yellow") yellow++; else green++;
@@ -2954,6 +3351,96 @@ app.get("/api/risk", (req, res) => {
       customers: customerRisks(u, S, day), idleDays: r.idle };
   });
   res.json({ ok: true, day, team: { total: red + yellow + green, red, yellow, green }, people });
+});
+
+/* ---------- 节点状态机 ----------
+   not_started → learning → quiz_done → applied → reviewed
+   前四步由真实动作推导（打开节点 / 交卷 / 打卡），reviewed 由导师显式确认；
+   nodeState 只存显式确认与历史，不复制打卡 / 小测数据，避免两套口径。 */
+const NODE_STATE_TEXT = { not_started: "未开始", learning: "学习中", quiz_done: "待打卡", applied: "已通关", reviewed: "已复盘" };
+function nodeRecOf(who, nodeId) {
+  return (((DOC && DOC.nodeState && DOC.nodeState.list) || [])
+    .filter(x => !x.del && x.who === who && x.nodeId === nodeId)[0]) || null;
+}
+function nodeDerived(who, nodeId) {
+  const rec = nodeRecOf(who, nodeId);
+  const cks = ((DOC && DOC.checkins && DOC.checkins.list) || []).filter(x => !x.del && x.who === who && x.nodeId === nodeId);
+  const qzs = ((DOC && DOC.quiz && DOC.quiz.list) || []).filter(x => !x.del && x.who === who && x.nodeId === nodeId && x.status === "done" && (+x.total) > 0);
+  const hasCheckin = cks.length > 0, quizDone = qzs.length > 0;
+  let state = "not_started";
+  if (rec && rec.state === "learning") state = "learning";   // 打开过节点也算「学习中」
+  if (hasCheckin) state = "learning";
+  if (quizDone) state = "quiz_done";
+  if (hasCheckin && quizDone) state = "applied";
+  if (state === "applied" && rec && rec.state === "reviewed") state = "reviewed";
+  const times = cks.map(x => toMs(x.createdAt))
+    .concat(qzs.map(x => toMs(x.finishedAt || x.updatedAt || x.createdAt))).filter(Boolean);
+  const startedAt = times.length ? Math.min(...times) : (rec ? toMs(rec.at) : 0);
+  return { state, hasCheckin, quizDone, rec, startedAt };
+}
+function writeNodeState(who, nodeId, to, by, note) {
+  const d = nodeDerived(who, nodeId);
+  if (d.state === to) return d.state;
+  if (!DOC) DOC = emptyDoc();
+  DOC.nodeState = DOC.nodeState || { t: 0, list: [] };
+  let rec = nodeRecOf(who, nodeId);
+  const now = Date.now();
+  if (!rec) {
+    rec = { id: who + "|" + nodeId, who, nodeId, state: to, createdAt: now, history: [] };
+    DOC.nodeState.list.push(rec);
+  }
+  rec.history = (rec.history || []).concat([{ from: d.state, to, by, at: now, note: String(note || "").slice(0, 200) }]).slice(-30);
+  rec.state = to; rec.by = by; rec.at = now; rec.updatedAt = now;
+  DOC.nodeState.t = now;
+  return to;
+}
+/* 卡在同一节点太久：学了/考了却一直没通关，提醒本人和导师 */
+function nodeStuckOf(who) {
+  const ids = new Set();
+  ((DOC && DOC.checkins && DOC.checkins.list) || []).forEach(x => { if (!x.del && x.who === who && x.nodeId) ids.add(x.nodeId); });
+  ((DOC && DOC.quiz && DOC.quiz.list) || []).forEach(x => { if (!x.del && x.who === who && x.nodeId && x.status === "done") ids.add(x.nodeId); });
+  let worst = null;
+  ids.forEach(nid => {
+    const d = nodeDerived(who, nid);
+    if (d.state !== "learning" && d.state !== "quiz_done") return;
+    const days = waitDays(d.startedAt || Date.now());
+    if (days >= 7 && (!worst || days > worst.days)) {
+      worst = { who, nodeId: nid, title: nodeTitle(nid), state: d.state, days, since: d.startedAt };
+    }
+  });
+  return worst;
+}
+app.post("/api/node/state", (req, res) => {
+  const me = tokenFromReq(req);
+  if (!me) return res.status(401).json({ ok: false, msg: "未登录" });
+  const b = req.body || {};
+  const nodeId = String(b.nodeId || "");
+  const to = String(b.to || "");
+  const who = me.role === "newbie" ? me.id : String(b.who || "");
+  const u = findUser(who);
+  if (!u || u.role !== "newbie") return res.status(400).json({ ok: false, msg: "新人账号不存在" });
+  if (me.role !== "newbie" && !isStaffRole(me)) return res.status(403).json({ ok: false, msg: "没有权限" });
+  if (!bankNode(nodeId)) return res.status(404).json({ ok: false, msg: "节点不存在" });
+  if (["learning", "quiz_done", "applied", "reviewed"].indexOf(to) < 0) return res.status(400).json({ ok: false, msg: "不支持的状态" });
+  if (!DOC) DOC = emptyDoc();
+  const d = nodeDerived(who, nodeId);
+  if (me.role === "newbie") {
+    if (["learning", "quiz_done", "applied"].indexOf(to) < 0) return res.status(403).json({ ok: false, msg: "只能更新自己的学习状态" });
+    if (to === "quiz_done" && !d.quizDone) return res.status(409).json({ ok: false, msg: "还没有交卷，不能标记待打卡" });
+    if (to === "applied" && !(d.quizDone && d.hasCheckin)) return res.status(409).json({ ok: false, msg: "需要先交卷并完成打卡" });
+    /* 打开节点只推进「未开始 → 学习中」，不允许把已交卷/已通关的节点降级 */
+    if (to === "learning" && d.state !== "not_started" && d.state !== "learning") {
+      return res.json({ ok: true, state: d.state, noop: true });
+    }
+  } else {
+    if (["reviewed", "applied"].indexOf(to) < 0) return res.status(400).json({ ok: false, msg: "导师只能确认复盘或撤销复盘" });
+    if (to === "reviewed" && d.state !== "applied") return res.status(409).json({ ok: false, msg: "还没通关（交卷 + 打卡），不能标记已复盘" });
+    if (to === "applied" && d.state !== "reviewed") return res.json({ ok: true, state: d.state, noop: true });
+  }
+  writeNodeState(who, nodeId, to, me.id, b.note || "");
+  persistDoc();
+  const after = nodeDerived(who, nodeId);
+  res.json({ ok: true, state: after.state, history: (nodeRecOf(who, nodeId) || {}).history || [] });
 });
 
 /* ---------- 统一待办引擎：首页 / 把控队列 / 自动升级 共用这一份结果 ----------
@@ -3010,20 +3497,41 @@ function attentionPayload(me) {
     planConfirm[id] = !!rawConfirm[id] && (!rawHash[id] || rawHash[id] === planFp(DOC, id));
   });
 
+  const fbStats = me ? brainFeedbackStats(me) : { demote: {} };
   const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
     drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt), topic: x.topic || "" })),
     triggers: (((DOC && DOC.triggers && DOC.triggers.list) || [])).filter(x => !x.del && x.who)
       .map(x => ({ id: x.id, who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "",
         due: x.due || "", status: x.status || "" })),
-    planConfirm, retests, learning });
+    planConfirm, retests, learning, demote: fbStats.demote || {},
+    nodeStuck: newbies.map(u => nodeStuckOf(u.id)).filter(Boolean) });
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
+    Object.assign(data, attentionEngine.summarize(data.items, day, now));
+  }
+  /* 多导师 / 多主管：只处理自己名下新人的事。
+     未归属（没设 mentorId / leadId）的新人保持全员可见，避免新人刚建号时没人管；
+     这类人会在账号页提示补团队关系。 */
+  if (me && me.role !== "newbie" && me.role !== "admin") {
+    const scope = new Set(autoScopeFor(me));
+    const unassigned = new Set(people.filter(p => p.role === "newbie" && !p.mentorId && !p.leadId).map(p => p.id));
+    data.items = data.items.filter(x =>
+      scope.has(x.who) || scope.has(x.ownerId) || x.who === me.id ||
+      unassigned.has(x.who) || unassigned.has(x.ownerId) || (!x.who && !x.ownerId));
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
   }
   /* 今日已处理：闭环任务 + 关闭的协助，用于页面「新增 / 已处理」对比 */
   data.counts.resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || [])
     .filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === day).length, 0)
     + (S.issues || []).filter(x => (x.status || 0) === 2 && bjKey(x.updatedAt) === day).length;
+  /* 今日红灯 / 待验收与上一天的差值：AI 卡片用来回答「今天到底变了什么」。
+     只在超管视角记录全局口径，避免导师的个人范围覆盖团队历史。 */
+  if (!me || me.role === "admin") {
+    recordDayStats(day, data.counts);
+    data.statsDelta = dayStatsDelta(day, data.counts);
+  } else if (me.role !== "newbie") {
+    data.statsDelta = { prevDay: "", delta: {}, hasPrev: false };
+  }
   return data;
 }
 app.get("/api/attention", (req, res) => {
@@ -3118,6 +3626,13 @@ function recognitionPayload(me) {
     const mine = data.byWho[me.id] || null;
     return { at: data.at, day: data.day, weekStart: data.weekStart,
       byWho: mine ? { [me.id]: mine } : {}, team: mine && mine.highlights.length ? [{ id: me.id, name: mine.name, top: mine.highlights[0].text, count: mine.highlights.length }] : [] };
+  }
+  /* 导师 / 主管只看到自己名下新人的认可，避免“表扬了别人组的人” */
+  if (me && me.role !== "admin") {
+    const scope = new Set(autoScopeFor(me));
+    const byWho = {};
+    Object.keys(data.byWho || {}).forEach(id => { if (scope.has(id)) byWho[id] = data.byWho[id]; });
+    return Object.assign({}, data, { byWho, team: (data.team || []).filter(x => scope.has(x.id)) });
   }
   return data;
 }
@@ -3235,10 +3750,24 @@ app.post("/api/mail_cfg", (req, res) => {
 });
 /* 预览：返回渲染好的邮件 HTML，供后台直接看内容（不发送） */
 app.get("/api/mail_preview", (req, res) => {
-  if (!requireStaff(req, res)) return;
+  const me = requireStaff(req, res); if (!me) return;
   const type = String(req.query.type || "daily");
+  const day0 = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || "")) ? String(req.query.day) : bjKey(Date.now());
+  /* 自动邮件预览：只发变化 + 待办，用来核对「今天会不会发、发出去长什么样」 */
+  if (String(req.query.mode || "") === "auto") {
+    const email = String(req.query.email || me.email || "").toLowerCase();
+    const targets = digestSubscribers(isWeeklyDay(day0));
+    let target = targets.filter(t => String(t.email).toLowerCase() === email)[0];
+    if (!target) target = { email: email || "preview@local", role: me.role, ids: me.role === "newbie" ? [me.id] : null,
+      types: new Set(roleDigestTypes(me.role).filter(t => isWeeklyDay(day0) || t !== "weekly")) };
+    const parts = buildDigestParts(day0, target, "auto");
+    if (!parts.length) return res.json({ ok: true, empty: true, day: day0, subject: "无变化，不发", html: mailShell("无变化，不发", "<p>上次邮件之后没有新变化，也没有需要处理的待办。按规则今天不会发送。</p>", "自动邮件预览") });
+    const subject = digestSubject(day0, parts);
+    return res.json({ ok: true, day: day0, subject, types: parts.map(p => p.key), labels: parts.map(p => p.label),
+      html: mailShell(subject, renderDigest(parts), "自动邮件预览 · 只发变化 + 待办（不会真的发送）") });
+  }
   if (!MAIL_TYPE_NAME[type]) return res.status(400).json({ ok: false, msg: "未知的邮件类型" });
-  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || "")) ? String(req.query.day) : bjKey(Date.now());
+  const day = day0;
   const ids = String(req.query.ids || "").split(",").map(x => x.trim()).filter(Boolean);
   /* 按某位新人的视角预览（新人日报/周报），便于导师对照检查 */
   const asU = req.query.id ? findUser(String(req.query.id)) : null;
@@ -3511,10 +4040,11 @@ function docForClient(me, doc) {
     return y;
   });
   const out = Object.assign({}, doc, { quiz: Object.assign({}, q, { list }) });
-  /* 反馈只给自己看：新人之间不互相暴露吐槽内容 */
+  /* 反馈只给自己看：新人之间不互相暴露吐槽内容；AI 反馈属于导师内部数据 */
   if (doc.feedback && Array.isArray(doc.feedback.list)) {
     out.feedback = { t: doc.feedback.t || 0, list: doc.feedback.list.filter(x => x && x.who === me.id) };
   }
+  delete out.brainFeedback;
   return out;
 }
 
@@ -3703,6 +4233,7 @@ app.get("*", (req, res) => res.sendFile(path.join(__dirname, "public", "index.ht
     console.log(`持久化： ${SB_ON ? "Supabase 云库（" + SB_URL + " · 表 " + SB_TABLE + "）" : GH_ON ? "GitHub " + GH_REPO : "本地 " + STATE_FILE}`);
     console.log(`企业微信扫码登录： ${WECOM_ON ? "已启用（" + WECOM_CORPID + "）" : "未配置（可留空）"}`);
     console.log(`邮件通知： ${MAIL_ON ? "已启用 · " + (MAIL_CHANNEL === "github-actions" ? "GitHub Actions + QQ 邮箱（按人分邮）" : MAIL_CHANNEL === "smtp" ? "QQ/SMTP " + SMTP_HOST : MAIL_CHANNEL === "brevo" ? "Brevo HTTP API" : "Resend") + " · 收件人 " + mailTo().join(",") + " · 工作日 " + REPORT_HOUR + ":00 日报 / 周五 " + REPORT_HOUR + ":00 周报" : "未配置（GH_DISPATCH_TOKEN / SMTP_USER+SMTP_PASS / BREVO_API_KEY / RESEND_API_KEY；登录/问题提醒会记录但不发信）"}`);
+    if (MAIL_SAFE_TO) console.log(`邮件测试保护： 已开启 · 所有邮件只发往 ${MAIL_SAFE_TO}（主题带 [测试]）`);
     startDailyReportTimer();
     startBrainTimer();
     startAttentionTimer();
