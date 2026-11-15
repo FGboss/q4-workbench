@@ -1552,10 +1552,17 @@ function qRow(it){
   ops.push(`<button class="btn sm" data-qdelay="approve" data-qkey="${esc(k)}">批准延期</button>`);
   ops.push(`<button class="btn sm danger" data-qdelay="reject" data-qkey="${esc(k)}">驳回</button>`);
  }
+ /* 红灯任务：给三个合法出口，避免「回复了但红还在」的死循环 */
+ if((it.type==="overdue"||it.type==="stale")&&isStaff()){
+  const k=it.ref.carrierId+"."+it.ref.actionId;
+  ops.push(`<button class="btn sm" data-qfinish="${esc(k)}">闭环</button>`);
+  ops.push(`<button class="btn sm gh" data-qmove="${esc(k)}">改期</button>`);
+  ops.push(`<button class="btn sm gh" data-qhold="${esc(k)}">挂起</button>`);
+ }
  /* 计划确认只能新人本人做；导师端给「提醒」而不是死按钮 */
  if(it.type==="plan_unconfirmed"&&isStaff()) ops.push(`<button class="btn sm" data-qplan="${esc(it.who)}">提醒新人确认</button>`);
  const go=it.action==="followups"?"carriers":it.type==="plan_unconfirmed"?"plan":it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
- ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">去处理</button>`);
+ ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">${it.type==="drill_due"||it.type==="drill_trigger"?"登记演练":"去处理"}</button>`);
  return `<div class="qRow ${lv}"><div class="qt">
    <div class="qtt">${it.level==="red"?'<span class="tag no" style="margin-right:6px">红</span>':""}${esc(it.title)}</div>
    <div class="qdd">${esc(it.detail||"")}${it.wait&&String(it.detail||"").indexOf("已等")<0?` · 已等 ${it.wait} 天`:""}</div>
@@ -1869,7 +1876,36 @@ function bindCognitive(){
   if(qdl){e.preventDefault();delayDecide(qdl.dataset.qkey,qdl.dataset.qdelay);closeOvl();return;}
   const qp=e.target.closest&&e.target.closest("[data-qplan]");
   if(qp){e.preventDefault();remindPlan(qp.dataset.qplan);closeOvl();return;}
+  const qf=e.target.closest&&e.target.closest("[data-qfinish]");
+  if(qf){e.preventDefault();taskFinish(qf.dataset.qfinish);closeOvl();return;}
+  const qm=e.target.closest&&e.target.closest("[data-qmove]");
+  if(qm){e.preventDefault();taskMove(qm.dataset.qmove);closeOvl();return;}
+  const qh=e.target.closest&&e.target.closest("[data-qhold]");
+  if(qh){e.preventDefault();taskHold(qh.dataset.qhold);closeOvl();return;}
  });
+}
+function taskFinish(k){
+ const o=taskPair(k);if(!o||!isStaff())return;
+ if(!window.confirm("确认这条任务已经闭环？闭环后会自动关闭关联协助。"))return;
+ o.v.st=2;o.v.cfm=1;o.v.cfmBy=WHO;o.v.cfmAt=nowT();o.v.state="done";o.v.holder="";
+ taskLog(o.v,"导师确认闭环。");taskCommit(o);loadAttention(true);
+}
+function taskMove(k){
+ const o=taskPair(k);if(!o||!isStaff())return;
+ const d0=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+ const nd=(window.prompt("新的截止日期（YYYY-MM-DD）",d0)||"").trim();
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(nd))return;
+ o.v.due=nd;o.v.hold=null;o.v.st=1;o.v.cfm=0;
+ taskLog(o.v,"导师改期到 "+nd);taskCommit(o);loadAttention(true);
+}
+function taskHold(k){
+ const o=taskPair(k);if(!o||!isStaff())return;
+ const reason=(window.prompt("挂起原因（会记录在进展里）","")||"").trim();if(!reason)return;
+ const d0=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+ const until=(window.prompt("挂起到哪天复核（YYYY-MM-DD）",d0)||"").trim();
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(until))return;
+ o.v.hold={reason,until,by:WHO,at:nowT()};
+ taskLog(o.v,"挂起至 "+until+"："+reason);taskCommit(o);loadAttention(true);
 }
 async function remindPlan(who){
  try{
@@ -2135,6 +2171,7 @@ function renderCarriers(){
          <div class="taskTags"><span class="tag gy">${esc(v.kind||"任务")}</span>${actTag(v)}
            ${v.delay&&v.delay.status==="pending"?`<span class="tag wt">延期待批</span>`:""}
            ${v.delay&&v.delay.status==="approved"?`<span class="tag gy">已延期</span>`:""}
+           ${v.hold&&v.hold.until?`<span class="tag gy">挂起至 ${esc(v.hold.until)}</span>`:""}
            ${v.pri?`<span class="tag ${v.pri==="P0"?"no":"gy"}">${esc(v.pri)}</span>`:""}${actCfmTag(v)}
            ${linked?`<span class="tag wt">已转求助</span>`:""}</div>
        </div>
@@ -2722,21 +2759,38 @@ function renderCoach(){
  document.getElementById("trigRules").innerHTML="触发条件（任一出现 → 导师加练 + 主管介入）：客户交付异常 ｜ 连续 2 个月复盘没有实质改进 ｜ 实操/测验连续不达标。";
  const T=(DOC.triggers.list||[]).filter(x=>!x.del).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  document.getElementById("trigList").innerHTML=T.length?T.map(x=>`<div class="item">
-   <div class="hd"><span class="tt">${esc(x.reason)}</span><span class="meta">${fmt(x.createdAt)}</span></div>
+   <div class="hd"><span class="tt">${esc(x.reason)}</span><span class="chips">
+     ${x.status==="done"?`<span class="tag ok">已完成</span>`:x.due?`<span class="tag wt">${esc(x.due)} 前完成</span>`:`<span class="tag no">未安排</span>`}
+     <span class="meta">${fmt(x.createdAt)}</span></span></div>
    <div class="body"><b>处理：</b>${esc(x.action||"—")}</div>
-   ${isStaff()?`<div class="row" style="margin-top:6px"><button class="btn sm danger" data-tdel="${x.id}">删除</button></div>`:""}</div>`).join("")
+   ${isStaff()?`<div class="row" style="margin-top:6px">${x.status!=="done"?`<button class="btn sm gh" data-tdate="${x.id}">设完成日期</button>`:""}<button class="btn sm danger" data-tdel="${x.id}">删除</button></div>`:""}</div>`).join("")
   :`<div class="empty">暂无触发记录</div>`;
  document.getElementById("trigNew").classList.toggle("hide",!isStaff());
  const tn=document.getElementById("trigNew");if(tn)tn.onclick=()=>{const f=document.getElementById("trigForm");
   f.innerHTML=`<div class="form" style="margin-top:10px"><select id="tWho">${ppl().map(id=>`<option value="${esc(id)}">${esc(WHO_NAME[id]||id)}</option>`).join("")}</select>
    <input id="tReason" placeholder="触发原因（如：客户交付异常）">
    <input id="tAction" placeholder="处理动作（安排演练 / 主管介入…）">
+   <label style="font-size:12.4px;color:var(--ink3)">完成日期（到这周日前完成）</label>
+   <input id="tDue" type="date">
    <div class="row"><button class="btn" id="tSave">保存并生成加练待办</button><button class="btn gh" id="tCancel">取消</button></div></div>`;
+  const _d=new Date(), _sun=new Date(_d.getTime()+((7-(_d.getDay()||7))*864e5));
+  document.getElementById("tDue").value=_sun.toISOString().slice(0,10);
   document.getElementById("tCancel").onclick=()=>{f.innerHTML="";};
   document.getElementById("tSave").onclick=()=>{const r=document.getElementById("tReason").value.trim();if(!r)return;
+   const who=document.getElementById("tWho").value||WHO;
+   const due=document.getElementById("tDue").value||"";
    DOC.triggers.list=DOC.triggers.list||[];
-   DOC.triggers.list.push({id:uid(),who:document.getElementById("tWho").value||WHO,reason:r,action:document.getElementById("tAction").value.trim(),by:WHO,createdAt:nowT(),updatedAt:nowT()});
+   /* 同一人同一原因只保留一条，重复登记改为更新日期与动作 */
+   const dup=DOC.triggers.list.find(x=>!x.del&&x.who===who&&x.reason===r&&x.status!=="done");
+   if(dup){dup.action=document.getElementById("tAction").value.trim();dup.due=due;dup.updatedAt=nowT();}
+   else DOC.triggers.list.push({id:uid(),who,reason:r,action:document.getElementById("tAction").value.trim(),due,status:"scheduled",by:WHO,createdAt:nowT(),updatedAt:nowT()});
    DOC.triggers.t=nowT();f.innerHTML="";touch();render();loadAttention(true);};};
+ document.querySelectorAll("[data-tdate]").forEach(b=>b.onclick=()=>{
+  const x=DOC.triggers.list.find(i=>i.id===b.dataset.tdate);if(!x)return;
+  const d0=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  const nd=(window.prompt("完成日期（YYYY-MM-DD）",d0)||"").trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd))return;
+  x.due=nd;x.status="scheduled";x.updatedAt=nowT();DOC.triggers.t=nowT();touch();render();loadAttention(true);});
  document.querySelectorAll("[data-tdel]").forEach(b=>b.onclick=()=>{const x=DOC.triggers.list.find(i=>i.id===b.dataset.tdel);if(!x)return;
   x.del=true;x.updatedAt=nowT();DOC.triggers.t=nowT();touch();render();});
 }

@@ -508,6 +508,18 @@ function reconcileDoc(doc) {
     }
   });
 
+  /* 3.6 触发式加练：完成一次「同主题」演练才算落实；主题不匹配不能自动关。
+     历史登记没有完成日期：默认给 7 天期限，先降为「已安排」，逾期再回红。 */
+  ((doc.triggers && doc.triggers.list) || []).filter(tg => !tg.del && tg.status !== "done").forEach(tg => {
+    const hit = ((doc.drills && doc.drills.list) || []).find(d => !d.del && d.who === tg.who && toMs(d.createdAt) >= toMs(tg.createdAt)
+      && (!d.topic || !tg.reason || String(d.topic).indexOf(tg.reason) >= 0 || String(tg.reason).indexOf(d.topic) >= 0));
+    if (hit) { tg.status = "done"; tg.drillId = hit.id; tg.updatedAt = now; changed = true; return; }
+    if (!tg.due) {
+      tg.due = bjKey(toMs(tg.createdAt || now) + 7 * 864e5);
+      tg.status = "scheduled"; tg.updatedAt = now; changed = true;
+    }
+  });
+
   if (normalizeTaskStates(doc)) changed = true;
   if (changed) doc.t = now;
   return changed;
@@ -2810,7 +2822,7 @@ function attentionPayload(me) {
     key: c.id + "." + v.id, actionId: v.id, carrierId: c.id, carrierName: c.name,
     ownerId: v.owner || c.who, text: v.text || "", kind: v.kind || "任务", due: v.due || "",
     st: v.st || 0, cfm: v.cfm || 0, by: v.by || "",
-    state: v.state || "", holder: v.holder || "", delay: v.delay || null,
+    state: v.state || "", holder: v.holder || "", delay: v.delay || null, hold: v.hold || null,
     createdAt: v.createdAt || 0, updatedAt: v.updatedAt || 0,
     logs: (v.log || []).filter(l => !l.del).map(l => ({ by: l.by, at: toMs(l.at) })),
   })));
@@ -2841,9 +2853,10 @@ function attentionPayload(me) {
   });
 
   const data = attentionEngine.build({ now, day, people, tasks, customers, issues,
-    drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt) })),
+    drills: S.drills.map(x => ({ who: x.who, at: toMs(x.createdAt), topic: x.topic || "" })),
     triggers: (((DOC && DOC.triggers && DOC.triggers.list) || [])).filter(x => !x.del && x.who)
-      .map(x => ({ id: x.id, who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "" })),
+      .map(x => ({ id: x.id, who: x.who, at: toMs(x.createdAt), reason: x.reason || "", action: x.action || "",
+        due: x.due || "", status: x.status || "" })),
     planConfirm: (DOC && DOC.plan && DOC.plan.confirm) || {}, retests, learning });
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);

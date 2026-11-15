@@ -99,6 +99,10 @@ function build(ctx) {
       return;   // 已提交验收的任务不再重复报「超期」，避免同一件事两个红灯
     }
 
+    /* 挂起：导师明确「这件事先不做」，到复核日之前不再报超期/停更 */
+    const holdUntil = t.hold && String(t.hold.until || "").slice(0, 10);
+    if (holdUntil && holdUntil >= ctx.day) return;
+
     /* 1.2 超期：责任人处理，导师同步可见 */
     if (over >= 1) {
       add({
@@ -187,6 +191,21 @@ function build(ctx) {
     });
   });
 
+  /* 先算出「已登记但还没做」的加练：同一人的加练待办只保留一条，
+     已安排日期的降为黄灯，过期才回红；避免和「14 天没演练」重复报两次。 */
+  const trigInfo = (ctx.triggers || []).filter(tg => {
+    if (!tg.who) return false;
+    const done = (ctx.drills || []).some(d => d.who === tg.who && ms(d.at) >= ms(tg.at)
+      && (!d.topic || !tg.reason || String(d.topic).indexOf(tg.reason) >= 0 || String(tg.reason).indexOf(d.topic) >= 0));
+    return !done;
+  }).map(tg => {
+    const due = String(tg.due || "").slice(0, 10);
+    const late = due && due < ctx.day ? Math.round((new Date(ctx.day + "T00:00:00Z") - new Date(due + "T00:00:00Z")) / DAY) : 0;
+    return { tg, due, late };
+  });
+  const trigByWho = {};
+  trigInfo.forEach(x => { trigByWho[x.tg.who] = x; });
+
   /* ---------- 4. 学习：长时间不打卡 / 计划未确认 / 错题待复练 ---------- */
   (ctx.people || []).filter(p => p.role === "newbie").forEach(p => {
     const l = (ctx.learning || {})[p.id] || {};
@@ -206,8 +225,8 @@ function build(ctx) {
         ref: { kind: "learn" }, action: "learn", since: now, wait: idle,
       });
     }
-    /* 缺练：14 天没有演练 → 生成一条可执行的练习待办，做完演练自动消失 */
-    if ((l.drill14 | 0) === 0 && (l.joinsDays | 0) >= 14) {
+    /* 缺练：14 天没有演练 → 生成一条可执行的练习待办；已登记加练时不再重复 */
+    if (!trigByWho[p.id] && (l.drill14 | 0) === 0 && (l.joinsDays | 0) >= 14) {
       const dd = l.drillIdleDays | 0;
       add({
         type: "drill_due", role: "newbie", level: dd >= 21 ? "red" : "yellow", who: p.id, ownerId: p.id,
@@ -226,16 +245,14 @@ function build(ctx) {
     }
   });
 
-  /* ---------- 5. 触发式加练：登记了触发条件但还没安排演练 ---------- */
-  (ctx.triggers || []).forEach(tg => {
-    if (!tg.who) return;
-    const done = (ctx.drills || []).some(d => d.who === tg.who && ms(d.at) >= ms(tg.at));
-    if (done) return;
+  /* ---------- 5. 触发式加练：已安排 → 黄灯；过期/没日期 → 红灯 ---------- */
+  trigInfo.forEach(({ tg, due, late }) => {
     add({
-      type: "drill_trigger", role: "newbie", level: "red", who: tg.who, ownerId: tg.who,
-      title: `触发加练未落实：${tg.reason}`,
-      detail: tg.action || "登记后需要安排一次演练并评分",
-      ref: { kind: "trigger", triggerId: tg.id || "", who: tg.who }, action: "drill", since: ms(tg.at), wait: days(ms(tg.at), now),
+      type: "drill_trigger", role: "newbie", level: late || !due ? "red" : "yellow", who: tg.who, ownerId: tg.who,
+      title: late ? `加练逾期 ${late} 天：${tg.reason}` : due ? `已安排加练：${tg.reason}` : `触发加练未落实：${tg.reason}`,
+      detail: due ? `${tg.action || ""} · ${due} 前完成` : (tg.action || "登记后需要安排一次演练并评分"),
+      ref: { kind: "trigger", triggerId: tg.id || "", who: tg.who }, action: "drill",
+      since: ms(tg.at), wait: late || 0,
     });
   });
 
