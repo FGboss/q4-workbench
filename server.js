@@ -425,13 +425,17 @@ function reconcileDoc(doc) {
     const c = carriers.filter(x => x.id === cid)[0];
     return c ? { c, v: (c.actions || []).filter(x => x.id === aid)[0] } : null;
   };
-  /* 1. 客户档案归档：任务一并归档，关联协助关闭 */
+  /* 1. 客户档案归档：任务一并归档，关联协助关闭
+     系统自动解除用 status=3（已解除），不能伪装成「人确认的问题已闭环」 */
   carriers.filter(c => c.del).forEach(c => {
     (c.actions || []).forEach(v => {
       if (!v.del) { v.del = true; v.delBy = "system"; v.delAt = now; v.updatedAt = now; changed = true; }
     });
     issues.filter(x => x.fromCarrier === c.id && (x.status || 0) < 2).forEach(x => {
-      x.status = 2; x.closedBy = "system"; x.updatedAt = now; x.resolve = "客户档案已归档"; changed = true;
+      x.status = x.src === "auto" ? 3 : 2;
+      x.closedBy = "system"; x.updatedAt = now;
+      x.resolve = x.src === "auto" ? "客户档案已归档，升级解除" : "客户档案已归档";
+      changed = true;
     });
   });
 
@@ -439,8 +443,10 @@ function reconcileDoc(doc) {
   carriers.forEach(c => (c.actions || []).forEach(v => {
     if (!(v.del || (v.st || 0) === 2)) return;
     issues.filter(x => x.fromAction === v.id && (!x.fromCarrier || x.fromCarrier === c.id) && (x.status || 0) < 2).forEach(x => {
-      x.status = 2; x.closedBy = "system"; x.updatedAt = now;
-      x.resolve = v.del ? "任务已删除" : "任务已闭环"; changed = true;
+      x.status = x.src === "auto" ? 3 : 2;
+      x.closedBy = "system"; x.updatedAt = now;
+      x.resolve = (v.del ? "任务已删除" : "任务已闭环") + (x.src === "auto" ? "，升级解除" : "");
+      changed = true;
     });
   }));
 
@@ -503,9 +509,23 @@ function reconcileDoc(doc) {
       }
     }
     if (!still) {
-      x.status = 2; x.closedBy = "system"; x.updatedAt = now;
-      x.resolve = "任务已不再超期"; changed = true;
+      let why = "任务状态已变化";
+      if (!v || v.del) why = "任务已删除";
+      else if ((v.st || 0) === 2) why = "任务已闭环";
+      else if (v.hold && String(v.hold.until || "").slice(0, 10) >= today) why = "任务已挂起";
+      else if (kind === "stale") why = "任务已更新";
+      else why = "任务已改期";
+      x.status = 3; x.closedBy = "system"; x.releasedBy = "system"; x.updatedAt = now;
+      x.resolve = why + "，升级解除"; changed = true;
     }
+  });
+
+  /* 4.1 历史数据迁移：系统自动关闭的协助（status=2 + closedBy=system）改为「已解除」，
+     避免在界面上把「改期/挂起」显示成「问题已闭环」。 */
+  issues.filter(x => x.src === "auto" && (x.status || 0) === 2 && x.closedBy === "system").forEach(x => {
+    x.status = 3; x.updatedAt = now;
+    if (x.resolve && x.resolve.indexOf("解除") < 0) x.resolve += "，升级解除";
+    changed = true;
   });
 
   /* 3.6 触发式加练：完成一次「同主题」演练才算落实；主题不匹配不能自动关。

@@ -2154,7 +2154,8 @@ function renderCarriers(){
     ${acts.length?acts.map(v=>{
       const key=x.id+"."+v.id;
       const over=actOver(v),age=actAge(v),lg=(v.log||[]).filter(y=>!y.del);
-      const linked=!!(v.links&&v.links.issueId),st=v.st||0,isOpen=!!CUI.open[key],te=CUI.editTask[key];
+      const _li=(DOC.issues.list||[]).find(i=>i.id===(v.links&&v.links.issueId)&&!i.del);
+      const linked=!!(_li&&(_li.status||0)<2),st=v.st||0,isOpen=!!CUI.open[key],te=CUI.editTask[key];
       const canA=canAct(x,v),ops=[];
       if(st===0&&canA)ops.push(`<button class="btn sm gh" data-astart="${key}">开始处理</button>`);
       if(st===1&&v.cfm!==3&&canA)ops.push(`<button class="btn sm" data-asub="${key}">提交验收</button>`);
@@ -2488,7 +2489,7 @@ function renderAssist(){
  }
 
  // 过滤器
- const F=[["all","全部"],["issue","项目问题"],["wish","诉求/吐槽"],["todo","待答复"],["done","已闭环"]].concat(isStaff()?[["help","待认可支招"]]:[]);
+ const F=[["all","全部"],["issue","项目问题"],["wish","诉求/吐槽"],["todo","待答复"],["done","已闭环"],["released","已解除"]].concat(isStaff()?[["help","待认可支招"]]:[]);
  document.getElementById("issueFilter").innerHTML=F.map(([k,lab])=>`<button class="chip ${ISSUE_FILTER===k?"k1":"b"}" data-if="${k}">${lab}</button>`).join("");
  document.querySelectorAll("[data-if]").forEach(b=>b.onclick=()=>{ISSUE_FILTER=b.dataset.if;renderAssist();});
  const qsearch=document.getElementById("issueQ");
@@ -2503,8 +2504,9 @@ function renderAssist(){
    .filter(Boolean).join(" ").toLowerCase().indexOf(k)>=0);}
  if(ISSUE_FILTER==="issue")L=L.filter(x=>x.type==="issue");
  if(ISSUE_FILTER==="wish")L=L.filter(x=>x.type==="wish");
- if(ISSUE_FILTER==="todo")L=L.filter(x=>(x.status||0)<2);
+ if(ISSUE_FILTER==="todo")L=L.filter(x=>(x.status||0)===0);
  if(ISSUE_FILTER==="done")L=L.filter(x=>(x.status||0)===2);
+ if(ISSUE_FILTER==="released")L=L.filter(x=>(x.status||0)===3);
  if(ISSUE_FILTER==="help")L=L.filter(x=>(x.replies||[]).some(r=>r.help&&helpAcks(r).length<2));
  L=L.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  document.getElementById("issueCount").textContent=`共 ${L.length} 条${ISSUE_Q?` · 搜索「${ISSUE_Q}」`:""}`;
@@ -2516,9 +2518,10 @@ function renderAssist(){
      ${x.card?'<span class="tag ok" style="margin-left:6px">已沉淀卡片</span>':""}
      ${wish&&x.priv?'<span class="tag gy" style="margin-left:6px">仅导师可见</span>':""}
      ${wish?"":`<span class="tag gy" style="margin-left:6px">${esc(x.cat||"")}</span>`}</div>
-     <span class="tag ${st===2?"ok":st===1?"wt":"no"}">${wish?"":["待答复","等新人回应","已闭环"][st]}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
+     <span class="tag ${st===2?"ok":st===3?"gy":st===1?"wt":"no"}">${wish?"":["待答复","等新人回应","已闭环","已解除"][st]||"待答复"}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
    <div class="meta">${WHO_NAME[x.who]} · ${fmt(x.createdAt)}</div>
    <div class="body">${nl(x.text)}</div>
+   ${st>=2&&x.resolve?`<div class="muted" style="margin-top:5px;font-size:12.2px">${st===3?"升级已解除":"已闭环"}：${esc(x.resolve)}${st===3?(function(){const lk=issueTask(x);return lk&&(lk.v.st||0)!==2?`；任务仍需继续跟进（截止 ${esc(lk.v.due||"—")}）`:"";})():""}</div>`:""}
    ${(function(){const lk=issueTask(x);const lg=lk&&(lk.v.log||[]).slice(-1)[0];
      return lg?`<div class="muted" style="margin-top:5px;font-size:12.2px">任务最新进展：${esc(lg.text)}${lg.at?` · ${fmt(lg.at)}`:""}</div>`:"";})()}
    ${x.chk||x.blk||x.need?`<div class="body" style="color:var(--ink3)">${x.chk?`<b>已排查：</b>${nl(x.chk)}<br>`:""}${x.blk?`<b>卡点与判断：</b>${nl(x.blk)}<br>`:""}${x.need?`<b>需要谁：</b>${nl(x.need)}`:""}</div>`:""}
@@ -4081,6 +4084,7 @@ function renderDuty(){
  const avg=resp.length?resp.reduce((a,b)=>a+b,0)/resp.length:null;
  const rate=resp.length?Math.round(resp.filter(v=>v<=TWO_H).length/resp.length*100):null;
  const closed=I.filter(x=>(x.status||0)===2).length;
+ const released=I.filter(x=>(x.status||0)===3).length;
 
  const mapA=mapAlerts(),mapOver=mapA.filter(a=>a.p.over).length;
  document.getElementById("dutyAgg").innerHTML=[
@@ -4089,7 +4093,7 @@ function renderDuty(){
   dutyCard(over8,"超 8 小时 · 升级主管",over8?"err":"ok"),
   dutyCard(avg==null?"—":fmtDur(avg),"平均首次响应",avg==null?"":(avg<=TWO_H?"ok":avg<=EIGHT_H?"warn":"err")),
   dutyCard(rate==null?"—":rate+"%","2 小时内响应率",rate==null?"":(rate>=80?"ok":rate>=50?"warn":"err")),
-  dutyCard(I.length+" / "+closed,"问题总数 / 已闭环",""),
+  dutyCard(I.length+" / "+closed+" / "+released,"问题 / 已闭环 / 已解除",""),
   dutyCard(mapOver||mapA.length,"地图超期 / 节奏预警（档）",mapOver?"err":mapA.length?"warn":"ok")
  ].join("");
 
