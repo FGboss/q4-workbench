@@ -3121,9 +3121,17 @@ function startAttentionTimer() {
 app.get("/api/brain_latest", async (req, res) => {
   const me = requireStaff(req, res); if (!me) return;
   const stale = !BRAIN || Date.now() - (BRAIN.asOf || 0) > BRAIN_TTL_MS;
-  const brain = await brainFor(me, false);
+  /* 超管看全量判断：绝不在请求里等模型。没有缓存就先返回「生成中」，
+     后台算完前端再取；否则冷启动/模型慢时会把整个页面拖成 502。 */
+  let brain = null;
+  if (me.role === "admin") {
+    if (stale && !brainInFlight && Date.now() - brainLastAt > 60000) runBrain("auto:view");
+    brain = BRAIN ? decorateBrain(BRAIN, me, null) : null;
+  } else {
+    brain = await brainFor(me, false);
+  }
   res.json({
-    ok: true, brain, running: !!brainInFlight, stale,
+    ok: true, brain, running: !!brainInFlight || (me.role === "admin" && !BRAIN), stale,
     enabled: brainThink.enabled(), model: brainThink.modelName(), ttl: BRAIN_TTL_MS,
     day: bjKey(Date.now()),
   });
@@ -3131,8 +3139,13 @@ app.get("/api/brain_latest", async (req, res) => {
 
 app.post("/api/brain_run", async (req, res) => {
   const me = requireStaff(req, res); if (!me) return;
-  const b = await brainFor(me, true);
-  res.json({ ok: !!b, brain: b || null, enabled: brainThink.enabled(), model: brainThink.modelName() });
+  /* 手动重算也设上限：模型慢时先告诉前端「还在算」，由前端继续轮询 */
+  const b = await Promise.race([
+    brainFor(me, true),
+    new Promise(r => setTimeout(() => r(null), 20000)),
+  ]);
+  res.json({ ok: true, brain: b || BRAIN || null, running: !!brainInFlight,
+    enabled: brainThink.enabled(), model: brainThink.modelName() });
 });
 
 /* 导师/主管对 AI 判断的反馈：有用 / 没用。
@@ -3537,10 +3550,21 @@ function attentionPayload(me) {
   }
   return data;
 }
+/* 短缓存：把控页一次会并发拉待办 / 认可 / AI / 风险，免费实例 CPU 很弱，
+   同一用户 4 秒内的重复计算直接复用，避免把实例打满导致 502。 */
+const ATT_HTTP_CACHE = new Map();
 app.get("/api/attention", (req, res) => {
   const me = tokenFromReq(req);
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
-  try { res.json(Object.assign({ ok: true }, attentionPayload(me))); }
+  const key = me.id + "|" + ((DOC && DOC.t) || 0) + "|" + bjKey(Date.now());
+  const hit = ATT_HTTP_CACHE.get(key);
+  if (hit && Date.now() - hit.at < 4000) return res.json(hit.data);
+  try {
+    const data = Object.assign({ ok: true }, attentionPayload(me));
+    ATT_HTTP_CACHE.set(key, { at: Date.now(), data });
+    if (ATT_HTTP_CACHE.size > 120) ATT_HTTP_CACHE.clear();
+    res.json(data);
+  }
   catch (e) { console.error("[attention]", e.message); res.status(500).json({ ok: false, msg: "待办生成失败" }); }
 });
 
@@ -3639,10 +3663,19 @@ function recognitionPayload(me) {
   }
   return data;
 }
+const REC_HTTP_CACHE = new Map();
 app.get("/api/recognition", (req, res) => {
   const me = tokenFromReq(req);
   if (!me) return res.status(401).json({ ok: false, msg: "未登录或会话失效" });
-  try { res.json(Object.assign({ ok: true }, recognitionPayload(me))); }
+  const key = me.id + "|" + ((DOC && DOC.t) || 0) + "|" + bjKey(Date.now());
+  const hit = REC_HTTP_CACHE.get(key);
+  if (hit && Date.now() - hit.at < 10000) return res.json(hit.data);
+  try {
+    const data = Object.assign({ ok: true }, recognitionPayload(me));
+    REC_HTTP_CACHE.set(key, { at: Date.now(), data });
+    if (REC_HTTP_CACHE.size > 120) REC_HTTP_CACHE.clear();
+    res.json(data);
+  }
   catch (e) { console.error("[recognition]", e.message); res.status(500).json({ ok: false, msg: "认可数据生成失败" }); }
 });
 

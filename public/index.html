@@ -1451,7 +1451,15 @@ const TAB_RENDER={plan:[renderPassport,renderPlan],assist:[renderAssist],coach:[
 let _rPend=null;
 function _runTab(k){for(const f of (TAB_RENDER[k]||[])){try{f();}catch(e){console.error(e);}}}
 function _queueRender(k){if(!_rPend){_rPend=new Set();requestAnimationFrame(()=>{const s=_rPend;_rPend=null;if(s)for(const kk of s)_runTab(kk);});}_rPend.add(k);}
-function render(){if(!WHO)return;if(isStaff())loadBrain(false);renderHome();renderBrief();loadAttention(false);loadRecognition(false);_queueRender(TAB);}
+function render(){
+ if(!WHO)return;
+ /* 免费实例 CPU 很弱，把控页一次并发 5 个重接口容易把自己打满；
+    待办优先，认可 / AI 错开几百毫秒再拉。 */
+ renderHome();renderBrief();loadAttention(false);
+ setTimeout(()=>loadRecognition(false),400);
+ if(isStaff())setTimeout(()=>loadBrain(false),900);
+ _queueRender(TAB);
+}
 function setTab(t){TAB=t;document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.tab===t));
  ["plan","assist","coach","monitor","review"].forEach(k=>document.getElementById("tab-"+k).classList.toggle("hide",k!==t));
  render();
@@ -1560,14 +1568,17 @@ function riskTasks(){return allActs().filter(o=>{const v=o.v;return (v.st||0)!==
    =================================================================== */
 let ATT=null,ATT_T=0,ATT_BUSY=false;
 function attItems(){return (ATT&&ATT.items)||[];}
+let ATT_RETRY=0;
 function loadAttention(force){
  if(!WHO)return;
  if(!force&&ATT&&Date.now()-ATT_T<15000){attBadges();if(TAB==="monitor")renderQueue();return;}
  if(ATT_BUSY)return;ATT_BUSY=true;
  apiGet("/api/attention").then(r=>{
   const d=(r&&r.data)||{};
-  if(d&&d.ok){ATT=d;ATT_T=Date.now();attBadges();renderHome();if(isStaff())renderBrainBar();if(TAB==="monitor")renderQueue();}
- }).catch(()=>{}).then(()=>{ATT_BUSY=false;});
+  if(d&&d.ok){ATT=d;ATT_T=Date.now();ATT_RETRY=0;attBadges();renderHome();if(isStaff())renderBrainBar();if(TAB==="monitor")renderQueue();}
+  else if(!ATT&&ATT_RETRY<3){ATT_RETRY++;setTimeout(()=>loadAttention(true),2500*ATT_RETRY);}
+ }).catch(()=>{if(!ATT&&ATT_RETRY<3){ATT_RETRY++;setTimeout(()=>loadAttention(true),2500*ATT_RETRY);}})
+  .then(()=>{ATT_BUSY=false;});
 }
 /* 页签红点：新人看新任务/错题，导师看待验收/红灯 */
 function attBadges(){
@@ -1694,14 +1705,17 @@ function delayDecide(k,act){
    只讲真实动作，不打分、不排名；没有记录就不硬夸。
    =================================================================== */
 let REC=null,REC_T=0,REC_BUSY=false;
+let REC_RETRY=0;
 function loadRecognition(force){
  if(!WHO)return;
  if(!force&&REC&&Date.now()-REC_T<60000){renderRecognition();return;}
  if(REC_BUSY)return;REC_BUSY=true;
  apiGet("/api/recognition").then(r=>{
   const d=(r&&r.data)||{};
-  if(d&&d.ok){REC=d;REC_T=Date.now();renderRecognition();}
- }).catch(()=>{}).then(()=>{REC_BUSY=false;});
+  if(d&&d.ok){REC=d;REC_T=Date.now();REC_RETRY=0;renderRecognition();}
+  else if(!REC&&REC_RETRY<3){REC_RETRY++;setTimeout(()=>loadRecognition(true),3000*REC_RETRY);}
+ }).catch(()=>{if(!REC&&REC_RETRY<3){REC_RETRY++;setTimeout(()=>loadRecognition(true),3000*REC_RETRY);}})
+  .then(()=>{REC_BUSY=false;});
 }
 function weekChips(w){
  const c=[];
@@ -3629,9 +3643,12 @@ function brainFocus(id){return (BRAIN&&(BRAIN.focus||[]).find(x=>x.id===id))||nu
 function brainRank(id){if(!BRAIN)return -1;return (BRAIN.focus||[]).findIndex(x=>x.id===id);}
 function brainRef(r){const m=(BRAIN&&BRAIN.refs)||{};return m[r]||String(r||"");}
 
+let BRAIN_LOADING=false;
 function loadBrain(force){
  if(!isStaff())return;
+ if(BRAIN_LOADING)return;
  if(!force&&Date.now()-BRAIN_T<120000){renderBrainBar();return;}
+ BRAIN_LOADING=true;
  apiGet("/api/brain_latest").then(r=>{
   const d=(r&&r.data)||{};
   const had=!!BRAIN;
@@ -3640,7 +3657,9 @@ function loadBrain(force){
   renderBrainBar();renderBrain();
   if(!had&&BRAIN&&TAB==="monitor"){_queueRender("monitor");return;}
   if(BRAIN_RUNNING&&BRAIN_RETRY<6){BRAIN_RETRY++;setTimeout(()=>loadBrain(true),6000);}
- }).catch(()=>{});
+ }).catch(()=>{
+  if(!BRAIN&&BRAIN_RETRY<3){BRAIN_RETRY++;setTimeout(()=>loadBrain(true),4000);}
+ }).then(()=>{BRAIN_LOADING=false;});
 }
 function renderBrainBar(){
  const el=document.getElementById("brainBar");if(!el)return;
@@ -3721,6 +3740,7 @@ function renderBrain(){
   apiPost("/api/brain_run",{}).then(r=>{
    const d=(r&&r.data)||{};
    if(d.brain){BRAIN=d.brain;BRAIN_T=Date.now();}
+   else{re.disabled=false;re.textContent="重新判断";setTimeout(()=>loadBrain(true),2000);}
    renderMonitor();renderBrainBar();
   }).catch(()=>{re.disabled=false;re.textContent="重新判断";});
  };
