@@ -3018,11 +3018,16 @@ function recordDayStats(day, counts) {
 }
 function dayStatsDelta(day, counts) {
   const s = USERS.dayStats || {};
+  /* counts 缺省时用当天已记录的汇总兜底：AI 卡片的调用方没有 counts，
+     直接读 undefined 会抛异常，而 Express 4 不会捕获 async 路由里的异常，
+     整个实例会被拖成 502。当天还没有汇总时不做对比，避免显示出 -3 这种假变化。 */
+  const cur = counts || s[day] || null;
   const prev = Object.keys(s).filter(k => k < day).sort().pop() || "";
   const p = prev ? s[prev] : null;
   const delta = {};
-  if (p) ["red", "yellow", "total", "review", "newToday"].forEach(k => { delta[k] = (counts[k] || 0) - (p[k] || 0); });
-  return { prevDay: prev, delta, hasPrev: !!p };
+  const comparable = !!(p && cur);
+  if (comparable) ["red", "yellow", "total", "review", "newToday"].forEach(k => { delta[k] = (cur[k] || 0) - (p[k] || 0); });
+  return { prevDay: prev, delta, hasPrev: comparable };
 }
 /* ---------- AI 反馈闭环：导师标记「有用/没用」，重复没用的类型自动降权 ---------- */
 function brainFeedbackStats(me) {
@@ -3123,18 +3128,24 @@ app.get("/api/brain_latest", async (req, res) => {
   const stale = !BRAIN || Date.now() - (BRAIN.asOf || 0) > BRAIN_TTL_MS;
   /* 超管看全量判断：绝不在请求里等模型。没有缓存就先返回「生成中」，
      后台算完前端再取；否则冷启动/模型慢时会把整个页面拖成 502。 */
-  let brain = null;
-  if (me.role === "admin") {
-    if (stale && !brainInFlight && Date.now() - brainLastAt > 60000) runBrain("auto:view");
-    brain = BRAIN ? decorateBrain(BRAIN, me, null) : null;
-  } else {
-    brain = await brainFor(me, false);
+  try {
+    let brain = null;
+    if (me.role === "admin") {
+      if (stale && !brainInFlight && Date.now() - brainLastAt > 60000) runBrain("auto:view");
+      brain = BRAIN ? decorateBrain(BRAIN, me, null) : null;
+    } else {
+      brain = await brainFor(me, false);
+    }
+    res.json({
+      ok: true, brain, running: !!brainInFlight || (me.role === "admin" && !BRAIN), stale,
+      enabled: brainThink.enabled(), model: brainThink.modelName(), ttl: BRAIN_TTL_MS,
+      day: bjKey(Date.now()),
+    });
+  } catch (e) {
+    /* 兜底：这条路由出任何异常都只返回 500，不能让整个实例挂掉 */
+    console.error("[brain] latest", e && e.stack || e);
+    if (!res.headersSent) res.status(500).json({ ok: false, msg: "AI 判断生成失败" });
   }
-  res.json({
-    ok: true, brain, running: !!brainInFlight || (me.role === "admin" && !BRAIN), stale,
-    enabled: brainThink.enabled(), model: brainThink.modelName(), ttl: BRAIN_TTL_MS,
-    day: bjKey(Date.now()),
-  });
 });
 
 app.post("/api/brain_run", async (req, res) => {
