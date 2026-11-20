@@ -644,10 +644,21 @@ function reconcileDoc(doc) {
   });
 
   /* 3.6 触发式加练：完成一次「同主题」演练才算落实；主题不匹配不能自动关。
+     手工登记的加练（如「产品演讲演练-每周」）往往跟演练主题对不上字面，
+     只要本人在加练之后确实完成了一场对应类型的演练并拿到评分，也算落实。
      历史登记没有完成日期：默认给 7 天期限，先降为「已安排」，逾期再回红。 */
   ((doc.triggers && doc.triggers.list) || []).filter(tg => !tg.del).forEach(tg => {
-    const hit = ((doc.drills && doc.drills.list) || []).find(d => !d.del && d.who === tg.who && toMs(d.createdAt) >= toMs(tg.createdAt)
-      && (!d.topic || !tg.reason || String(d.topic).indexOf(tg.reason) >= 0 || String(tg.reason).indexOf(d.topic) >= 0));
+    const wantWeekly = !tg.reason || String(tg.reason).indexOf("演讲") >= 0;
+    const wantOnsite = !!tg.reason && String(tg.reason).indexOf("客户") >= 0;
+    const hit = ((doc.drills && doc.drills.list) || []).find(d => {
+      if (d.del || d.who !== tg.who || toMs(d.createdAt) < toMs(tg.createdAt)) return false;
+      const topicOk = !d.topic || !tg.reason
+        || String(d.topic).indexOf(tg.reason) >= 0 || String(tg.reason).indexOf(d.topic) >= 0;
+      if (topicOk) return true;
+      const scored = !!d.score || (d.scores || []).some(s => s && (s.dims || s.by));
+      const kindOk = wantOnsite ? d.kind === "onsite" : (!wantWeekly || !d.kind || d.kind === "weekly");
+      return scored && kindOk;
+    });
     if (hit) {
       if (tg.status !== "done") { tg.status = "done"; tg.drillId = hit.id; tg.updatedAt = now; changed = true; }
       return;
