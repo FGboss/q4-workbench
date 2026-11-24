@@ -86,7 +86,12 @@ const MAIL_FROM = process.env.MAIL_FROM || (SMTP_USER ? `Q4 工作台 <${SMTP_US
 const MAIL_TO = String(process.env.ALERT_TO || (SMTP_USER ? SMTP_USER : "liwf@novastar.tech")).split(/[,;\s]+/).filter(Boolean);
 /* 回复地址：邮件转发给领导后，领导点「回复」即回到这个邮箱（默认取第一个收件人） */
 const MAIL_REPLY_TO = process.env.MAIL_REPLY_TO || MAIL_TO[0] || "";
+/* 邮件异常只通知管理员本人（默认取超管邮箱，没有再退回第一个收件人），绝不群发 */
+const MAIL_ADMIN_ENV = process.env.MAIL_ADMIN || "";
 const REPORT_HOUR = +(process.env.DAILY_REPORT_HOUR || 18);
+/* 邮件防刷闸门：同一件事 24 小时内只发一次；每人每天最多 10 封自动邮件；
+   5 分钟内超过 12 封自动邮件就熔断 1 小时，只给管理员发一封告警。 */
+const MAIL_GUARD = { dedupeMs: 24 * 3600e3, capPerDay: 10, burstWindowMs: 5 * 60000, burstMax: 12, pauseMs: 60 * 60000 };
 /* 周报发送日：5 = 周五（北京时间）。周五 18:00 与日报合并成一封发出，覆盖本周一至周五。
    周一不再发周报，避免「周五发一次、周一又发一次」的重复。 */
 const WEEKLY_WEEKDAY = 5;
@@ -1001,6 +1006,53 @@ function mailShell(subject, inner, note) {
       <div style="color:#7C8896;font-size:12px;margin-top:16px">${note || ""}${PUBLIC_URL ? `<br>打开工作台：<a href="${h(PUBLIC_URL)}">${h(PUBLIC_URL)}</a>` : ""}</div>
     </div></div>`;
 }
+/* ---------- 邮件防刷 / 异常守护 ----------
+   背景：自动升级邮件曾经每 17 分钟重复发一次（实例休眠重启后「已升级」标记丢失），
+   一晚上给导师和主管发了 30 多封。这里做三道闸门：
+     1) 同一件事（key 或 主题+收件人）12 小时内只发一次；
+     2) 每个收件人每天最多 10 封自动邮件；
+     3) 5 分钟内超过 12 封自动邮件 → 熔断 1 小时，只给管理员发一封告警，绝不群发。 */
+function mailAdmin() {
+  if (MAIL_ADMIN_ENV) return MAIL_ADMIN_ENV;
+  const a = (USERS.users || []).find(u => u.role === "admin" && u.active !== false && validEmail(u.email));
+  return (a && a.email) || MAIL_TO[0] || "";
+}
+function mailGuardState() {
+  const s = mailState();
+  const g = s.guard && typeof s.guard === "object" ? s.guard : (s.guard = {});
+  g.keys = g.keys || {}; g.recent = g.recent || []; g.counts = g.counts || {};
+  g.day = g.day || ""; g.pausedUntil = g.pausedUntil || 0; g.alertDay = g.alertDay || "";
+  return g;
+}
+function mailHealth() {
+  const g = mailGuardState();
+  const now = Date.now();
+  const recent = (g.recent || []).filter(t => now - t < 3600e3);
+  const paused = g.pausedUntil > now;
+  const top = Object.keys(g.counts || {}).map(k => ({ email: k, n: g.counts[k] })).sort((a, b) => b.n - a.n);
+  return { recentHour: recent.length, paused, pausedUntil: paused ? g.pausedUntil : 0,
+    capPerDay: MAIL_GUARD.capPerDay, todayTop: top.slice(0, 5), warn: paused || recent.length >= 6 };
+}
+function mailGuardAlert(reason, detail) {
+  const g = mailGuardState();
+  const day = bjKey(Date.now());
+  if (g.alertDay === day) return;
+  g.alertDay = day;
+  saveUsers();
+  const to = [mailAdmin()].filter(validEmail);
+  if (!to.length) return;
+  sendMailRaw("[邮件守护] 自动邮件已暂停，仅通知管理员",
+    `<p>系统检测到邮件量异常，已自动暂停自动邮件，避免继续打扰大家。</p>
+     <p><b>原因：</b>${h(reason)}</p><p style="color:#5C6772;font-size:13px">${h(detail || "")}</p>
+     <p style="color:#5C6772;font-size:13px">1 小时后自动恢复；明细可在工作台「邮件通知」里查看。</p>`,
+    "仅发送给管理员本人 · 邮件守护", { to, kind: "mail_guard", trigger: "guard", skipGuard: true })
+    .catch(e => console.error("[mail] guard alert", e.message));
+}
+const isManualMail = o => {
+  const t = String((o && o.trigger) || "");
+  return t === "manual" || t === "manual-test" || t === "verify" || t === "guard"
+    || (o && (o.kind === "test" || o.kind === "mail_guard"));
+};
 async function sendMail(subject, inner, note, opts) {
   const o = Object.assign({}, opts || {});
   let subj = subject;
@@ -1010,6 +1062,39 @@ async function sendMail(subject, inner, note, opts) {
     o.to = [MAIL_SAFE_TO];
     subj = "[测试] " + subject;
     msg = (msg ? msg + " · " : "") + "测试收件人模式：仅发送到 " + MAIL_SAFE_TO;
+  }
+  /* 自动邮件先过防刷闸门；手动发送 / 测试 / 守护告警不受限制 */
+  if (!isManualMail(o)) {
+    const g = mailGuardState();
+    const now = Date.now();
+    g.recent = (g.recent || []).filter(t => now - t < MAIL_GUARD.burstWindowMs);
+    const tos = ((o.to && o.to.length ? o.to : mailTo()) || []).map(x => String(x).toLowerCase()).sort();
+    if (g.pausedUntil > now) {
+      logMail({ kind: o.kind || "mail", trigger: o.trigger || "", subject: subj, to: tos, ok: false,
+        msg: "邮件量异常，已熔断暂停", channel: "" });
+      return { ok: false, to: tos, skipped: "guard", msg: "邮件量异常，已熔断暂停自动邮件" };
+    }
+    const key = String(o.key || ("s|" + subj + "|" + tos.join(","))).toLowerCase();
+    if (g.keys[key] && now - g.keys[key] < MAIL_GUARD.dedupeMs) {
+      return { ok: true, to: tos, skipped: "duplicate", msg: "重复邮件，已跳过" };
+    }
+    const day = bjKey(now);
+    if (g.day !== day) { g.day = day; g.counts = {}; }
+    const capped = tos.filter(e => (g.counts[e] || 0) >= MAIL_GUARD.capPerDay);
+    if (tos.length && capped.length === tos.length) {
+      mailGuardAlert("单日自动邮件超过上限", `今天已给 ${tos.join("、")} 各发满 ${MAIL_GUARD.capPerDay} 封，后续自动邮件已暂缓。`);
+      return { ok: false, to: tos, skipped: "cap", msg: "超出单日邮件上限，已暂缓" };
+    }
+    if (g.recent.length >= MAIL_GUARD.burstMax) {
+      g.pausedUntil = now + MAIL_GUARD.pauseMs;
+      saveUsers();
+      mailGuardAlert("短时间内自动邮件过多", `5 分钟内已有 ${g.recent.length} 封自动邮件，已暂停自动发送 1 小时。`);
+      return { ok: false, to: tos, skipped: "burst", msg: "邮件量异常，已熔断" };
+    }
+    g.keys[key] = now;
+    g.recent.push(now);
+    tos.forEach(e => { g.counts[e] = (g.counts[e] || 0) + 1; });
+    saveUsers();
   }
   const r = await sendMailRaw(subj, inner, msg, o);
   try {
@@ -1111,14 +1196,21 @@ function recordLogin(u) {
   saveMS(); saveUsers();
 }
 
-/* 新人发布问题/诉求：即时邮件提醒导师/主管（一次保存里多条合并成一封） */
+/* 新人发布问题/诉求：先只提醒直属导师；导师 48 小时没处理才升级主管。
+   一次保存里同一人的多条合并成一封，绝不群发。 */
 function notifyNewIssues(items) {
   if (!MAIL_ON || !items.length) return;
-  /* 按人分邮：同一位新人的多条合并成一封，发给他的导师/主管；多人则各自一封 */
   const byWho = {};
   items.forEach(x => { (byWho[x.who] = byWho[x.who] || []).push(x); });
   Object.keys(byWho).forEach(who => {
     const list = byWho[who];
+    const nb = findUser(who);
+    const mentor = nb && nb.mentorId ? findUser(nb.mentorId) : null;
+    const lead = nb && nb.leadId ? findUser(nb.leadId) : null;
+    const pick = (mentor && validEmail(mentor.email) && mentor.mailAuto !== false) ? mentor
+      : (lead && validEmail(lead.email) && lead.mailAuto !== false) ? lead : null;
+    const to = [pick ? pick.email : mailAdmin()].filter(validEmail);
+    if (!to.length) return;
     const rws = list.slice(0, 6).map(x => `<tr>
        <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${x.type === "wish" ? "诉求/吐槽" : "项目问题"}</td>
        <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.text || "").slice(0, 300)}
@@ -1126,12 +1218,13 @@ function notifyNewIssues(items) {
          ${x.blk ? `<div style="color:#7C8896;font-size:12px">卡点：${h(x.blk).slice(0, 160)}</div>` : ""}
          ${x.need ? `<div style="color:#7C8896;font-size:12px">需要谁：${h(x.need)}</div>` : ""}</td></tr>`).join("");
     const m = list.length > 6 ? `<p style="color:#7C8896;font-size:12px">另有 ${list.length - 6} 条，请到工作台查看。</p>` : "";
+    const key = "issue|" + who + "|" + list.map(x => String(x.id || x.text || "").slice(0, 30)).sort().join("|");
     sendMail(`【问题协助】${nameOf(who)} 新提了 ${list.length} 条问题/诉求`,
-      `<p><b>${h(nameOf(who))}</b> 在工作台提交了新内容，请尽快回应。</p>
+      `<p><b>${h(nameOf(who))}</b> 在工作台提交了新内容，请尽快回应；48 小时未处理将升级主管。</p>
        <table style="border-collapse:collapse;width:100%;font-size:13px">
        <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">类型</th><th style="padding:7px 9px">内容</th></tr>
        ${rws}</table>${m}`,
-      "问题协助提醒 · 自动发送", { to: [...new Set(staffEmailsFor(who, "issue").concat(ruleEmails("issue", who, { autoOnly: true })))] });
+      "问题协助提醒 · 先发直属导师", { to, kind: "issue", trigger: "issue", key });
   });
 }
 
@@ -3213,7 +3306,7 @@ app.get("/api/mail_status", (req, res) => {
       tries: (st.tries && st.tries[today]) || 0,
       lastFail: st.lastFail && st.lastFail.day === today ? st.lastFail : null,
     },
-    log: recentMailLog(30) });
+    log: recentMailLog(30), health: mailHealth() });
 });
 app.post("/api/mail_test", async (req, res) => {
   const me = requireStaff(req, res); if (!me) return;
@@ -3703,16 +3796,41 @@ app.get("/api/recognition", (req, res) => {
 
 /* 自动升级：超期 3 天 / 停滞 10 天 → 自动开一条「协助」，导师 48 小时不处理再升级主管。
    幂等：同一条任务只开一条，键存在就跳过；定时器每次扫描都不会重复刷屏。 */
-function notifyAutoEscalation(items) {
+/* 自动升级按「先导师、后主管」逐级发，不再一次抄送所有人。
+   同一批任务用内容指纹做 key：即使实例重启导致「已升级」标记丢失，
+   12 小时内也不会把同样的邮件再发一遍。 */
+function notifyAutoEscalation(items, stage) {
   if (!MAIL_ON || !items.length) return;
-  const rows = items.map(x => `<tr>
-    <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(nameOf(x.ownerId))}</td>
-    <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.proj || "")}<div style="color:#7C8896;font-size:12px">${h(x.text)}</div></td></tr>`).join("");
-  sendMail(`【超期升级】${items.length} 个任务需要导师介入`,
-    `<p>以下任务已超期或长期没有进展，系统已自动转入「协助」，请导师处理；48 小时未处理将升级主管。</p>
-     <table style="border-collapse:collapse;width:100%;font-size:13px">
-     <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">责任人</th><th style="padding:7px 9px">任务</th></tr>${rows}</table>`,
-    "由系统按规则自动升级，不需要新人手动提交。", { kind: "auto_escalate", trigger: "attention" });
+  const toLead = stage === "lead";
+  const groups = new Map();
+  const adminTo = mailAdmin();
+  items.forEach(x => {
+    const u = findUser(x.ownerId);
+    const mentor = u && u.mentorId ? findUser(u.mentorId) : null;
+    const lead = u && u.leadId ? findUser(u.leadId) : null;
+    const target = toLead ? (lead || mentor) : (mentor || lead);
+    const email = target && validEmail(target.email) ? target.email : adminTo;
+    if (!validEmail(email)) return;
+    const g = groups.get(email) || { name: target ? target.name : "管理员", items: [] };
+    g.items.push(x);
+    groups.set(email, g);
+  });
+  groups.forEach((g, email) => {
+    const rows = g.items.map(x => `<tr>
+      <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE;white-space:nowrap">${h(nameOf(x.ownerId))}</td>
+      <td style="padding:7px 9px;border-bottom:1px solid #E3E8EE">${h(x.proj || "")}<div style="color:#7C8896;font-size:12px">${h(x.text)}</div></td></tr>`).join("");
+    const title = toLead
+      ? `【升级主管】${g.items.length} 个任务已等 48 小时`
+      : `【超期提醒】${g.items.length} 个任务需要导师跟进`;
+    const intro = toLead
+      ? "<p>以下任务转入协助后 48 小时仍未处理，已升级给你，请安排处理或给出挂起结论。</p>"
+      : "<p>以下任务已超期或长期没有进展，系统已转入「协助」，请先由导师处理；48 小时未处理才会升级主管。</p>";
+    const key = "esc|" + stage + "|" + email + "|" + g.items.map(x => (x.ownerId || "") + ":" + String(x.text || "").slice(0, 40)).sort().join("|");
+    sendMail(title,
+      `${intro}<table style="border-collapse:collapse;width:100%;font-size:13px">
+       <tr style="background:#EDF4FA;text-align:left"><th style="padding:7px 9px">责任人</th><th style="padding:7px 9px">任务</th></tr>${rows}</table>`,
+      "由系统按规则逐级提醒，只发给当前该处理的人。", { to: [email], kind: "auto_escalate", trigger: "attention", key });
+  });
 }
 async function runAttentionScan(trigger) {
   if (!DOC) return { created: 0, escalated: 0 };
@@ -3746,12 +3864,19 @@ async function runAttentionScan(trigger) {
   DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
     && !x.escalatedAt && Date.now() - toMs(x.createdAt) >= 48 * 3600e3)
     .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
+  /* 新人提交的问题：球在导师这边（status=0）超过 48 小时没处理，同样升级主管。
+     球在新人那边（status=1）不升级，避免催错人。 */
+  DOC.issues.list.filter(x => !x.del && x.src !== "auto" && (x.status || 0) === 0
+    && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.updatedAt || x.createdAt) >= 48 * 3600e3)
+    .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
   if (created.length || reopened.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }
-  if (created.length) notifyAutoEscalation(created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })));
+  if (created.length) notifyAutoEscalation(
+    created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })), "mentor");
   if (reopened.length) console.log(`[attention] 重新开启 ${reopened.length} 条（${trigger || "scan"}）`);
   if (escalated.length) {
     console.log(`[attention] 已升级主管 ${escalated.length} 条（${trigger || "scan"}）`);
-    notifyAutoEscalation(escalated.map(x => ({ ownerId: x.who, proj: "已等 48 小时未处理", text: x.text })));
+    notifyAutoEscalation(
+      escalated.map(x => ({ ownerId: x.who, proj: x.proj || "已等 48 小时未处理", text: x.text })), "lead");
   }
   return { created: created.length, reopened: reopened.length, escalated: escalated.length };
 }

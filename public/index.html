@@ -3983,6 +3983,8 @@ async function renderMailBox(){
  const state=!ts.isWorkday?`<span class="tag gy">今天不是工作日，不自动发送</span>`
    :ts.done?`<span class="tag ok">今日已发送</span> <span class="muted">→ ${(ts.sentTo||[]).map(esc).join("、")||"—"}</span>`
    :`<span class="tag wt">今日待发送</span> <span class="muted">${(ts.pending||[]).length?`待发 ${ts.pending.map(esc).join("、")}`:"暂无订阅收件人"}${ts.lastFail?`　·　上次失败：${esc(ts.lastFail.msg||"")}`:""}</span>`;
+ const mh=s.health||{};
+ const guard=mh.warn?`<div class="tag no" style="margin-top:6px">邮件守护：近 1 小时自动邮件 ${mh.recentHour} 封${mh.paused?` · 已暂停到 ${fmt(mh.pausedUntil)}`:""}（异常只通知管理员，不会群发）</div>`:"";
  const rows=(s.log||[]).slice(0,12).map(x=>`<tr>
    <td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap">${fmt(x.at)}</td>
    <td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap">${esc(x.trigger||"—")}</td>
@@ -3994,6 +3996,7 @@ async function renderMailBox(){
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　默认收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${s.lastSent?fmt(s.lastSent):"暂无"}</div>
      <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师/主管发「导师日报」（今日结论、必须处理的 3 件事、每位新人进展与风险、待验收清单），给新人发「今日小结」（进展、卡点、下一步）；<b>每周五 ${sch.hour}:00</b> 加发周报（导师版含趋势与带教动作，新人版含与上周对比与下周 3 件事）。</div>
      <div style="margin-top:6px">${state}${ts.isWeeklyDay&&!ts.done?' <span class="tag wt">今天周五，会加发周报</span>':""}</div>
+     ${guard}
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
    <div class="row" style="gap:7px;align-items:flex-start;flex-wrap:wrap">
      ${isAdmin()?'<button class="btn sm gh" id="mailCfgBtn">邮件设置（账号管理）</button>':""}
