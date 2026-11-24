@@ -1781,21 +1781,32 @@ function pathStrip(who,L){
 function threeThings(){
  const out=[],A=attItems();
  if(isNew()){
-  const nt=A.filter(x=>x.type==="new_task"),rt=A.filter(x=>x.type==="retest");
-  const nn=nextNodeOf(WHO),rq=reviewQueue(WHO),back=returnedTasks(WHO);
-  out.push(nt.length
-   ?{no:"第 1 件",tt:`${nt.length} 个新任务`,dd:String(nt[0].title||"").replace(/^新任务：/,""),btn:"去看任务",act:"queue"}
-   :nn
-   ?{no:"第 1 件",tt:"学 1 个新节点",dd:`「${nn.t}」—— 学完做 5 题小测，今天就算进一格。`,btn:"现在去学",act:`node:${nn.id}`}
-   :{no:"第 1 件",tt:"地图已通关",dd:"进入复习与真实交付：今天挑 1 个节点复习即可。",btn:"去帮扶",act:"tab:coach",ghost:true});
-  out.push(rt.length
-   ?{no:"第 2 件",tt:`复练 ${rt.length} 道错题`,dd:"同类型变式题，答对 2 次即移出错题本。",btn:"去复练",act:"retest"}
-   :rq.length
-   ?{no:"第 2 件",tt:`复习 ${Math.min(rq.length,3)} 个节点`,dd:"按首次成绩排的复习队列，先巩固最容易忘的。",btn:"去复习",act:"tab:coach"}
-   :{no:"第 2 件",tt:"补 1 条打卡",dd:"学—测—用任一步有记录，连续天数就不断。",btn:"去打卡",act:"tab:coach",ghost:true});
-  out.push(back
-   ?{no:"第 3 件",tt:`改完 ${back} 个被退回的任务`,dd:"导师已退回并写了意见，改完再提交验收。",btn:"去处理",act:"tab:plan"}
-   :{no:"第 3 件",tt:"推进 1 个客户任务",dd:"写一条进展，导师才看得见过程。",btn:"去看任务",act:"tab:plan",ghost:true});
+  /* 和导师端同一套逻辑：先看「真正该你处理的事」，不用自己翻。
+     顺序：超期 / 停滞 → 加练 → 错题复练 → 节点卡住 → 久未学习 → 新任务 → 计划确认 */
+  const mine=A.filter(x=>x.role==="newbie"&&x.who===WHO);
+  const pri={overdue:0,stale:1,drill_trigger:2,retest:3,node_stuck:4,drill_due:5,learning_idle:6,new_task:7,plan_unconfirmed:8};
+  const rank=t=>pri[t]==null?50:pri[t];
+  const desc=it=>{
+   const r=it.ref||{};
+   if(it.type==="retest")return{btn:"去复练",act:"retest"};
+   if(it.type==="plan_unconfirmed")return{btn:"去确认",act:"tab:plan"};
+   if(it.type==="node_stuck"&&r.nodeId)return{btn:"看节点",act:"node:"+r.nodeId};
+   if(r.kind==="task"&&r.carrierId)return{btn:(it.type==="overdue"||it.type==="stale")?"去处理":"去看任务",act:"task:"+r.carrierId+"."+(r.actionId||"")};
+   if(it.type==="drill_trigger"||it.type==="drill_due")return{btn:"去演练",act:"tab:coach"};
+   if(it.type==="learning_idle")return{btn:"去学习",act:"tab:coach"};
+   return{btn:"去处理",act:"queue"};
+  };
+  mine.slice().sort((a,b)=>(a.level==="red"?0:1)-(b.level==="red"?0:1)||rank(a.type)-rank(b.type)).slice(0,3)
+   .forEach((it,i)=>{const d=desc(it);out.push({no:`第 ${i+1} 件`,tt:it.title,dd:it.detail||"",btn:d.btn,act:d.act});});
+  const back=returnedTasks(WHO);
+  if(out.length<3&&back)out.push({no:`第 ${out.length+1} 件`,tt:`改完 ${back} 个被退回的任务`,dd:"导师已退回并写了意见，改完再提交验收。",btn:"去处理",act:"tab:plan"});
+  const nn=nextNodeOf(WHO),rq=reviewQueue(WHO);
+  if(out.length<3)out.push(nn
+   ?{no:`第 ${out.length+1} 件`,tt:"学 1 个新节点",dd:`「${nn.t}」—— 学完做 5 题小测，今天就算进一格。`,btn:"现在去学",act:`node:${nn.id}`}
+   :{no:`第 ${out.length+1} 件`,tt:"挑 1 个节点复习",dd:"地图已通关，保持手感即可。",btn:"去帮扶",act:"tab:coach",ghost:true});
+  if(out.length<3)out.push(rq.length
+   ?{no:`第 ${out.length+1} 件`,tt:`复习 ${Math.min(rq.length,3)} 个节点`,dd:"按首次成绩排的复习队列，先巩固最容易忘的。",btn:"去复习",act:"tab:coach",ghost:true}
+   :{no:`第 ${out.length+1} 件`,tt:"补 1 条打卡",dd:"学—测—用任一步有记录，连续天数就不断。",btn:"去打卡",act:"tab:coach",ghost:true});
  }else{
   const rev=ATT?(ATT.counts&&ATT.counts.accept)||0:pendingReviews();
   const red=ATT?A.filter(x=>x.level==="red").length:0;
@@ -1828,8 +1839,8 @@ function renderHome(){
  const t3=threeThings(),nm=WHO_NAME[WHO]||"";
  let foot="";
  if(isNew()){
-  const st=ciStats(WHO),m=masteryOf(WHO),rq=reviewQueue(WHO);
-  foot=`<span>连续打卡 <b>${st.streak}</b> 天</span><span>掌握度 <b>${m.pct}%</b>${gloss("mastery")}</span><span>今天该复习 <b>${rq.length}</b> 个</span>`;
+  const st=ciStats(WHO),m=masteryOf(WHO),rq=reviewQueue(WHO),pend=attItems().length;
+  foot=`<span>待办 <b>${pend}</b> 件</span><span>连续打卡 <b>${st.streak}</b> 天</span><span>掌握度 <b>${m.pct}%</b>${gloss("mastery")}</span><span>今天该复习 <b>${rq.length}</b> 个</span>`;
  }else{
   const rev=pendingReviews(),risk=riskTasks(),alerts=mapAlerts().length;
   foot=`<span>待验收 <b>${rev}</b></span><span>超期 / 停滞 <b>${risk}</b></span><span>里程碑预警 <b>${alerts}</b></span>`;
@@ -1887,9 +1898,9 @@ function PAGE_BRIEF(){
    ?{where:`<b>把控</b>：进度、预警、验收、里程碑一屏看全。`,
      today:`先处理红色预警，再看待验收。`,
      done:`无超期 / 无停滞 / 无待验收。`}
-   :{where:`<b>把控</b>：你的进度与预警（也能看到同伴的）。`,
-     today:`看一眼预警，确认自己的节奏没掉队。`,
-     done:`没有属于你的红色预警。`},
+   :{where:`<b>把控</b>：只看你自己的待办与预警${gloss("carrier")}。`,
+     today:`按「今天三件事」里的顺序处理，先清红色，再看黄色。`,
+     done:`属于你的红灯清零，任务都有下一步。`},
   review:staff
    ?{where:`<b>复盘</b>：月度自评、导师复评、证据留痕。`,
      today:`检查证据是否齐全，缺的先补。`,
@@ -1932,6 +1943,7 @@ function actGo(kind,val){
  if(kind==="queue"){openQueue();return;}
  if(kind==="risk"){setTab("monitor");setTimeout(()=>{const el=document.getElementById("attnSec");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});},90);return;}
  if(kind==="retest"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ if(kind==="task"){const s=String(val||""),i=s.indexOf(".");jumpRef({qgo:"task",qcar:i<0?s:s.slice(0,i),qact:i<0?"":s.slice(i+1)});return;}
 }
 function bindCognitive(){
  document.addEventListener("click",e=>{

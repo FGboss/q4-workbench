@@ -3651,6 +3651,13 @@ function attentionPayload(me) {
       unassigned.has(x.who) || unassigned.has(x.ownerId) || (!x.who && !x.ownerId));
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
   }
+  /* 导师/主管只看「需要他们动作」的事：验收、延期审批、求助、48 小时升级、计划提醒。
+     新人自己该做的超期/停滞/打卡/错题，不进导师队列，避免把新人的活全推给导师。
+     这些事超过 3 / 10 天后会由系统升级成协助，届时才出现在这里。 */
+  if (me && me.role !== "newbie") {
+    data.items = data.items.filter(x => x.role !== "newbie");
+    Object.assign(data, attentionEngine.summarize(data.items, day, now));
+  }
   /* 今日已处理：闭环任务 + 关闭的协助，用于页面「新增 / 已处理」对比 */
   data.counts.resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || [])
     .filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === day).length, 0)
