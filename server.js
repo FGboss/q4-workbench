@@ -507,6 +507,21 @@ function reconcileDoc(doc) {
   const now = Date.now(), today = bjKey(now);
   let changed = false;
   const issues = ((doc.issues && doc.issues.list) || []).filter(x => !x.del);
+  /* 旧版每次扫描都会追加一条「任务再次触发升级」，一晚上能堆 30 多条，
+     把客户档案正文挤没了。这里把重复的系统提示合并成 1 条（保留最新），
+     人工回复原样保留。 */
+  issues.forEach(x => {
+    if (!Array.isArray(x.replies) || x.replies.length < 3) return;
+    const seen = new Set(), keep = [];
+    for (let i = x.replies.length - 1; i >= 0; i--) {
+      const r = x.replies[i];
+      const k = r && r.by === "system" ? String(r.text || "") : "";
+      if (k && seen.has(k)) { changed = true; continue; }
+      if (k) seen.add(k);
+      keep.push(r);
+    }
+    if (keep.length !== x.replies.length) x.replies = keep.reverse();
+  });
   const carriers = (doc.carriers && doc.carriers.list) || [];
   const findAct = (cid, aid) => {
     const c = carriers.filter(x => x.id === cid)[0];
@@ -3852,10 +3867,15 @@ async function runAttentionScan(trigger) {
       const old = DOC.issues.list.find(x => x.key === key && !x.del);
       if (old && (old.status || 0) < 2) return;
       if (old) {
-        /* 任务再次超期/停更：重新开启原协助，保留历史对话，不另起一条 */
+        /* 人工已经处理过（闭环/挂起）的协助不再被系统自动重开，尊重人的判断。 */
+        if (old.closedBy && old.closedBy !== "system") return;
+        /* 任务再次超期/停更：重新开启原协助，保留历史对话，不另起一条。
+           同一件事最多每 24 小时重开一次、累计 5 次，避免每次扫描都刷一条。 */
+        const gap = 24 * 3600e3, last = toMs(old.reopenedAt || old.updatedAt || old.createdAt);
+        if (Date.now() - last < gap || (old.reopened || 0) >= 5) return;
         old.status = 0; old.waitingSince = Date.now();
         old.closedBy = ""; old.releasedBy = ""; old.resolve = "";
-        old.reopened = (old.reopened || 0) + 1; old.escalatedAt = 0; old.updatedAt = Date.now();
+        old.reopened = (old.reopened || 0) + 1; old.reopenedAt = Date.now(); old.escalatedAt = 0; old.updatedAt = Date.now();
         old.replies = old.replies || [];
         old.replies.push({ id: uid(), by: "system", at: Date.now(), text: "任务再次触发升级，系统重新开启该协助。" });
         reopened.push(old); return;
