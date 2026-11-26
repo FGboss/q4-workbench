@@ -1745,8 +1745,12 @@ function buildStaffDailyDigest(day, newbieIds, opts) {
     if (overList.length) openBits.push(`超期 ${overList.length} 项（最久 ${overList[0].over} 天）`);
     const stale3 = staleList.filter(x => x.age >= 3).length;
     if (stale3) openBits.push(`停滞 ≥3 天 ${stale3} 项`);
-    const watch = (overList.length ? overList : staleList).slice(0, 3)
-      .map(x => `${x.v.text}${x.over ? `（超期 ${x.over} 天）` : `（停滞 ${x.age} 天）`}`);
+    /* 每项都带深链：点任务直达任务卡，不用再自己找 */
+    const watch = (overList.length ? overList : staleList).slice(0, 3).map(x => ({
+      label: x.v.text,
+      note: x.over ? `超期 ${x.over} 天` : `停滞 ${x.age} 天`,
+      href: "#tab=plan&task=" + x.v.carId + "." + x.v.id,
+    }));
     return { u, today, openN: open.length, openBits, watch,
       closed24N: closed24.length, avgDays,
       reviewN: reviews.length, answerN: staffIssues.length, waitN: newbieIssues.length,
@@ -1762,11 +1766,11 @@ function buildStaffDailyDigest(day, newbieIds, opts) {
    <div style="font-size:13px;color:#2C3E50">${o.lead ? "只列需要你介入的新人；其余按计划推进。" : "按每位新人列三件事：今天做了什么、还有多少没闭环、近 24 小时闭环用了几天的时长。"}</div>
    <div style="font-size:12.5px;color:#7C8896;margin:5px 0 2px">合计：未闭环 <b>${sum(r => r.openN)}</b> 项 · 今日闭环 <b>${totalClosed}</b> 项 · 需要你动作 <b>${sum(r => r.need)}</b> 项${o.lead && passN ? ` · 其余 <b>${passN}</b> 人按计划推进` : ""}</div>
    ${shown.map(r => `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:11px 13px;margin-top:9px">
-     <div style="font-size:14px;font-weight:700;color:#17558F">${h(r.u.name)}</div>
+     <div style="font-size:14px;font-weight:700;color:#17558F">${appLink("#tab=plan", r.u.name)}</div>
      <div style="margin-top:4px;font-size:12.8px;color:#2C3E50">${h(r.today)}</div>
      <div style="margin-top:3px;font-size:12.8px;color:${r.openN ? "#8C2B1F" : "#274A0F"}">未闭环：${r.openN ? `${r.openN} 项${r.openBits.length ? "（" + r.openBits.join("，") + "）" : ""}` : "无"}${r.closed24N ? `　·　近 24 小时闭环 ${r.closed24N} 项${r.avgDays != null ? `（平均 ${Math.round(r.avgDays * 10) / 10} 天）` : ""}` : ""}</div>
-     ${r.watch.length ? `<div style="margin-top:3px;font-size:12.6px;color:#5C6772">先看：${r.watch.map(h).join("；")}</div>` : ""}
-     <div style="margin-top:3px;font-size:12.6px;color:#7A4C12">需要你：${r.reviewN ? `待验收 ${r.reviewN} 项　` : ""}${r.answerN ? `待答复 ${r.answerN} 条　` : ""}${r.waitN ? `等新人补充 ${r.waitN} 条（已在本人待办，不占你的）` : ""}${!r.need && !r.waitN ? "暂无" : ""}</div>
+     ${r.watch.length ? `<div style="margin-top:3px;font-size:12.6px;color:#5C6772">先看：${r.watch.map(w => `${appLink(w.href, w.label)}（${h(w.note)}）`).join("；")}</div>` : ""}
+     <div style="margin-top:3px;font-size:12.6px;color:#7A4C12">需要你：${r.reviewN ? `${appLink("#tab=plan", "待验收 " + r.reviewN + " 项")}　` : ""}${r.answerN ? `${appLink("#tab=assist", "待答复 " + r.answerN + " 条")}　` : ""}${r.waitN ? `${appLink("#tab=assist", "等新人补充 " + r.waitN + " 条")}（已在本人待办，不占你的）` : ""}${!r.need && !r.waitN ? "暂无" : ""}</div>
    </div>`).join("") || `<div style="color:#3C6B1A;font-size:12.8px">${o.lead ? "今天没有需要介入的新人，按计划推进即可。" : "暂无新人账号"}</div>`}
    <p style="margin-top:10px;color:#5C6772;font-size:12px">口径：按北京时间自然日；未闭环 = 任务/项目未验收通过；闭环时长 = 从创建到验收通过的天数。等新人补充的协助不占你的待办；超过 8 小时仍未回复才升级主管。生成时间：${bjTime(now)}。</p>`;
   return { html, red: rows.filter(r => r.openN && r.openBits.length).length, rows };
@@ -1979,7 +1983,7 @@ function buildWeeklyReport(day, opts) {
     if (S.carriers.some(c => c.who === x.u.id && !(c.actions || []).filter(v => !v.del).length)) mentorAct.push("带他把「有档案无任务」的客户拆出下一步");
     if (!mentorAct.length) mentorAct.push("保持每周一次复盘，确认下周重点");
     return `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:12px 14px;margin-top:10px">
-      <div style="font-size:14.5px;font-weight:700;color:#17558F">${h(x.u.name)} ${lightTag(x.risk.level)}</div>
+      <div style="font-size:14.5px;font-weight:700;color:#17558F">${appLink("#tab=plan", x.u.name)} ${lightTag(x.risk.level)}</div>
       <div style="margin-top:6px;font-size:12.8px;color:#2C3E50"><b>${rl}成果：</b>${ach.length ? ach.slice(0, 4).map(h).join("；") : "无闭环，学习/业务动作较少"}</div>
       <div style="margin-top:4px;font-size:12.5px;color:#5C6772"><b>与上周对比：</b>活跃天数 ${x.s.activeDays} 天 ${arrow(x.s.activeDays, x.p.activeDays)}　·　通关 ${x.s.nodesNew} 个 ${arrow(x.s.nodesNew, x.p.nodesNew)}　·　小测 ${x.s.quizAcc != null ? x.s.quizAcc + "%" : "—"} ${arrow(x.s.quizAcc, x.p.quizAcc)}　·　闭环 ${x.doneIn.length} 项</div>
       ${(x.risk.red.concat(x.risk.yellow)).length ? `<div style="margin-top:4px;font-size:12.8px;color:#8C2B1F"><b>风险：</b>${x.risk.red.concat(x.risk.yellow).slice(0, 3).map(h).join("；")}</div>` : ""}
@@ -3745,6 +3749,8 @@ function attentionPayload(me) {
         due: x.due || "", status: x.status || "" })),
     planConfirm, retests, learning, demote: fbStats.demote || {},
     nodeStuck: newbies.map(u => nodeStuckOf(u.id)).filter(Boolean) });
+  /* 把升级阈值随数据下发：前端「还剩 X 小时升级」直接用这个值，不再和引擎各写一个 8。 */
+  data.escH = attentionEngine.ESCALATE_H;
   if (me && me.role === "newbie") {
     data.items = data.items.filter(x => x.role === "newbie" && x.who === me.id);
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
@@ -3768,7 +3774,7 @@ function attentionPayload(me) {
     /* 协助的第一责任人是直属导师：主管只在超过 8 小时没人接时才看到，
        避免同一条协助在导师和主管两边各挂一个待办（主管看到的还点不进去）。 */
     if (me.role === "lead") {
-      data.items = data.items.filter(x => x.type !== "issue_wait" || (x.waitHours || 0) >= 8);
+      data.items = data.items.filter(x => x.type !== "issue_wait" || (x.waitHours || 0) >= attentionEngine.ESCALATE_H);
     }
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
   }

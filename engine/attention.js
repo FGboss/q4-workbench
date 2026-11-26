@@ -27,6 +27,9 @@ const openTask = v => (v.st || 0) !== 2;
 
 /* 待办等级：red 必须先处理，yellow 观察 */
 const RANK = { red: 0, yellow: 1, green: 2 };
+/* 协助升级阈值：直属导师超过 8 小时没接，才升级到主管。
+   前端「还剩 X 小时升级」、服务端按角色过滤都读这一个值，避免两边写死不同步。 */
+const ESCALATE_H = 8;
 
 /**
  * @param {object} ctx
@@ -186,13 +189,14 @@ function build(ctx) {
     if (st === 0) {
       const since = ms(x.waitingSince || x.createdAt);
       const wait = days(since, now);
+      const waitHours = Math.floor((now - since) / 3600000);
       add({
         type: "issue_wait", role: "staff", level: wait >= 3 ? "red" : "yellow",
         who: staffOf(x.who), ownerId: x.who,
         title: `${x.src === "auto" ? "系统升级" : "求助"}已等 ${wait} 天：${String(x.text || "").slice(0, 40)}`,
         detail: nameOf(x.who),
         ref: { kind: "issue", issueId: x.id }, action: "answer", since,
-        wait, waitHours: Math.floor((now - since) / 3600000),
+        wait, waitHours, escalateInH: Math.max(0, ESCALATE_H - waitHours),
       });
     } else if (st === 1) {
       const since = ms(x.waitingSince || x.updatedAt);
@@ -311,4 +315,4 @@ function summarize(items, day, now) {
   };
 }
 
-module.exports = { build, summarize, openTask };
+module.exports = { build, summarize, openTask, ESCALATE_H };
