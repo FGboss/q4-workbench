@@ -3976,11 +3976,10 @@ async function runAttentionScan(trigger) {
         if (Date.now() - last < gap || (old.reopened || 0) >= 5) return;
         old.status = 0; old.waitingSince = Date.now();
         old.closedBy = ""; old.releasedBy = ""; old.resolve = "";
-        /* escalatedAt 直接记成当前时间：重开本身不立刻升级主管，
-           否则每次重开都会在凌晨补发一封「等 48 小时」邮件（凌晨 3 点那封就是这么来的）。 */
-        old.reopened = (old.reopened || 0) + 1; old.reopenedAt = Date.now(); old.escalatedAt = Date.now(); old.updatedAt = Date.now();
-        old.replies = old.replies || [];
-        old.replies.push({ id: uid(), by: "system", at: Date.now(), text: "任务再次触发升级，系统重新开启该协助。" });
+        /* 重开只改状态，不再追加「任务再次触发升级」系统消息：
+           那条消息没有信息量，一天一条也会把客户档案挤掉；需要知道时看状态标签即可。
+           升级计时从 waitingSince 重新算 48 小时，不会重开即升级（凌晨 3 点那封就是这样来的）。 */
+        old.reopened = (old.reopened || 0) + 1; old.reopenedAt = Date.now(); old.escalatedAt = 0; old.updatedAt = Date.now();
         reopened.push(old); return;
       }
       const x = { id: uid(), key, who: it.ownerId, by: "system", type: "issue", src: "auto",
@@ -3991,14 +3990,17 @@ async function runAttentionScan(trigger) {
       DOC.issues.list.push(x); created.push(x);
     });
   const escalated = [];
+  /* 夜间不升级：不在凌晨打标记，等 08:00 后的下一次扫描再升级并发一封邮件，
+     避免睡一觉起来发现 3 点被系统提醒过。 */
+  const quietNow = inQuietHours();
   DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
     && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.createdAt) >= 48 * 3600e3)
-    .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
+    .forEach(x => { if (quietNow) return; x.escalatedAt = Date.now(); escalated.push(x); });
   /* 新人提交的问题：球在导师这边（status=0）超过 48 小时没处理，同样升级主管。
      球在新人那边（status=1）不升级，避免催错人。 */
   DOC.issues.list.filter(x => !x.del && x.src !== "auto" && (x.status || 0) === 0
     && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.updatedAt || x.createdAt) >= 48 * 3600e3)
-    .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
+    .forEach(x => { if (quietNow) return; x.escalatedAt = Date.now(); escalated.push(x); });
   if (created.length || reopened.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }
   if (created.length) notifyAutoEscalation(
     created.map(x => ({ ownerId: x.who, proj: x.proj, text: x.text })), "mentor");
