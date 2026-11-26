@@ -1212,7 +1212,7 @@ async function openAccounts(){
      <div class="muted" style="font-weight:700">接收内容（按角色固定，无需勾选）</div>
      <div style="margin-top:4px;line-height:1.9">${isNb
        ?`本人：<b>今日小结</b>（每工作日，含进展、卡点、下一步）+ <b>本周周报</b>（每周五，含与上周对比、下周 3 件事）；只统计本人数据。`
-       :`<b>导师/主管日报</b>（今日结论、必须处理的 3 件事、每位新人的进展与风险、待验收清单）+ <b>导师/主管周报</b>（每周五，含每人趋势、团队共性问题、下周带教动作），合并为 1 封；另收新人登录/问题提醒。`}</div>
+       :`<b>导师每日进展</b>（每工作日 1 封：每位新人今天做了什么、未闭环几项/停了多久、近 24 小时闭环用了几天）或 <b>主管团队汇总</b>（只列需要介入的人）+ <b>周报</b>（每周五）；夜间 21:00–08:00 不发事件邮件。`}</div>
      <div class="muted" style="margin-top:8px;font-weight:700">收件范围</div>
      ${isNb?`<div class="muted" style="margin-top:3px">仅本人（固定）：只统计并发送 ${esc(u.name)} 自己的数据，不会收到其他新人的信息。</div>`:
        (u.role==="admin"?`<div class="muted" style="margin-top:3px">超管固定接收全部新人，不参与关系分配。</div>`:
@@ -1598,7 +1598,15 @@ function attBadges(){
 /* 任务定位：直接打开对应客户 + 任务，不用自己翻 */
 function jumpRef(d){
  const kind=d.qgo;
- if(kind==="issue"){setTab("assist");setTimeout(()=>{const el=document.getElementById("issueList");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
+ if(kind==="issue"){
+  const iid=d.qissue||"";
+  ISSUE_FILTER="all";ISSUE_Q="";setTab("assist");
+  setTimeout(()=>{
+   const el=iid?document.getElementById("iss-"+iid):document.getElementById("issueList");
+   if(el){el.scrollIntoView({behavior:"smooth",block:"center"});
+    if(iid){el.classList.add("hl");setTimeout(()=>el.classList.remove("hl"),2600);}}
+  },350);
+  return;}
  if(kind==="coach"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox")||document.getElementById("drillBlk");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
  if(kind==="plan"||kind==="carriers"){
   setTab("plan");
@@ -1637,7 +1645,8 @@ function qRow(it){
  if(it.type==="plan_unconfirmed"&&isStaff()) ops.push(`<button class="btn sm" data-qplan="${esc(it.who)}">提醒新人确认</button>`);
  if(it.type==="node_stuck"&&it.ref&&it.ref.nodeId) ops.push(`<button class="btn sm" data-qnode="${esc(it.ref.nodeId)}">看节点</button>`);
  const go=it.action==="followups"?"carriers":it.type==="plan_unconfirmed"?"plan":it.action==="retest"||it.action==="learn"||it.action==="drill"?"coach":it.ref.kind==="issue"?"issue":"task";
- if(it.type!=="node_stuck")ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}">${it.type==="drill_due"||it.type==="drill_trigger"?"登记演练":"去处理"}</button>`);
+ const goLab=it.type==="drill_due"||it.type==="drill_trigger"?"登记演练":it.type==="issue_wait"?"去回复":it.type==="issue_reply"?"去补充":it.ref.kind==="issue"?"去处理":"去处理";
+ if(it.type!=="node_stuck")ops.push(`<button class="btn sm gh" data-qgo="${go}" data-qcar="${esc(it.ref.carrierId||"")}" data-qact="${esc(it.ref.actionId||"")}" data-qissue="${esc(it.ref.issueId||"")}">${goLab}</button>`);
  if(isStaff())ops.push(`<button class="mini" data-qfb="${esc(it.type)}" title="这类提醒对我没用：连续标记后会降低同类排序">不准</button>`);
  return `<div class="qRow ${lv}"><div class="qt">
    <div class="qtt">${it.level==="red"?'<span class="tag no" style="margin-right:6px">红</span>':""}${esc(it.title)}</div>
@@ -1784,13 +1793,14 @@ function threeThings(){
   /* 和导师端同一套逻辑：先看「真正该你处理的事」，不用自己翻。
      顺序：超期 / 停滞 → 加练 → 错题复练 → 节点卡住 → 久未学习 → 新任务 → 计划确认 */
   const mine=A.filter(x=>x.role==="newbie"&&x.who===WHO);
-  const pri={overdue:0,stale:1,drill_trigger:2,retest:3,node_stuck:4,drill_due:5,learning_idle:6,new_task:7,plan_unconfirmed:8};
+  const pri={overdue:0,stale:1,issue_reply:2,drill_trigger:3,retest:4,node_stuck:5,drill_due:6,learning_idle:7,new_task:8,plan_unconfirmed:9};
   const rank=t=>pri[t]==null?50:pri[t];
   const desc=it=>{
    const r=it.ref||{};
    if(it.type==="retest")return{btn:"去复练",act:"retest"};
    if(it.type==="plan_unconfirmed")return{btn:"去确认",act:"tab:plan"};
    if(it.type==="node_stuck"&&r.nodeId)return{btn:"看节点",act:"node:"+r.nodeId};
+   if(r.kind==="issue"&&r.issueId)return{btn:"去补充",act:"issue:"+r.issueId};
    if(r.kind==="task"&&r.carrierId)return{btn:(it.type==="overdue"||it.type==="stale")?"去处理":"去看任务",act:"task:"+r.carrierId+"."+(r.actionId||"")};
    if(it.type==="drill_trigger"||it.type==="drill_due")return{btn:"去演练",act:"tab:coach"};
    if(it.type==="learning_idle")return{btn:"去学习",act:"tab:coach"};
@@ -1944,6 +1954,7 @@ function actGo(kind,val){
  if(kind==="risk"){setTab("monitor");setTimeout(()=>{const el=document.getElementById("attnSec");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});},90);return;}
  if(kind==="retest"){setTab("coach");setTimeout(()=>{const el=document.getElementById("retestBox");if(el)el.scrollIntoView({behavior:"smooth",block:"center"});},90);return;}
  if(kind==="task"){const s=String(val||""),i=s.indexOf(".");jumpRef({qgo:"task",qcar:i<0?s:s.slice(0,i),qact:i<0?"":s.slice(i+1)});return;}
+ if(kind==="issue"){jumpRef({qgo:"issue",qissue:String(val||"")});return;}
 }
 function bindCognitive(){
  document.addEventListener("click",e=>{
@@ -4006,7 +4017,7 @@ async function renderMailBox(){
  el.innerHTML=`<div class="row" style="justify-content:space-between;gap:10px;flex-wrap:wrap">
    <div><h3>邮件通知 ${on?'<span class="tag ok">已启用</span>':'<span class="tag no">未启用</span>'}</h3>
      <div class="muted" style="margin-top:5px">通道：<b>${s.channel==="github-actions"?"GitHub Actions + QQ 邮箱（免费，可按人分邮）":s.channel==="smtp"?"QQ 邮箱 SMTP（"+esc(s.smtpUser||"")+"）":s.channel==="wecom"?"企业微信邮件 API":s.channel==="brevo"?"Brevo 邮件 API":s.channel==="resend"?"Resend":"未配置"}</b>　·　默认收件人：<b>${(s.to||[]).map(esc).join("、")||"—"}</b>　·　最近发送：${s.lastSent?fmt(s.lastSent):"暂无"}</div>
-     <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师/主管发「导师日报」（今日结论、必须处理的 3 件事、每位新人进展与风险、待验收清单），给新人发「今日小结」（进展、卡点、下一步）；<b>每周五 ${sch.hour}:00</b> 加发周报（导师版含趋势与带教动作，新人版含与上周对比与下周 3 件事）。</div>
+     <div class="muted" style="margin-top:3px">发送规则（按角色固定，无需勾选）：<b>工作日 ${sch.hour}:00</b> 给导师发「每位新人今日进展 + 未闭环 + 闭环时长」，给主管发「团队汇总（只列需要介入的人）」；<b>每周五 ${sch.hour}:00</b> 加发周报。夜间 <b>21:00–08:00</b> 不发事件邮件，统一并入次日报。</div>
      <div style="margin-top:6px">${state}${ts.isWeeklyDay&&!ts.done?' <span class="tag wt">今天周五，会加发周报</span>':""}</div>
      ${guard}
      ${on?"":`<div class="tag wt" style="margin-top:6px">只需在 GitHub 仓库 Secrets 配 SMTP_USER / SMTP_PASS / RELAY_TOKEN 即启用（中继触发默认复用服务端已有 GH_TOKEN；若提示权限不足，再在 Render 加 GH_DISPATCH_TOKEN）；现在事件会记录但不发信</div>`}</div>
@@ -4319,11 +4330,13 @@ function renderDuty(){
  if(!isStaff()){sec.classList.add("hide");return;}
  sec.classList.remove("hide");
  const now=nowT();
- const I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue");
- const open=I.filter(x=>(x.status||0)<2);
- /* 只把「还没有导师回复」的放进必回队列；已回复的球在新人那边 */
- const queue=open.filter(x=>!issueFirstStaffReply(x)).map(x=>{
-   const w=now-(x.createdAt||now);
+ /* 和待办队列同一口径：导师/主管只看自己名下新人的问题，避免串组看到别人的。 */
+ const I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&(MY_ROLE==="admin"||NEWCOMERS.indexOf(x.who)>=0));
+ const open=I.filter(x=>(x.status||0)<2);            /* 真未闭环：待导师回 + 等新人补充 */
+ const reopened=I.filter(x=>(x.status||0)===0);      /* 球在导师/主管：才进必回队列 */
+ const waitingNewbie=I.filter(x=>(x.status||0)===1); /* 球在新人：不该出现在导师/主管待办 */
+ const queue=reopened.map(x=>{
+   const w=now-(x.waitingSince||x.createdAt||now);
    return {x,w,lv:dutyLv(w)};}).sort((a,b)=>b.w-a.w);
  const over2=queue.filter(q=>q.w>TWO_H).length, over8=queue.filter(q=>q.w>EIGHT_H).length;
  const resp=I.map(x=>{const r=issueFirstStaffReply(x);return r?((r.at||0)-(x.createdAt||0)):null;}).filter(v=>v!=null);
@@ -4337,6 +4350,7 @@ function renderDuty(){
   dutyCard(queue.length,"待必回（未答复）",queue.length?"":"ok"),
   dutyCard(over2,"超 2 小时未回",over2?"warn":"ok"),
   dutyCard(over8,"超 8 小时 · 升级主管",over8?"err":"ok"),
+  dutyCard(waitingNewbie.length,"等新人补充（不占你待办）",waitingNewbie.length?"warn":"ok"),
   dutyCard(avg==null?"—":fmtDur(avg),"平均首次响应",avg==null?"":(avg<=TWO_H?"ok":avg<=EIGHT_H?"warn":"err")),
   dutyCard(rate==null?"—":rate+"%","2 小时内响应率",rate==null?"":(rate>=80?"ok":rate>=50?"warn":"err")),
   dutyCard(I.length+" / "+closed+" / "+released,"问题 / 已闭环 / 已解除",""),
@@ -4356,6 +4370,7 @@ function renderDuty(){
          <div class="muted" style="margin-top:4px">${nl(o.x.text)}</div>
         </div>
         <div class="row" style="gap:6px">
+         <button class="btn sm gh" data-qgo="issue" data-qissue="${o.x.id}">去处理</button>
          <input data-drun="${o.x.id}" placeholder="导师/主管回复…" style="min-width:150px;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.2px">
          <button class="btn sm" data-drrep="${o.x.id}">回复</button>
         </div>

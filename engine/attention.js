@@ -178,17 +178,33 @@ function build(ctx) {
     });
   });
 
-  /* ---------- 3. 协助：只有「等导师/主管回复」才算待办 ---------- */
+  /* ---------- 3. 协助：球在哪边，就进谁的待办 ----------
+     status 0 = 等导师/主管回复 → 导师的待办（主管 8 小时后才介入）
+     status 1 = 导师已回复，等新人补充 → 新人的待办（以前这条漏了，新人永远看不到） */
   (ctx.issues || []).forEach(x => {
-    if ((x.status || 0) !== 0) return;          // 1=已回复等新人，2=已闭环
-    const wait = days(ms(x.waitingSince || x.createdAt), now);
-    add({
-      type: "issue_wait", role: "staff", level: wait >= 3 ? "red" : "yellow",
-      who: staffOf(x.who), ownerId: x.who,
-      title: `${x.src === "auto" ? "系统升级" : "求助"}已等 ${wait} 天：${String(x.text || "").slice(0, 40)}`,
-      detail: nameOf(x.who),
-      ref: { kind: "issue", issueId: x.id }, action: "answer", since: ms(x.createdAt), wait,
-    });
+    const st = x.status || 0;
+    if (st === 0) {
+      const since = ms(x.waitingSince || x.createdAt);
+      const wait = days(since, now);
+      add({
+        type: "issue_wait", role: "staff", level: wait >= 3 ? "red" : "yellow",
+        who: staffOf(x.who), ownerId: x.who,
+        title: `${x.src === "auto" ? "系统升级" : "求助"}已等 ${wait} 天：${String(x.text || "").slice(0, 40)}`,
+        detail: nameOf(x.who),
+        ref: { kind: "issue", issueId: x.id }, action: "answer", since,
+        wait, waitHours: Math.floor((now - since) / 3600000),
+      });
+    } else if (st === 1) {
+      const since = ms(x.waitingSince || x.updatedAt);
+      const wait = days(since, now);
+      add({
+        type: "issue_reply", role: "newbie", level: wait >= 3 ? "red" : "yellow",
+        who: x.who, ownerId: x.who,
+        title: `导师/主管已回复，等你补充：${String(x.text || "").slice(0, 36)}`,
+        detail: `已等 ${wait} 天 · 补充最新进展或确认已解决，协助才会闭环`,
+        ref: { kind: "issue", issueId: x.id }, action: "answer_issue", since, wait,
+      });
+    }
   });
 
   /* 先算出「已登记但还没做」的加练：同一人的加练待办只保留一条，

@@ -823,6 +823,16 @@ const bjHm = t => { const d = bj(t); return String(d.getUTCHours()).padStart(2, 
 const dayAdd = (day, n) => { const d = new Date(day + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const dayRange = (end, n) => { const a = []; for (let i = n - 1; i >= 0; i--) a.push(dayAdd(end, -i)); return a; };
 const isDay = (t, day) => { const ms = toMs(t); return !!ms && bjKey(ms) === day; };
+/* 自动事件邮件只在 08:00–21:00（北京时间）发；夜间不打扰，内容并入次日日报。
+   之前 03:38 给主管补发「任务升级」就是夜间触发的。 */
+const MAIL_QUIET_START = +(process.env.MAIL_QUIET_START || 21);
+const MAIL_QUIET_END = +(process.env.MAIL_QUIET_END || 8);
+function inQuietHours(t) {
+  const h = bj(t || Date.now()).getUTCHours();
+  return MAIL_QUIET_START > MAIL_QUIET_END
+    ? (h >= MAIL_QUIET_START || h < MAIL_QUIET_END)
+    : (h >= MAIL_QUIET_START && h < MAIL_QUIET_END);
+}
 /* 近 7 天 / 近 14 天判断用：返回某天与今天相差的自然日数 */
 const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000);
 const h = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1215,6 +1225,7 @@ function recordLogin(u) {
    一次保存里同一人的多条合并成一封，绝不群发。 */
 function notifyNewIssues(items) {
   if (!MAIL_ON || !items.length) return;
+  if (inQuietHours()) { console.log("[mail] 夜间静默，跳过新问题提醒 " + items.length + " 条"); return; }
   const byWho = {};
   items.forEach(x => { (byWho[x.who] = byWho[x.who] || []).push(x); });
   Object.keys(byWho).forEach(who => {
@@ -1691,6 +1702,75 @@ function buildNewbieDaily(u, day, S0) {
   </div>`;
 }
 
+
+/* ---------- 导师 / 主管每日进展（自动邮件） ----------
+   用户反馈：原来的完整日报信息太多、看不懂。这里只讲三件事：
+     1) 今天做了什么；2) 还有多少没闭环、停了多久；3) 近 24 小时闭环用了几天的时长。
+   每位新人一段，最后一行是「需要你做什么」。 */
+function buildStaffDailyDigest(day, newbieIds, opts) {
+  const o = opts || {};
+  const theDay = day || bjKey(Date.now());
+  const S = snapshot();
+  const all = (USERS.users || []).filter(u => u.role === "newbie" && u.active !== false);
+  const list = newbieIds && newbieIds.length ? all.filter(u => newbieIds.indexOf(u.id) >= 0) : all;
+  const now = Date.now(), since24 = now - 24 * 3600e3;
+  const rows = list.map(u => {
+    const acts = tasksOf(u, S);
+    const open = acts.filter(taskOpen);
+    const closedToday = acts.filter(v => (v.st || 0) === 2 && bjKey(v.cfmAt || v.updatedAt) === theDay);
+    const closed24 = acts.filter(v => (v.st || 0) === 2 && toMs(v.cfmAt) >= since24);
+    const avgDays = closed24.length
+      ? closed24.reduce((n, v) => n + Math.max(0, (toMs(v.cfmAt) - toMs(v.createdAt || v.updatedAt)) / 86400e3), 0) / closed24.length
+      : null;
+    const overList = open.map(v => ({ v, over: taskOverDays(v, theDay) })).filter(x => x.over >= 1)
+      .sort((a, b) => b.over - a.over);
+    const staleList = open.filter(v => !overList.some(x => x.v === v))
+      .map(v => ({ v, age: waitDays(v.updatedAt || v.createdAt) })).sort((a, b) => b.age - a.age);
+    const logs = [];
+    acts.forEach(v => (v.log || []).filter(l => !l.del && l.at && bjKey(l.at) === theDay && l.by === u.id)
+      .forEach(l => logs.push(v.text + "：" + String(l.text || "").slice(0, 36))));
+    const reviews = open.filter(v => v.cfm === 3);
+    const openIssues = (S.issues || []).filter(x => x.who === u.id && (x.status || 0) < 2);
+    const staffIssues = openIssues.filter(x => (x.status || 0) === 0);
+    const newbieIssues = openIssues.filter(x => (x.status || 0) === 1);
+    const newIssues = (S.issues || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
+    const drills = (S.drills || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
+    const bits = [];
+    if (closedToday.length) bits.push(`闭环 ${closedToday.length} 项（${closedToday.slice(0, 2).map(v => v.text).join("、")}）`);
+    if (logs.length) bits.push(`更新 ${logs.length} 条进展`);
+    if (drills) bits.push(`演练 ${drills} 次`);
+    if (newIssues) bits.push(`新提问题 ${newIssues} 条`);
+    const today = bits.length ? "今天" + bits.join("、") + "。" : "今天没有新的进展记录。";
+    const openBits = [];
+    if (overList.length) openBits.push(`超期 ${overList.length} 项（最久 ${overList[0].over} 天）`);
+    const stale3 = staleList.filter(x => x.age >= 3).length;
+    if (stale3) openBits.push(`停滞 ≥3 天 ${stale3} 项`);
+    const watch = (overList.length ? overList : staleList).slice(0, 3)
+      .map(x => `${x.v.text}${x.over ? `（超期 ${x.over} 天）` : `（停滞 ${x.age} 天）`}`);
+    return { u, today, openN: open.length, openBits, watch,
+      closed24N: closed24.length, avgDays,
+      reviewN: reviews.length, answerN: staffIssues.length, waitN: newbieIssues.length,
+      need: reviews.length + staffIssues.length };
+  });
+  const sum = f => rows.reduce((n, r) => n + f(r), 0);
+  const totalClosed = rows.reduce((n, r) => n + r.closed24N, 0);
+  /* 主管只看「团队合计 + 需要介入的人」，不再把每位新人的明细重复发一遍；
+     导师看自己名下每位新人的完整明细。 */
+  const shown = o.lead ? rows.filter(r => r.openBits.length || r.need || r.waitN >= 1) : rows;
+  const passN = rows.length - shown.length;
+  const html = `<p style="margin:0 0 8px;font-size:15px;font-weight:700;color:#0B3A63">${theDay} 新人每日进展${o.lead ? "（团队汇总）" : ""}</p>
+   <div style="font-size:13px;color:#2C3E50">${o.lead ? "只列需要你介入的新人；其余按计划推进。" : "按每位新人列三件事：今天做了什么、还有多少没闭环、近 24 小时闭环用了几天的时长。"}</div>
+   <div style="font-size:12.5px;color:#7C8896;margin:5px 0 2px">合计：未闭环 <b>${sum(r => r.openN)}</b> 项 · 今日闭环 <b>${totalClosed}</b> 项 · 需要你动作 <b>${sum(r => r.need)}</b> 项${o.lead && passN ? ` · 其余 <b>${passN}</b> 人按计划推进` : ""}</div>
+   ${shown.map(r => `<div style="border:1px solid #E3E8EE;border-radius:10px;padding:11px 13px;margin-top:9px">
+     <div style="font-size:14px;font-weight:700;color:#17558F">${h(r.u.name)}</div>
+     <div style="margin-top:4px;font-size:12.8px;color:#2C3E50">${h(r.today)}</div>
+     <div style="margin-top:3px;font-size:12.8px;color:${r.openN ? "#8C2B1F" : "#274A0F"}">未闭环：${r.openN ? `${r.openN} 项${r.openBits.length ? "（" + r.openBits.join("，") + "）" : ""}` : "无"}${r.closed24N ? `　·　近 24 小时闭环 ${r.closed24N} 项${r.avgDays != null ? `（平均 ${Math.round(r.avgDays * 10) / 10} 天）` : ""}` : ""}</div>
+     ${r.watch.length ? `<div style="margin-top:3px;font-size:12.6px;color:#5C6772">先看：${r.watch.map(h).join("；")}</div>` : ""}
+     <div style="margin-top:3px;font-size:12.6px;color:#7A4C12">需要你：${r.reviewN ? `待验收 ${r.reviewN} 项　` : ""}${r.answerN ? `待答复 ${r.answerN} 条　` : ""}${r.waitN ? `等新人补充 ${r.waitN} 条（已在本人待办，不占你的）` : ""}${!r.need && !r.waitN ? "暂无" : ""}</div>
+   </div>`).join("") || `<div style="color:#3C6B1A;font-size:12.8px">${o.lead ? "今天没有需要介入的新人，按计划推进即可。" : "暂无新人账号"}</div>`}
+   <p style="margin-top:10px;color:#5C6772;font-size:12px">口径：按北京时间自然日；未闭环 = 任务/项目未验收通过；闭环时长 = 从创建到验收通过的天数。等新人补充的协助不占你的待办；超过 8 小时仍未回复才升级主管。生成时间：${bjTime(now)}。</p>`;
+  return { html, red: rows.filter(r => r.openN && r.openBits.length).length, rows };
+}
 
 /* ---------- 导师/主管日报 ---------- */
 function buildDailyReport(day, opts) {
@@ -2233,8 +2313,21 @@ function buildDigestParts(theDay, target, mode) {
   const allNewbies = (USERS.users || []).filter(u => u.role === "newbie" && u.active);
   const newbies = ids === null ? allNewbies : allNewbies.filter(u => ids.indexOf(u.id) >= 0);
   const parts = [];
-  /* 自动邮件：只发变化 + 现在要处理的事（+ 周五周报）。
+  /* 自动邮件：
+     · 导师 / 主管 → 每个工作日固定一封「每位新人今日进展 + 未闭环 + 闭环时长」，
+       不再只在有变化时发，也不再分开发（原来导师、主管各收一套重复内容）；
+     · 新人 → 保留原来的「只发变化 + 待办」。
      完整日报/个人汇总/风险预警仍保留给「邮件中心」手动预览和补发。 */
+  if (mode === "auto" && !isNewbie && ["daily", "personal", "risk"].some(t => target.types.has(t))) {
+    const dg = buildStaffDailyDigest(theDay, ids === null ? undefined : ids, { lead: target.role === "lead" });
+    parts.push({ key: "daily", label: "新人每日进展（未闭环 / 闭环时长）", short: "每日进展", html: dg.html });
+    parts.red = dg.red;
+    if (target.types.has("weekly")) {
+      const r = buildWeeklyReport(theDay, { newbieIds: ids === null ? undefined : ids });
+      parts.push({ key: "weekly", label: `周报 ${r.range.start}～${r.range.end}`, short: "周报", html: r.html });
+    }
+    return parts;
+  }
   if (mode === "auto") {
     const hasDaily = ["daily", "personal", "risk"].some(t => target.types.has(t));
     if (hasDaily) {
@@ -2328,8 +2421,8 @@ async function sendDigestAll(day, opts) {
   const note = onlyTypes
     ? `手动补发 · ${withWeekly ? "本周周报" : "指定内容"} · ${theDay}。`
     : mode === "auto"
-      ? `自动发送 · 只讲上次邮件之后的变化 + 现在要处理的事；没有变化不发${withWeekly ? "（周五附本周周报）" : ""}。`
-      : `手动发送 · 工作日 ${cfg.reportHour}:00 自动只发变化；本封为完整报表。`;
+      ? `自动发送 · 工作日 ${cfg.reportHour}:00 给导师/主管一封「每位新人今日进展 + 未闭环 + 闭环时长」；新人只发变化与待办${withWeekly ? "；周五附本周周报" : ""}。`
+      : `手动发送 · 工作日 ${cfg.reportHour}:00 自动发送；本封为完整报表。`;
   const onlyUser = onlyTo ? (USERS.users || []).find(u => String(u.email || "").toLowerCase() === onlyTo) : null;
   const onlyRole = onlyUser ? onlyUser.role : "staff";
   const onlyIds = onlyUser && onlyUser.role === "newbie" ? [onlyUser.id] : null;
@@ -3334,7 +3427,7 @@ app.post("/api/mail_test", async (req, res) => {
   if (!to.length) return res.status(400).json({ ok: false, msg: "你的账号还没填邮箱，无法给自己发测试邮件（也可以手动填一个收件邮箱）" });
   const r = await sendMail("【测试】Q4 工作台邮件通知链路已连通",
     `<p>这是一封测试邮件。</p><p>收到它说明邮件通道（QQ 邮箱 SMTP / Resend）、发件人、收件人都已配置正确。</p>
-     <p style="color:#5C6772;font-size:13px">后续工作日 ${getMailCfg().reportHour}:00 自动发送「上次邮件之后的变化 + 现在要处理的事」，没有变化不发；周五附本周周报。每项都带直达链接。</p>`,
+     <p style="color:#5C6772;font-size:13px">后续工作日 ${getMailCfg().reportHour}:00 给导师/主管一封「每位新人今日进展 + 未闭环 + 闭环时长」；夜间 21:00–08:00 不发事件邮件；周五附本周周报。</p>`,
     "测试邮件 · 手动触发", { to, kind: "test", trigger: "manual" });
   res.status(r.ok ? 200 : 400).json(r);
 });
@@ -3617,7 +3710,8 @@ function attentionPayload(me) {
   });
 
   const issues = (S.issues || []).map(x => ({ id: x.id, who: x.who, text: x.text || "",
-    status: x.status || 0, createdAt: toMs(x.createdAt), updatedAt: toMs(x.updatedAt), src: x.src || "" }));
+    status: x.status || 0, createdAt: toMs(x.createdAt), updatedAt: toMs(x.updatedAt),
+    waitingSince: toMs(x.waitingSince), src: x.src || "" }));
 
   const learning = {}, retests = {};
   newbies.forEach(u => {
@@ -3671,6 +3765,11 @@ function attentionPayload(me) {
      这些事超过 3 / 10 天后会由系统升级成协助，届时才出现在这里。 */
   if (me && me.role !== "newbie") {
     data.items = data.items.filter(x => x.role !== "newbie");
+    /* 协助的第一责任人是直属导师：主管只在超过 8 小时没人接时才看到，
+       避免同一条协助在导师和主管两边各挂一个待办（主管看到的还点不进去）。 */
+    if (me.role === "lead") {
+      data.items = data.items.filter(x => x.type !== "issue_wait" || (x.waitHours || 0) >= 8);
+    }
     Object.assign(data, attentionEngine.summarize(data.items, day, now));
   }
   /* 今日已处理：闭环任务 + 关闭的协助，用于页面「新增 / 已处理」对比 */
@@ -3823,6 +3922,8 @@ app.get("/api/recognition", (req, res) => {
    12 小时内也不会把同样的邮件再发一遍。 */
 function notifyAutoEscalation(items, stage) {
   if (!MAIL_ON || !items.length) return;
+  /* 夜间不发事件邮件：等第二天 08:00 后的日报统一说明，不再凌晨打扰。 */
+  if (inQuietHours()) { console.log("[mail] 夜间静默，跳过升级邮件 " + items.length + " 条"); return; }
   const toLead = stage === "lead";
   const groups = new Map();
   const adminTo = mailAdmin();
@@ -3875,7 +3976,9 @@ async function runAttentionScan(trigger) {
         if (Date.now() - last < gap || (old.reopened || 0) >= 5) return;
         old.status = 0; old.waitingSince = Date.now();
         old.closedBy = ""; old.releasedBy = ""; old.resolve = "";
-        old.reopened = (old.reopened || 0) + 1; old.reopenedAt = Date.now(); old.escalatedAt = 0; old.updatedAt = Date.now();
+        /* escalatedAt 直接记成当前时间：重开本身不立刻升级主管，
+           否则每次重开都会在凌晨补发一封「等 48 小时」邮件（凌晨 3 点那封就是这么来的）。 */
+        old.reopened = (old.reopened || 0) + 1; old.reopenedAt = Date.now(); old.escalatedAt = Date.now(); old.updatedAt = Date.now();
         old.replies = old.replies || [];
         old.replies.push({ id: uid(), by: "system", at: Date.now(), text: "任务再次触发升级，系统重新开启该协助。" });
         reopened.push(old); return;
@@ -3889,7 +3992,7 @@ async function runAttentionScan(trigger) {
     });
   const escalated = [];
   DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
-    && !x.escalatedAt && Date.now() - toMs(x.createdAt) >= 48 * 3600e3)
+    && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.createdAt) >= 48 * 3600e3)
     .forEach(x => { x.escalatedAt = Date.now(); escalated.push(x); });
   /* 新人提交的问题：球在导师这边（status=0）超过 48 小时没处理，同样升级主管。
      球在新人那边（status=1）不升级，避免催错人。 */
@@ -3974,7 +4077,7 @@ app.get("/api/mail_preview", (req, res) => {
     if (!parts.length) return res.json({ ok: true, empty: true, day: day0, subject: "无变化，不发", html: mailShell("无变化，不发", "<p>上次邮件之后没有新变化，也没有需要处理的待办。按规则今天不会发送。</p>", "自动邮件预览") });
     const subject = digestSubject(day0, parts);
     return res.json({ ok: true, day: day0, subject, types: parts.map(p => p.key), labels: parts.map(p => p.label),
-      html: mailShell(subject, renderDigest(parts), "自动邮件预览 · 只发变化 + 待办（不会真的发送）") });
+      html: mailShell(subject, renderDigest(parts), "自动邮件预览（不会真的发送）") });
   }
   if (!MAIL_TYPE_NAME[type]) return res.status(400).json({ ok: false, msg: "未知的邮件类型" });
   const day = day0;
