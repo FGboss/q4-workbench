@@ -1754,6 +1754,11 @@ function buildStaffDailyDigest(day, newbieIds, opts) {
     const openIssues = (S.issues || []).filter(x => x.who === u.id && issueOpen(x));
     const staffIssues = openIssues.filter(x => ((Number(x.status)||0) === ISSUE_ST.WAIT_STAFF));
     const newbieIssues = openIssues.filter(x => ((Number(x.status)||0) === ISSUE_ST.WAIT_NEWBIE));
+    /* 已升级到主管的协助（超过 8 小时没接）——只有这些才需要主管本人处理 */
+    const escalated = staffIssues
+      .map(x => ({ x, wh: Math.floor((now - toMs(x.waitingSince || x.createdAt)) / 3600000) }))
+      .filter(o => o.wh >= ESCALATE_H).sort((a, b) => b.wh - a.wh);
+    const over3 = overList.filter(o => o.over >= 3);
     const newIssues = (S.issues || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
     const drills = (S.drills || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
     const bits = [];
@@ -1775,14 +1780,31 @@ function buildStaffDailyDigest(day, newbieIds, opts) {
     return { u, today, openN: open.length, openBits, watch,
       closed24N: closed24.length, avgDays,
       reviewN: reviews.length, answerN: staffIssues.length, waitN: newbieIssues.length,
-      need: reviews.length + staffIssues.length };
+      need: reviews.length + staffIssues.length, escalated, over3 };
   });
   const sum = f => rows.reduce((n, r) => n + f(r), 0);
   const totalClosed = rows.reduce((n, r) => n + r.closed24N, 0);
   /* 主管只看「团队合计 + 需要介入的人」，不再把每位新人的明细重复发一遍；
      导师看自己名下每位新人的完整明细。 */
-  const shown = o.lead ? rows.filter(r => r.openBits.length || r.need || r.waitN >= 1) : rows;
-  const passN = rows.length - shown.length;
+  /* 主管版：只讲「团队合计 + 已升级/严重超期，需要你拍板的人」，不讲每日明细，
+     和导师版彻底分开，避免两个人收到几乎一样的两封。 */
+  if (o.lead) {
+    const needRows = rows.filter(r => r.escalated.length || r.over3.length);
+    const escN = rows.reduce((n, r) => n + r.escalated.length, 0), o3N = rows.reduce((n, r) => n + r.over3.length, 0);
+    const leadHtml = `<p style="margin:0 0 8px;font-size:15px;font-weight:700;color:#0B3A63">${theDay} 团队进展（主管）</p>
+   <div style="font-size:13px;color:#2C3E50">只列需要你介入的异常；每位新人的日常明细已发给各自导师。</div>
+   <div style="font-size:12.5px;color:#7C8896;margin:5px 0 2px">团队合计：未闭环 <b>${sum(r => r.openN)}</b> 项 · 今日闭环 <b>${totalClosed}</b> 项 · 已升级协助 <b>${escN}</b> 条 · 超期 ≥3 天 <b>${o3N}</b> 项</div>
+   ${needRows.map(r => `<div style="border:1px solid #EAD9BC;background:#FBF1E1;border-radius:10px;padding:11px 13px;margin-top:9px">
+     <div style="font-size:14px;font-weight:700;color:#17558F">${appLink("#tab=plan", r.u.name)}</div>
+     ${r.escalated.length ? `<div style="margin-top:4px;font-size:12.8px;color:#8C2B1F">已升级协助 ${r.escalated.length} 条（最久已等 ${r.escalated[0].wh} 小时，直属导师未回复）：${r.escalated.slice(0, 2).map(e => appLink("#tab=assist&issue=" + e.x.id, String(e.x.text || "").replace(/^【[^】]*】/, "").slice(0, 26))).join("；")}</div>` : ""}
+     ${r.over3.length ? `<div style="margin-top:3px;font-size:12.8px;color:#7A4C12">超期 ≥3 天任务 ${r.over3.length} 项${r.over3[0] ? `（最久 ${r.over3[0].over} 天）` : ""}</div>` : ""}
+   </div>`).join("") || '<div style="color:#3C6B1A;font-size:12.8px">今天没有需要主管介入的事项，按计划推进即可。</div>'}
+   <div style="margin-top:9px;font-size:12.6px;color:#5C6772">每人概览：${rows.map(r => `${appLink("#tab=plan", r.u.name)} 未闭环 ${r.openN} / 今日闭环 ${r.closed24N}`).join("　·　") || "暂无新人账号"}</div>
+   <p style="margin-top:10px;color:#5C6772;font-size:12px">口径：未闭环 = 任务/项目未验收通过；已升级协助 = 直属导师超过 ${ESCALATE_H} 小时未回复、按规则移交主管的协助。每月与每周趋势见周报。生成时间：${bjTime(now)}。</p>`;
+    return { html: leadHtml, red: needRows.length, rows };
+  }
+  const shown = rows;
+  const passN = 0;
   const html = `<p style="margin:0 0 8px;font-size:15px;font-weight:700;color:#0B3A63">${theDay} 新人每日进展${o.lead ? "（团队汇总）" : ""}</p>
    <div style="font-size:13px;color:#2C3E50">${o.lead ? "只列需要你介入的新人；其余按计划推进。" : "按每位新人列三件事：今天做了什么、还有多少没闭环、近 24 小时闭环用了几天的时长。"}</div>
    <div style="font-size:12.5px;color:#7C8896;margin:5px 0 2px">合计：未闭环 <b>${sum(r => r.openN)}</b> 项 · 今日闭环 <b>${totalClosed}</b> 项 · 需要你动作 <b>${sum(r => r.need)}</b> 项${o.lead && passN ? ` · 其余 <b>${passN}</b> 人按计划推进` : ""}</div>
@@ -2344,8 +2366,10 @@ function buildDigestParts(theDay, target, mode) {
      · 新人 → 保留原来的「只发变化 + 待办」。
      完整日报/个人汇总/风险预警仍保留给「邮件中心」手动预览和补发。 */
   if (mode === "auto" && !isNewbie && ["daily", "personal", "risk"].some(t => target.types.has(t))) {
-    const dg = buildStaffDailyDigest(theDay, ids === null ? undefined : ids, { lead: target.role === "lead" });
-    parts.push({ key: "daily", label: "新人每日进展（未闭环 / 闭环时长）", short: "每日进展", html: dg.html });
+    const isLead = target.role === "lead";
+    const dg = buildStaffDailyDigest(theDay, ids === null ? undefined : ids, { lead: isLead });
+    parts.push({ key: "daily", label: isLead ? "团队进展（主管）" : "新人每日进展（未闭环 / 闭环时长）",
+      short: isLead ? "团队进展" : "每日进展", html: dg.html });
     parts.red = dg.red;
     if (target.types.has("weekly")) {
       const r = buildWeeklyReport(theDay, { newbieIds: ids === null ? undefined : ids });

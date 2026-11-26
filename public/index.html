@@ -2695,23 +2695,23 @@ function renderAssist(){
      ${x.card?'<span class="tag ok" style="margin-left:6px">已沉淀卡片</span>':""}
      ${wish&&x.priv?'<span class="tag gy" style="margin-left:6px">仅导师可见</span>':""}
      ${wish?"":`<span class="tag gy" style="margin-left:6px">${esc(x.cat||"")}</span>`}</div>
-     <span class="tag ${st===2?"ok":st===3?"gy":st===1?"wt":"no"}">${wish?"":IST_LABEL[st]||"待答复"}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
+     <span class="tag ${st===IST.CLOSED?"ok":st===IST.RELEASED?"gy":st===IST.WAIT_NEWBIE?"wt":"no"}">${wish?"":IST_LABEL[st]||"待答复"}${wish?(st===IST.CLOSED?"已闭环":"进行中"):""}</span></div>
    <div class="meta">${WHO_NAME[x.who]} · ${fmt(x.createdAt)}</div>
    ${x.type==="issue"?(()=>{
-     if(st===0){
+     if(st===IST.WAIT_STAFF){
       if(!isStaff())return `<div class="meta">等待导师/主管回复</div>`;
       const wh=Math.floor((nowT()-(x.waitingSince||x.createdAt))/3600000),eh=(ATT&&ATT.escH||8);
       return `<div class="meta" style="color:${wh>=eh?"var(--red-d)":"var(--ink3)"}">等待直属导师回复 · ${wh>=eh?`已超 ${wh-eh} 小时，升级主管`:`还剩 ${eh-wh} 小时升级主管`}</div>`;}
-     if(st===1){const wh=Math.floor((nowT()-(x.waitingSince||x.updatedAt||x.createdAt))/3600000);
+     if(st===IST.WAIT_NEWBIE){const wh=Math.floor((nowT()-(x.waitingSince||x.updatedAt||x.createdAt))/3600000);
       return isStaff()
        ? `<div class="meta" style="color:var(--amber-d)">球在新人 · 等 ${esc(WHO_NAME[x.who]||"本人")} 补充（已等 ${Math.max(0,wh)} 小时）</div>`
        : `<div class="meta" style="color:var(--amber-d)">导师/主管已回复，等你补充（已等 ${Math.max(0,wh)} 小时）</div>`;}
-     if(st===2)return `<div class="meta" style="color:var(--green-d)">已闭环</div>`;
-     if(st===3)return `<div class="meta">已解除：任务已更新或人工解除</div>`;
+     if(st===IST.CLOSED)return `<div class="meta" style="color:var(--green-d)">已闭环</div>`;
+     if(st===IST.RELEASED)return `<div class="meta">已解除：任务已更新或人工解除</div>`;
      return "";
    })():""}
    <div class="body">${nl(x.text)}</div>
-   ${st>=2&&x.resolve?`<div class="muted" style="margin-top:5px;font-size:12.2px">${st===3?"升级已解除":"已闭环"}：${esc(x.resolve)}${st===3?(function(){const lk=issueTask(x);return lk&&(lk.v.st||0)!==2?`；任务仍需继续跟进（截止 ${esc(lk.v.due||"—")}）`:"";})():""}</div>`:""}
+   ${st>=IST.CLOSED&&x.resolve?`<div class="muted" style="margin-top:5px;font-size:12.2px">${st===IST.RELEASED?"升级已解除":"已闭环"}：${esc(x.resolve)}${st===IST.RELEASED?(function(){const lk=issueTask(x);return lk&&(lk.v.st||0)!==2?`；任务仍需继续跟进（截止 ${esc(lk.v.due||"—")}）`:"";})():""}</div>`:""}
    ${(function(){const lk=issueTask(x);const lg=lk&&(lk.v.log||[]).slice(-1)[0];
      return lg?`<div class="muted" style="margin-top:5px;font-size:12.2px">任务最新进展：${esc(lg.text)}${lg.at?` · ${fmt(lg.at)}`:""}</div>`:"";})()}
    ${x.chk||x.blk||x.need?`<div class="body" style="color:var(--ink3)">${x.chk?`<b>已排查：</b>${nl(x.chk)}<br>`:""}${x.blk?`<b>卡点与判断：</b>${nl(x.blk)}<br>`:""}${x.need?`<b>需要谁：</b>${nl(x.need)}`:""}</div>`:""}
@@ -2728,7 +2728,7 @@ function renderAssist(){
      <button class="btn sm" data-rsend="${x.id}">回复</button></div>`:""}
    <div class="row" style="margin-top:7px">
      ${(owner||isStaff())&&st<2?`<button class="btn sm gh" data-iclose="${x.id}">标记已闭环</button>`:""}
-     ${isStaff()&&st===3?`<button class="btn sm gh" data-ireopen="${x.id}">重新开启</button>`:""}
+     ${isStaff()&&st===IST.RELEASED?`<button class="btn sm gh" data-ireopen="${x.id}">重新开启</button>`:""}
      ${isStaff()&&!wish?`<button class="btn sm gh" data-icard="${x.id}">沉淀为一问题一卡片</button>`:""}
      ${isStaff()&&(x.replies||[]).length?`<button class="btn sm gh" data-iquot="${x.id}">萃一句金句</button>`:""}
      ${isStaff()||owner?`<button class="btn sm danger" data-idel="${x.id}">删除</button>`:""}</div>
