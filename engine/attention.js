@@ -23,13 +23,28 @@ function ms(t) {
   return Number.isFinite(n) ? n : 0;
 }
 const days = (from, now) => (from ? Math.max(0, Math.floor((now - from) / DAY)) : 0);
-const openTask = v => (v.st || 0) !== 2;
+const openTask = v => (Number(v && v.st) || 0) !== TASK_ST.CLOSED;
 
 /* 待办等级：red 必须先处理，yellow 观察 */
 const RANK = { red: 0, yellow: 1, green: 2 };
 /* 协助升级阈值：直属导师超过 8 小时没接，才升级到主管。
    前端「还剩 X 小时升级」、服务端按角色过滤都读这一个值，避免两边写死不同步。 */
 const ESCALATE_H = 8;
+/* ---------- 任务 / 协助状态（唯一口径，页面和邮件都按这里解释） ----------
+   任务 st：0 未开始 / 1 进行中 / 2 已闭环（cfm=3 表示已提交待验收）
+   协助 status：0 等导师/主管答复 → 1 等新人补充 → 2 已闭环
+               3 已解除（任务已更新，系统自动解除，不算人的闭环）
+   想改状态含义只改这里；前端用 /api/attention 下发的同一套常量。 */
+const TASK_ST = { TODO: 0, DOING: 1, CLOSED: 2 };
+const ISSUE_ST = { WAIT_STAFF: 0, WAIT_NEWBIE: 1, CLOSED: 2, RELEASED: 3 };
+const ISSUE_LABEL = ["待导师答复", "等新人补充", "已闭环", "已解除"];
+/* 协助是否还没结束（含等导师、等新人）；已闭环/已解除都算结束 */
+const issueOpen = x => (Number(x && x.status) || 0) < ISSUE_ST.CLOSED;
+/* 协助当前在谁手里：staff=导师/主管，newbie=新人，空=已结束 */
+const issueHolder = x => {
+  const st = Number(x && x.status) || 0;
+  return st === ISSUE_ST.WAIT_STAFF ? "staff" : st === ISSUE_ST.WAIT_NEWBIE ? "newbie" : "";
+};
 
 /**
  * @param {object} ctx
@@ -185,8 +200,8 @@ function build(ctx) {
      status 0 = 等导师/主管回复 → 导师的待办（主管 8 小时后才介入）
      status 1 = 导师已回复，等新人补充 → 新人的待办（以前这条漏了，新人永远看不到） */
   (ctx.issues || []).forEach(x => {
-    const st = x.status || 0;
-    if (st === 0) {
+    const st = Number(x.status) || 0;
+    if (st === ISSUE_ST.WAIT_STAFF) {
       const since = ms(x.waitingSince || x.createdAt);
       const wait = days(since, now);
       const waitHours = Math.floor((now - since) / 3600000);
@@ -198,7 +213,7 @@ function build(ctx) {
         ref: { kind: "issue", issueId: x.id }, action: "answer", since,
         wait, waitHours, escalateInH: Math.max(0, ESCALATE_H - waitHours),
       });
-    } else if (st === 1) {
+    } else if (st === ISSUE_ST.WAIT_NEWBIE) {
       const since = ms(x.waitingSince || x.updatedAt);
       const wait = days(since, now);
       add({
@@ -315,4 +330,4 @@ function summarize(items, day, now) {
   };
 }
 
-module.exports = { build, summarize, openTask, ESCALATE_H };
+module.exports = { build, summarize, openTask, ESCALATE_H, TASK_ST, ISSUE_ST, ISSUE_LABEL, issueOpen, issueHolder };

@@ -16,6 +16,8 @@ const crypto = require("crypto");
 const zlib = require("zlib");
 const attentionEngine = require("./engine/attention");
 const recognitionEngine = require("./engine/recognition");
+/* 状态口径统一从引擎取，服务端不再散落 0/1/2/3 魔法数字 */
+const { ISSUE_ST, TASK_ST, issueOpen, issueHolder, ESCALATE_H } = attentionEngine;
 const PORT = process.env.PORT || 3000;
 const APP_SECRET = process.env.APP_SECRET || "q4-workbench-2026";
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -522,6 +524,25 @@ function reconcileDoc(doc) {
     }
     if (keep.length !== x.replies.length) x.replies = keep.reverse();
   });
+  /* 历史脏数据一次性校准（幂等）：
+     · 旧版本每次扫描都重开，计数能堆到上百（线上有条 113 次的），会让这条任务永远不再重开；
+       超过 5 次的统一归零并打标记，之后按新规则最多 5 次。
+     · 只要有人在协助里人工回复过，就视为「已接手」，连续重开次数归零；
+       「最多 5 次」约束的是连续自动重开，不会因为历史计数把任务锁死。
+     · 等新人补充的老协助补上 waitingSince，避免计时从错误的起点算。 */
+  issues.forEach(x => {
+    const lastHuman = (Array.isArray(x.replies) ? x.replies : [])
+      .filter(r => r && r.by && r.by !== "system")
+      .sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+    if ((x.reopened || 0) > 5 && !x.reopenFixed) {
+      x.reopened = 0; x.reopenedAt = 0; x.reopenFixed = 1; changed = true;
+    } else if (lastHuman && (x.reopened || 0) > 0 && (lastHuman.at || 0) > (x.reopenedAt || 0)) {
+      x.reopened = 0; x.reopenedAt = 0; changed = true;
+    }
+    if (((Number(x.status)||0) === ISSUE_ST.WAIT_NEWBIE) && !x.waitingSince) {
+      x.waitingSince = x.updatedAt || x.createdAt || now; changed = true;
+    }
+  });
   const carriers = (doc.carriers && doc.carriers.list) || [];
   const findAct = (cid, aid) => {
     const c = carriers.filter(x => x.id === cid)[0];
@@ -534,7 +555,7 @@ function reconcileDoc(doc) {
     (c.actions || []).forEach(v => {
       if (!v.del) { v.del = true; v.delBy = "system"; v.delAt = now; v.updatedAt = now; changed = true; }
     });
-    issues.filter(x => x.fromCarrier === c.id && (x.status || 0) < 2).forEach(x => {
+    issues.filter(x => x.fromCarrier === c.id && issueOpen(x)).forEach(x => {
       x.status = 3; x.closedBy = "system"; x.releasedBy = "archive"; x.updatedAt = now;
       x.resolve = x.src === "auto" ? "客户档案已归档，升级解除" : "客户档案已归档，问题随档案解除";
       changed = true;
@@ -550,7 +571,7 @@ function reconcileDoc(doc) {
         v.del = false; v.delBy = ""; v.delAt = 0; v.updatedAt = now; back++;
       }
     });
-    issues.filter(x => x.fromCarrier === c.id && (x.status || 0) === 3 && x.releasedBy === "archive").forEach(x => {
+    issues.filter(x => x.fromCarrier === c.id && ((Number(x.status)||0) === ISSUE_ST.RELEASED) && x.releasedBy === "archive").forEach(x => {
       x.status = 0; x.closedBy = ""; x.releasedBy = ""; x.resolve = ""; x.updatedAt = now;
       x.replies = x.replies || [];
       x.replies.push({ id: uid(), by: "system", at: now, text: "客户档案已恢复，协助重新开启。" });
@@ -562,7 +583,7 @@ function reconcileDoc(doc) {
   /* 2. 任务闭环 / 删除：关联协助关闭（按 客户+任务 双键匹配，避免不同客户同 id 误伤） */
   carriers.forEach(c => (c.actions || []).forEach(v => {
     if (!(v.del || (v.st || 0) === 2)) return;
-    issues.filter(x => x.fromAction === v.id && (!x.fromCarrier || x.fromCarrier === c.id) && (x.status || 0) < 2).forEach(x => {
+    issues.filter(x => x.fromAction === v.id && (!x.fromCarrier || x.fromCarrier === c.id) && issueOpen(x)).forEach(x => {
       x.status = x.src === "auto" ? 3 : 2;
       x.closedBy = "system"; x.updatedAt = now;
       x.resolve = (v.del ? "任务已删除" : "任务已闭环") + (x.src === "auto" ? "，升级解除" : "");
@@ -572,7 +593,7 @@ function reconcileDoc(doc) {
 
   /* 2.5 任务/客户换手：未闭环的协助跟着新责任人走。
      否则旧责任人还被「必回」追着，新责任人看不到上下文，导师以为已经转交完成。 */
-  issues.filter(x => (x.status || 0) < 2 && x.fromCarrier).forEach(x => {
+  issues.filter(x => issueOpen(x) && x.fromCarrier).forEach(x => {
     const hit = findAct(x.fromCarrier, x.fromAction || "");
     const c = hit ? hit.c : carriers.filter(y => y.id === x.fromCarrier)[0];
     if (!c || c.del) return;
@@ -586,7 +607,7 @@ function reconcileDoc(doc) {
   });
 
   /* 3. 人工关闭的协助：回写一条进展到关联任务，并解除卡点 */
-  issues.filter(x => (x.status || 0) === 2 && x.fromAction && x.src !== "auto").forEach(x => {
+  issues.filter(x => ((Number(x.status)||0) === ISSUE_ST.CLOSED) && x.fromAction && x.src !== "auto").forEach(x => {
     const hit = findAct(x.fromCarrier || "", x.fromAction);
     if (!hit || !hit.v || hit.v.del || (hit.v.st || 0) === 2) return;
     const marker = "【协助已闭环 " + x.id + "】";
@@ -604,7 +625,7 @@ function reconcileDoc(doc) {
   /* 3.5 协助会话状态：最后一条回复是谁，球就在谁那边。
      导师回复 → status=1（等新人），立刻退出“必回”；新人回复 → status=0（等导师）。
      同时把导师回复同步成任务进展，任务侧不用再重复写一遍。 */
-  issues.filter(x => (x.status || 0) < 2).forEach(x => {
+  issues.filter(x => issueOpen(x)).forEach(x => {
     const rs = x.replies || [];
     const last = rs[rs.length - 1];
     if (!last || last.by === "system") return;
@@ -628,7 +649,7 @@ function reconcileDoc(doc) {
 
   /* 4. 自动升级的协助：任务改期 / 闭环 / 删除后才关闭。
      注意区分「超期」和「长期没更新」：后者没有截止日，不能按 due 判断。 */
-  issues.filter(x => x.src === "auto" && (x.status || 0) < 2 && x.key).forEach(x => {
+  issues.filter(x => x.src === "auto" && issueOpen(x) && x.key).forEach(x => {
     const key = String(x.key).replace(/^auto:/, "");
     const p = key.split(".");
     const hit = findAct(p[0], p[1]);
@@ -657,7 +678,7 @@ function reconcileDoc(doc) {
 
   /* 4.1 历史数据迁移：系统自动关闭的协助（status=2 + closedBy=system）改为「已解除」，
      避免在界面上把「改期/挂起」显示成「问题已闭环」。 */
-  issues.filter(x => x.src === "auto" && (x.status || 0) === 2 && x.closedBy === "system").forEach(x => {
+  issues.filter(x => x.src === "auto" && ((Number(x.status)||0) === ISSUE_ST.CLOSED) && x.closedBy === "system").forEach(x => {
     x.status = 3; x.updatedAt = now;
     if (x.resolve && x.resolve.indexOf("解除") < 0) x.resolve += "，升级解除";
     changed = true;
@@ -750,7 +771,7 @@ function notifyHandoffs(before, doc) {
   });
   ((doc.issues && doc.issues.list) || []).filter(x => !x.del).forEach(x => {
     const b = before.issues[x.id];
-    if (b && b.status < 2 && (x.status || 0) === 2 && x.closedBy !== "system") {
+    if (b && issueOpen(b) && ((Number(x.status)||0) === ISSUE_ST.CLOSED) && x.closedBy !== "system") {
       push(x.who, `你的协助「${String(x.text || "").slice(0, 24)}」已闭环`);
     }
   });
@@ -1463,7 +1484,7 @@ function userStats(u, days, S) {
   const reviewActs = openActs.filter(v => v.cfm === 3);
   const overdue = openActs.filter(v => { const due = String(v.due || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(due) && due < end; });
 
-  const ops = snap.issues.filter(x => x.who === u.id && (x.status || 0) < 2);
+  const ops = snap.issues.filter(x => x.who === u.id && issueOpen(x));
   const opsNew = snap.issues.filter(x => x.who === u.id && inRange(x.createdAt));
   let hs = 0, hn = 0;
   snap.issues.forEach(x => (x.replies || []).forEach(r => {
@@ -1552,7 +1573,7 @@ function riskOf(u, S, s, day) {
   const maxOver = overdue.length ? taskOverDays(overdue[0], day) : 0;
   const maxRev = reviews.length ? waitDays(reviews[0].updatedAt) : 0;
   const idle = s.lastActiveDay ? workdaysAfter(s.lastActiveDay, day) : (s.joinsDays >= 1 ? 99 : 0);
-  const slowIssues = (S.issues || []).filter(x => x.who === u.id && (x.status || 0) < 2 && waitDays(x.createdAt) >= 2);
+  const slowIssues = (S.issues || []).filter(x => x.who === u.id && issueOpen(x) && waitDays(x.createdAt) >= 2);
   const carsLate = S.carriers.filter(c => c.who === u.id).filter(c => {
     const d = carNext(c); if (!d || d >= day) return false;
     const touch = Math.max(toMs(c.updatedAt), ...((c.actions || []).map(v => toMs(v.updatedAt))));
@@ -1730,9 +1751,9 @@ function buildStaffDailyDigest(day, newbieIds, opts) {
     acts.forEach(v => (v.log || []).filter(l => !l.del && l.at && bjKey(l.at) === theDay && l.by === u.id)
       .forEach(l => logs.push(v.text + "：" + String(l.text || "").slice(0, 36))));
     const reviews = open.filter(v => v.cfm === 3);
-    const openIssues = (S.issues || []).filter(x => x.who === u.id && (x.status || 0) < 2);
-    const staffIssues = openIssues.filter(x => (x.status || 0) === 0);
-    const newbieIssues = openIssues.filter(x => (x.status || 0) === 1);
+    const openIssues = (S.issues || []).filter(x => x.who === u.id && issueOpen(x));
+    const staffIssues = openIssues.filter(x => ((Number(x.status)||0) === ISSUE_ST.WAIT_STAFF));
+    const newbieIssues = openIssues.filter(x => ((Number(x.status)||0) === ISSUE_ST.WAIT_NEWBIE));
     const newIssues = (S.issues || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
     const drills = (S.drills || []).filter(x => x.who === u.id && bjKey(x.createdAt) === theDay).length;
     const bits = [];
@@ -1838,14 +1859,14 @@ function buildDailyReport(day, opts) {
     if (x.risk.idle >= 3) todo.push({ p: 1, w: x.risk.idle, who: x.u.name,
       what: `连续 ${x.risk.idle} 个工作日无动作`, act: "主动联系确认是否遇到困难", due: "今天" });
   });
-  const slowIssues = (S.issues || []).filter(x => (x.status || 0) < 2 && newbies.some(u => u.id === x.who) && waitDays(x.createdAt) >= 2);
+  const slowIssues = (S.issues || []).filter(x => issueOpen(x) && newbies.some(u => u.id === x.who) && waitDays(x.createdAt) >= 2);
   slowIssues.slice(0, 2).forEach(x => todo.push({ p: 1, w: waitDays(x.createdAt), who: nameOf(x.who),
     what: `问题「${String(x.text || "").slice(0, 24)}」未答复`, act: "今天回复并给出方向", due: "今天" }));
   const topTodo = todo.sort((a, b) => a.p - b.p || b.w - a.w).slice(0, 3);
   /* 今日变化：只讲「新增 / 已处理 / 仍在队列」，不再把同一批事每天重复一遍 */
   const attNow = attentionPayload(null);
   const resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || []).filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === today).length, 0)
-    + (S.issues || []).filter(x => (x.status || 0) === 2 && bjKey(x.updatedAt) === today).length;
+    + (S.issues || []).filter(x => ((Number(x.status)||0) === ISSUE_ST.CLOSED) && bjKey(x.updatedAt) === today).length;
   const changeLine = `今日新增 <b>${attNow.counts.newToday}</b> 项 · 今日已处理 <b>${resolvedToday}</b> 项 · 仍在队列 <b>${attNow.counts.total}</b> 项`;
 
   const cardHtml = rows.map(x => {
@@ -2005,7 +2026,7 @@ function buildWeeklyReport(day, opts) {
     if (!carNext(c)) noNext.push(`${nameOf(c.who)}·${c.name}`);
   });
   const allIssues = (S.issues || []).filter(x => newbies.some(u => u.id === x.who));
-  const closedIssues = allIssues.filter(x => (x.status || 0) === 2);
+  const closedIssues = allIssues.filter(x => ((Number(x.status)||0) === ISSUE_ST.CLOSED));
   const drillAvgs = rows.map(x => x.s.avg).filter(v => v != null);
   const teamBits = [];
   if (topWrong.length) teamBits.push(`高频错题：${topWrong.map(([q, n]) => `${h(String(q).slice(0, 28))}（${n} 次）`).join("、")}`);
@@ -2207,7 +2228,7 @@ function factDiff(scopeIds, sinceMs, untilMs) {
       const u = findUser(r.by);
       add(r.at, "issue_reply", x.who, `${u && u.role !== "newbie" ? "导师回复" : "新人回复"}：「${String(x.text || "").slice(0, 30)}」`, link);
     });
-    if ((x.status || 0) === 2 && x.updatedAt) add(x.updatedAt, "issue_closed", x.who, `协助已闭环：${String(x.text || "").slice(0, 30)}`, link);
+    if (((Number(x.status)||0) === ISSUE_ST.CLOSED) && x.updatedAt) add(x.updatedAt, "issue_closed", x.who, `协助已闭环：${String(x.text || "").slice(0, 30)}`, link);
   });
   S.drills.forEach(d => add(d.createdAt, "drill", d.who, `完成演练「${d.topic || ""}」${d.score ? " · " + d.score : ""}`, "#tab=coach"));
   S.checkins.forEach(c => add(c.createdAt, "checkin", c.who, `学习打卡：${nodeTitle(c.nodeId)}`, "#tab=plan&node=" + c.nodeId));
@@ -2952,7 +2973,7 @@ function userDataCounts(id) {
   const openTasks = carriers.reduce((n, c) => n + (c.actions || [])
     .filter(v => !v.del && (v.st || 0) !== 2 && (v.owner || c.who) === id).length, 0);
   const openIssues = ((DOC && DOC.issues && DOC.issues.list) || [])
-    .filter(x => !x.del && (x.status || 0) < 2 && x.who === id).length;
+    .filter(x => !x.del && issueOpen(x) && x.who === id).length;
   const openTriggers = ((DOC && DOC.triggers && DOC.triggers.list) || [])
     .filter(x => !x.del && x.who === id && x.status !== "done").length;
   return { owns, openTasks, openIssues, openTriggers, total: owns + openTasks + openIssues + openTriggers };
@@ -2976,7 +2997,7 @@ function handoverUserData(id, toId) {
       if (!v.del && v.owner === id) { v.owner = ""; v.updatedAt = now; tasks++; }
     });
   });
-  ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && (x.status || 0) < 2 && x.who === id).forEach(x => {
+  ((DOC.issues && DOC.issues.list) || []).filter(x => !x.del && issueOpen(x) && x.who === id).forEach(x => {
     x.who = toId; x.updatedAt = now;
     x.replies = x.replies || [];
     x.replies.push({ id: uid(), by: "system", at: now, text: `原责任人账号已停用/删除，协助转交给 ${to.name}。` });
@@ -3781,7 +3802,7 @@ function attentionPayload(me) {
   /* 今日已处理：闭环任务 + 关闭的协助，用于页面「新增 / 已处理」对比 */
   data.counts.resolvedToday = S.carriers.reduce((n, c) => n + (c.actions || [])
     .filter(v => !v.del && (v.st || 0) === 2 && bjKey(v.cfmAt) === day).length, 0)
-    + (S.issues || []).filter(x => (x.status || 0) === 2 && bjKey(x.updatedAt) === day).length;
+    + (S.issues || []).filter(x => ((Number(x.status)||0) === ISSUE_ST.CLOSED) && bjKey(x.updatedAt) === day).length;
   /* 今日红灯 / 待验收与上一天的差值：AI 卡片用来回答「今天到底变了什么」。
      只在超管视角记录全局口径，避免导师的个人范围覆盖团队历史。 */
   if (!me || me.role === "admin") {
@@ -3972,7 +3993,7 @@ async function runAttentionScan(trigger) {
     .forEach(it => {
       const key = "auto:" + it.ref.carrierId + "." + it.ref.actionId;
       const old = DOC.issues.list.find(x => x.key === key && !x.del);
-      if (old && (old.status || 0) < 2) return;
+      if (old && issueOpen(old)) return;
       if (old) {
         /* 人工已经处理过（闭环/挂起）的协助不再被系统自动重开，尊重人的判断。 */
         if (old.closedBy && old.closedBy !== "system") return;
@@ -3999,12 +4020,12 @@ async function runAttentionScan(trigger) {
   /* 夜间不升级：不在凌晨打标记，等 08:00 后的下一次扫描再升级并发一封邮件，
      避免睡一觉起来发现 3 点被系统提醒过。 */
   const quietNow = inQuietHours();
-  DOC.issues.list.filter(x => !x.del && x.src === "auto" && (x.status || 0) < 2
+  DOC.issues.list.filter(x => !x.del && x.src === "auto" && issueOpen(x)
     && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.createdAt) >= 48 * 3600e3)
     .forEach(x => { if (quietNow) return; x.escalatedAt = Date.now(); escalated.push(x); });
   /* 新人提交的问题：球在导师这边（status=0）超过 48 小时没处理，同样升级主管。
      球在新人那边（status=1）不升级，避免催错人。 */
-  DOC.issues.list.filter(x => !x.del && x.src !== "auto" && (x.status || 0) === 0
+  DOC.issues.list.filter(x => !x.del && x.src !== "auto" && ((Number(x.status)||0) === ISSUE_ST.WAIT_STAFF)
     && !x.escalatedAt && Date.now() - toMs(x.waitingSince || x.updatedAt || x.createdAt) >= 48 * 3600e3)
     .forEach(x => { if (quietNow) return; x.escalatedAt = Date.now(); escalated.push(x); });
   if (created.length || reopened.length || escalated.length || reconciled) { DOC.issues.t = Date.now(); persistDoc(); }

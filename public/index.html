@@ -1566,6 +1566,11 @@ function riskTasks(){return allActs().filter(o=>{const v=o.v;return (v.st||0)!==
    统一待办（服务端 engine/attention.js 是唯一规则源）
    页面只做两件事：展示、执行。禁止在这里重算「谁该做什么」。
    =================================================================== */
+/* 协助状态口径：与 engine/attention.js 的 ISSUE_ST 一一对应。
+   页面只认这几个常量，不再到处写 0/1/2/3；升级阈值用接口下发的 ATT.escH。 */
+const IST={WAIT_STAFF:0,WAIT_NEWBIE:1,CLOSED:2,RELEASED:3};
+const IST_LABEL=["待导师答复","等新人补充","已闭环","已解除"];
+const issOpen=x=>((Number(x&&x.status)||0)<IST.CLOSED);
 let ATT=null,ATT_T=0,ATT_BUSY=false;
 function attItems(){return (ATT&&ATT.items)||[];}
 let ATT_RETRY=0;
@@ -2302,7 +2307,7 @@ function renderCarriers(){
       const key=x.id+"."+v.id;
       const over=actOver(v),age=actAge(v),lg=(v.log||[]).filter(y=>!y.del);
       const _li=(DOC.issues.list||[]).find(i=>i.id===(v.links&&v.links.issueId)&&!i.del);
-      const linked=!!(_li&&(_li.status||0)<2),st=v.st||0,isOpen=!!CUI.open[key],te=CUI.editTask[key];
+      const linked=!!(_li&&issOpen(_li)),st=v.st||0,isOpen=!!CUI.open[key],te=CUI.editTask[key];
       const canA=canAct(x,v),ops=[];
       if(st===0&&canA)ops.push(`<button class="btn sm gh" data-astart="${key}">开始处理</button>`);
       if(st===1&&v.cfm!==3&&canA)ops.push(`<button class="btn sm" data-asub="${key}">提交验收</button>`);
@@ -2676,21 +2681,21 @@ function renderAssist(){
    .filter(Boolean).join(" ").toLowerCase().indexOf(k)>=0);}
  if(ISSUE_FILTER==="issue")L=L.filter(x=>x.type==="issue");
  if(ISSUE_FILTER==="wish")L=L.filter(x=>x.type==="wish");
- if(ISSUE_FILTER==="todo")L=L.filter(x=>(x.status||0)===0);
- if(ISSUE_FILTER==="done")L=L.filter(x=>(x.status||0)===2);
- if(ISSUE_FILTER==="released")L=L.filter(x=>(x.status||0)===3);
+ if(ISSUE_FILTER==="todo")L=L.filter(x=>((Number(x.status)||0)===IST.WAIT_STAFF));
+ if(ISSUE_FILTER==="done")L=L.filter(x=>((Number(x.status)||0)===IST.CLOSED));
+ if(ISSUE_FILTER==="released")L=L.filter(x=>((Number(x.status)||0)===IST.RELEASED));
  if(ISSUE_FILTER==="help")L=L.filter(x=>(x.replies||[]).some(r=>r.help&&helpAcks(r).length<2));
  L=L.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
  document.getElementById("issueCount").textContent=`共 ${L.length} 条${ISSUE_Q?` · 搜索「${ISSUE_Q}」`:""}`;
  document.getElementById("issueList").innerHTML=L.length?L.map(x=>{
-  const owner=mineP(x.who),st=x.status||0,wish=x.type==="wish";
+  const owner=mineP(x.who),st=Number(x.status)||0,wish=x.type==="wish";
   const canReply=isStaff()||isNew();   /* 新人互助：可互相评论支招 */
   return `<div class="item" id="iss-${x.id}">
    <div class="hd"><div><span class="tt">${wish?"诉求 · ":""}${esc(x.proj||(wish?"":"未填项目"))}</span>
      ${x.card?'<span class="tag ok" style="margin-left:6px">已沉淀卡片</span>':""}
      ${wish&&x.priv?'<span class="tag gy" style="margin-left:6px">仅导师可见</span>':""}
      ${wish?"":`<span class="tag gy" style="margin-left:6px">${esc(x.cat||"")}</span>`}</div>
-     <span class="tag ${st===2?"ok":st===3?"gy":st===1?"wt":"no"}">${wish?"":["待答复","等新人回应","已闭环","已解除"][st]||"待答复"}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
+     <span class="tag ${st===2?"ok":st===3?"gy":st===1?"wt":"no"}">${wish?"":IST_LABEL[st]||"待答复"}${wish?(st===2?"已闭环":"进行中"):""}</span></div>
    <div class="meta">${WHO_NAME[x.who]} · ${fmt(x.createdAt)}</div>
    ${x.type==="issue"?(()=>{
      if(st===0){
@@ -3471,8 +3476,8 @@ function evidenceFor(who){
  ck.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,4).forEach(x=>{const nd=NODE_BY_ID[x.nodeId];if(nd)push("产品地图",`节点已通关：${nd.t}（小测 ${x.correct||0}/${x.total||0}）`);});
  // ② 问题处理 · 项目闭环
  const iss=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&x.who===who);
- iss.filter(x=>(x.status||0)===2).slice(0,6).forEach(x=>push("问题处理",`问题已闭环：${(x.proj||x.text||"未命名").slice(0,40)}`));
- iss.filter(x=>(x.status||0)<2).slice(0,3).forEach(x=>push("问题处理",`问题进行中：${(x.proj||x.text||"未命名").slice(0,40)}`));
+ iss.filter(x=>((Number(x.status)||0)===IST.CLOSED)).slice(0,6).forEach(x=>push("问题处理",`问题已闭环：${(x.proj||x.text||"未命名").slice(0,40)}`));
+ iss.filter(x=>issOpen(x)).slice(0,3).forEach(x=>push("问题处理",`问题进行中：${(x.proj||x.text||"未命名").slice(0,40)}`));
  // ③ 演讲演练
  const dr=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===who&&x.score);
  dr.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,6).forEach(x=>push("演讲演练",`演练：${(x.topic||"未命名").slice(0,36)} · 评分 ${x.score}`));
@@ -3499,7 +3504,7 @@ function stats(){
    tasks:acts.length,openTasks:openActs.length,doneTasks:acts.filter(v=>(v.st||0)===2).length,
    reviewTasks:openActs.filter(v=>v.cfm===3).length,
    overdueTasks:openActs.filter(actOver).length,
-   issue:i.length,pending:i.filter(x=>(x.status||0)===0).length,issueClosed:i.filter(x=>(x.status||0)===2).length,
+   issue:i.length,pending:i.filter(x=>((Number(x.status)||0)===IST.WAIT_STAFF)).length,issueClosed:i.filter(x=>((Number(x.status)||0)===IST.CLOSED)).length,
    drill:d.length,scored:d.filter(x=>x.score).length,
    drill14:d.filter(x=>nowT()-(x.createdAt||0)<=14*86400000).length,
    drillAvg:(()=>{const ss=d.map(drillTotal).filter(Boolean);return ss.length?Math.round(ss.reduce((a,t)=>a+t.total,0)/ss.length):null;})(),
@@ -3531,7 +3536,7 @@ function radarScore(id,S0){
  const withTask=cars.filter(c=>(c.actions||[]).some(v=>!v.del)).length;
  const withNext=cars.filter(c=>c.nextAt||c.nextDate).length;
  const iss=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&x.who===id);
- const issClosed=iss.filter(x=>(x.status||0)===2).length;
+ const issClosed=iss.filter(x=>((Number(x.status)||0)===IST.CLOSED)).length;
  const dr=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===id&&nowT()-(x.createdAt||0)<=30*86400000);
  const drAvg=dr.length?Math.round(dr.reduce((a,x)=>a+(((drillTotal(x)||{}).total)||0),0)/dr.length):0;
  const map=DOC.reviews.map||{};
@@ -3838,7 +3843,7 @@ function renderMonitor(){
  const allCar=S.C.length,allTask=ids.reduce((n,id)=>n+S.per[id].tasks,0),
   doneTask=ids.reduce((n,id)=>n+S.per[id].doneTasks,0),reviewTask=ids.reduce((n,id)=>n+S.per[id].reviewTasks,0),
   overTask=ids.reduce((n,id)=>n+S.per[id].overdueTasks,0),
-  pend=S.I.filter(x=>(x.status||0)===0).length;
+  pend=S.I.filter(x=>((Number(x.status)||0)===IST.WAIT_STAFF)).length;
  document.getElementById("mStats").innerHTML=[
   statCard(allCar,"客户档案"),statCard(allTask,"任务/项目"),statCard(reviewTask,"待验收"),
   statCard(doneTask,"已闭环任务"),statCard(overTask,"超期任务"),statCard(S.I.length,"问题记录"),
@@ -4351,9 +4356,9 @@ function renderDuty(){
  const now=nowT();
  /* 和待办队列同一口径：导师/主管只看自己名下新人的问题，避免串组看到别人的。 */
  const I=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&(MY_ROLE==="admin"||NEWCOMERS.indexOf(x.who)>=0));
- const open=I.filter(x=>(x.status||0)<2);            /* 真未闭环：待导师回 + 等新人补充 */
- const reopened=I.filter(x=>(x.status||0)===0);      /* 球在导师/主管：才进必回队列 */
- const waitingNewbie=I.filter(x=>(x.status||0)===1); /* 球在新人：不该出现在导师/主管待办 */
+ const open=I.filter(x=>issOpen(x));            /* 真未闭环：待导师回 + 等新人补充 */
+ const reopened=I.filter(x=>((Number(x.status)||0)===IST.WAIT_STAFF));      /* 球在导师/主管：才进必回队列 */
+ const waitingNewbie=I.filter(x=>((Number(x.status)||0)===IST.WAIT_NEWBIE)); /* 球在新人：不该出现在导师/主管待办 */
  const queue=reopened.map(x=>{
    const w=now-(x.waitingSince||x.createdAt||now);
    return {x,w,lv:dutyLv(w)};}).sort((a,b)=>b.w-a.w);
@@ -4361,8 +4366,8 @@ function renderDuty(){
  const resp=I.map(x=>{const r=issueFirstStaffReply(x);return r?((r.at||0)-(x.createdAt||0)):null;}).filter(v=>v!=null);
  const avg=resp.length?resp.reduce((a,b)=>a+b,0)/resp.length:null;
  const rate=resp.length?Math.round(resp.filter(v=>v<=TWO_H).length/resp.length*100):null;
- const closed=I.filter(x=>(x.status||0)===2).length;
- const released=I.filter(x=>(x.status||0)===3).length;
+ const closed=I.filter(x=>((Number(x.status)||0)===IST.CLOSED)).length;
+ const released=I.filter(x=>((Number(x.status)||0)===IST.RELEASED)).length;
 
  const mapA=mapAlerts(),mapOver=mapA.filter(a=>a.p.over).length;
  document.getElementById("dutyAgg").innerHTML=[
@@ -4467,7 +4472,7 @@ function rvSummary(id,m){
  const newCars=cars.filter(x=>rvInMonth(x.createdAt,m)).length;
  const closed=cars.reduce((n,c)=>n+(c.actions||[]).filter(v=>!v.del&&(v.st||0)===2&&rvInMonth(v.cfmAt||v.updatedAt,m)).length,0);
  const iss=(DOC.issues.list||[]).filter(x=>!x.del&&x.type==="issue"&&x.who===id&&rvInMonth(x.createdAt,m));
- const issC=iss.filter(x=>(x.status||0)===2).length;
+ const issC=iss.filter(x=>((Number(x.status)||0)===IST.CLOSED)).length;
  const dr=(DOC.drills.list||[]).filter(x=>!x.del&&x.who===id&&rvInMonth(x.createdAt,m)).length;
  return `本月新增档案 ${newCars} · 闭环任务 ${closed} · 问题 ${iss.length}（已闭环 ${issC}）· 演练 ${dr} · 地图通关 ${p.nodes||0}/${TOTAL_NODES}`;
 }
