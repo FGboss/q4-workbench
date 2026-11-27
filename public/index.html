@@ -294,6 +294,36 @@
   .carToggle .ctBtn{flex:none;border:1px solid var(--line);background:#fff;border-radius:7px;
     padding:2px 9px;font-size:11.8px;color:var(--ink3)}
   .carToggle:hover .ctBtn{border-color:var(--blue-m);color:var(--blue-d)}
+  /* 客户档案 · 方块卡片视图：先看摘要，点开才展开任务与表单 */
+  .carGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(262px,1fr));gap:14px;margin-top:8px}
+  .carCard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:15px 16px;
+    display:flex;flex-direction:column;min-height:178px;transition:border-color .15s,box-shadow .15s,transform .15s}
+  .carCard:hover{border-color:#C7DBEC;box-shadow:0 8px 20px rgba(16,24,40,.06);transform:translateY(-1px)}
+  .carCard.open{grid-column:1/-1;min-height:0;border-color:#CFE0F0;box-shadow:0 10px 26px rgba(16,24,40,.07);transform:none}
+  .carCard.open:hover{transform:none}
+  .ccTop{display:flex;align-items:flex-start;gap:8px;justify-content:space-between}
+  .carCard .carToggle{flex:1;min-width:0;margin:0;padding:1px 0;align-items:flex-start}
+  .carCard .carToggle:hover{background:none}
+  .ccName{font-size:15.4px;font-weight:700;line-height:1.5;word-break:break-word;color:var(--ink)}
+  .ccSub{font-size:11.8px;color:var(--ink3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ccStats{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .ccBar{height:6px;border-radius:4px;background:var(--grey-l);overflow:hidden;margin-top:10px}
+  .ccBar i{display:block;height:100%;border-radius:4px;background:var(--green)}
+  .ccDates{display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;margin-top:auto;padding-top:10px;
+    font-size:11.8px;color:var(--ink3);line-height:1.7}
+  .ccDates .no{color:var(--red-d);font-weight:700}
+  .ccDates .warn{color:var(--amber-d)}
+  .ccBody{border-top:1px dashed var(--line);margin-top:12px;padding-top:12px}
+  .ccOps{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;margin-bottom:8px}
+  .ccFoot{margin-top:12px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
+  .ccFoot .muted{font-size:11.8px;margin-right:auto}
+  /* 产品地图 · 全部档位 */
+  .lvBlock{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-top:12px;background:#fff}
+  .lvBlock.cur{border-color:#CFE0F0;background:linear-gradient(#fff,#FAFCFF)}
+  .lvHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .lvHead b{font-size:14px}
+  .lvHead .sp{flex:1}
+
   /* 里程碑矩阵 */
   .mtx{width:100%;border-collapse:collapse;font-size:12.7px}
   .mtx th,.mtx td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:center}
@@ -2275,21 +2305,22 @@ function renderCarriers(){
    const goalLate=!!(goalAt&&goalAt<today&&h.open>0),nextLate=!!(nextD&&nextD<today);
    const open=!!CUI_CAR.open[x.id]||carFilterOn()||!!ed;
    const iss=carIssues(x);
-   return `<div class="carHead">
-    <div class="taskTop">
-      <button class="carToggle" data-ctog="${x.id}" title="${open?"收起任务与表单":"展开任务与表单"}"><span class="arw">${open?"▾":"▸"}</span><span class="carName">${esc(x.name)}</span><span class="ctBtn">${open?"收起":"展开"}</span></button>
-      <span class="taskTags">${iss.slice(0,2).map(t=>`<span class="tag ${/超期|已过/.test(t)?"no":"wt"}">${esc(t)}</span>`).join("")}
-      <span class="tag ${h.open?"gy":"ok"}">闭环 ${h.done}/${h.done+h.open}</span>
-      ${x.del?(isStaff()?`<button class="btn sm gh" data-cundel="${x.id}">恢复档案</button>`:""):(canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:"")}</span>
+   const pct=(h.done+h.open)?Math.round(h.done/(h.done+h.open)*100):0;
+   return `<div class="carCard ${open?"open":""}">
+    <div class="ccTop">
+      <button class="carToggle" data-ctog="${x.id}" title="${open?"收起任务与表单":"展开任务与表单"}"><span class="arw">${open?"▾":"▸"}</span><span class="ccName">${esc(x.name)}</span></button>
+      <span class="taskTags">${x.del?(isStaff()?`<button class="btn sm gh" data-cundel="${x.id}">恢复</button>`:""):`<span class="tag ${h.open?"gy":"ok"}" title="已闭环 / 全部任务">${(h.done+h.open)?`闭环 ${h.done}/${h.done+h.open}`:"未建任务"}</span>`}</span>
     </div>
-    <div class="carMeta">
-      <span class="mchip">来源 / 档位：${esc(x.src||"未填")}</span>
-      <span class="mchip">销售搭档：${esc(x.partner||"未填")}</span>
-      <span class="mchip ${goalLate?"no":goalAt?"":"warn"}">阶段目标日：${esc(goalAt||"未设")}${goalLate?" · 已过期":""}</span>
-      <span class="mchip ${nextLate?"no":nextD?"":"warn"}">下次跟进：${esc(nextD||"未设")}${nextLate?" · 已过期":""}</span>
-      ${x.goal?`<span class="mchip">本阶段目标：${esc(x.goal)}</span>`:""}
+    <div class="ccSub">${esc(x.src||"未填")}${x.partner?` · ${esc(x.partner)}`:""}</div>
+    <div class="ccStats">${iss.length?iss.slice(0,3).map(t=>`<span class="tag ${/超期|已过/.test(t)?"no":"wt"}">${esc(t)}</span>`).join(""):'<span class="tag ok">正常</span>'}</div>
+    <div class="ccBar"><i style="width:${pct}%;background:${h.over?"var(--red)":h.open?"var(--blue-m)":"var(--green)"}"></i></div>
+    <div class="ccDates">
+      <span class="${nextLate?"no":nextD?"":"warn"}">下次跟进 ${esc(nextD||"未设")}${nextLate?" · 已过":""}</span>
+      <span class="${goalLate?"no":goalAt?"":"warn"}">阶段目标 ${esc(goalAt||"未设")}${goalLate?" · 已过":""}</span>
     </div>
-    ${open?`
+    ${open?`<div class="ccBody">
+    <div class="ccOps">${canCar(x)?`<button class="btn sm gh" data-cedit="${x.id}">编辑档案</button><button class="btn sm danger" data-cdel="${x.id}">归档</button>`:""}</div>
+    ${x.goal?`<div class="muted" style="margin-bottom:8px">本阶段目标：${esc(x.goal)}</div>`:""}
     ${x.note?`<div class="muted" style="margin-top:8px">备注：${esc(x.note)}</div>`:""}
     ${ed?`<div class="form formLG" style="margin-top:12px;grid-template-columns:1fr 1fr;background:#F7F9FB;border:1px solid var(--line);border-radius:11px;padding:13px 14px">
       <div style="grid-column:1/-1"><label>客户 / 项目名称（必填）</label><input data-cef="${x.id}.name" value="${esc(ed.name||"")}" placeholder="例：某商场 P2.5 项目"></div>
@@ -2389,7 +2420,7 @@ function renderCarriers(){
       ${isStaff()?`<div style="grid-column:1/-1"><label>负责人</label><select data-aown0="${x.id}"><option value="">${esc(WHO_NAME[x.who]||x.who)} 本人</option>${ppl().map(p=>`<option value="${p}">指派给：${esc(WHO_NAME[p]||p)}</option>`).join("")}</select></div>`:""}
       <div class="row" style="grid-column:1/-1"><button class="btn sm" data-aadd="${x.id}">${mine?"＋ 加任务":"＋ 派任务"}</button></div>
     </div>`:""}
-    `:""}
+    </div>`:`<div class="ccFoot"><span class="muted">${h.open?`${h.open} 项未闭环`:(h.done?"全部闭环":"暂无任务")}${h.review?` · 待验收 ${h.review}`:""}</span><button class="btn sm gh" data-ctog="${x.id}">展开任务与进展</button></div>`}
    </div>`;}).join("")
    :`<div class="muted" style="margin-top:8px">${a.length?"筛选后没有匹配的客户档案":"还没有客户档案 —— 分到客户/项目后先建一份档案，再往下加任务"}${!a.length&&allow?` <button class="btn sm gh" data-cempty="${id}">＋ 先登记第一份</button>`:""}</div>`;
   const openN=a.reduce((n,x)=>n+carHealth(x).open,0);
@@ -2397,7 +2428,7 @@ function renderCarriers(){
     <h3><button class="carToggle" data-ptog="${id}" title="${pOpen?"收起这位新人的全部客户":"展开这位新人的全部客户"}"><span class="arw">${pOpen?"▾":"▸"}</span><span>${esc(WHO_NAME[id])}</span><span class="ctBtn">${pOpen?"收起":"展开"}</span></button>
       <span class="tag gy">${a.length} 个客户 · ${openN} 项未闭环</span>
       ${carFilterOn()?`<span class="tag wt">筛选后 ${shown.length} 个</span>`:""}</h3>
-    ${pOpen?`<div style="margin-top:6px">${rows}</div>
+    ${pOpen?`<div class="carGrid">${rows}</div>
     ${allow?`<div class="form formLG" style="margin-top:16px;grid-template-columns:1fr 1fr;background:#F7F9FB;border:1px dashed #CFD8E2;border-radius:12px;padding:14px 15px">
       <div style="grid-column:1/-1"><label>客户 / 项目名称（必填）</label><input data-cnew="${id}.name" placeholder="例：某商场 P2.5 项目"></div>
       <div><label>来源 / 销售档位</label><input data-cnew="${id}.src" placeholder="例：销售分配 · A 档"></div>
@@ -3128,7 +3159,9 @@ function mapAlerts(){
   if(p.remain>0&&(p.over||p.risk))out.push({who:id,lv:L,p});}));
  return out;
 }
-let CI_LV=null,CI_NODE=null,CI_ANS=[],CI_ATT=null,CI_NEW=false,CI_BUSY=false;
+/* CI_LV="all"：默认展示三个档位的全部节点（含已完成/未完成），跨月也能回看；
+   点具体档位可只看该档。 */
+let CI_LV="all",CI_NODE=null,CI_ANS=[],CI_ATT=null,CI_NEW=false,CI_BUSY=false;
 /* 答案不再随 /bank.js 下发：已交卷/导师复查时按节点拉一次答案缓存（含解析） */
 let CI_KEY={};
 /* 学习行为监测：新人点开节点里的「展开自查要点」（含答案）逐次留痕，随 DOC 自动同步到看板/产品地图。 */
@@ -3172,8 +3205,8 @@ function renderCheckins(ids){
   const st=ciStats(id);
   const rv=rvStat(id);
   return `<div class="card pad">
-   <div class="row" style="justify-content:space-between"><h3>${WHO_NAME[id]} · 产品地图</h3>
-     <span class="tag ${st.streak>0?"ok":"gy"}">连续 ${st.streak} 天</span></div>
+   <div class="row" style="justify-content:space-between;gap:8px"><h3>${WHO_NAME[id]} · 产品地图</h3>
+     <span class="row" style="gap:6px;flex-wrap:nowrap"><button class="btn sm gh" data-cimap>查看全部节点 ↓</button><span class="tag ${st.streak>0?"ok":"gy"}">连续 ${st.streak} 天</span></span></div>
    <div class="kpi">
      <div><div class="kv">${st.done.size}<span style="font-size:12.5px;color:var(--ink3)">/${TOTAL_NODES}</span></div><div class="kk">已完成节点</div></div>
      <div><div class="kv">${st.mon}</div><div class="kk">本月完成</div></div>
@@ -3190,38 +3223,57 @@ function renderCheckins(ids){
    <div class="muted" style="margin-top:10px;padding-top:9px;border-top:1px dashed var(--line)">自查要点展开 <b>${rv.n}</b> 次 · 涉及 <b>${rv.nodes}</b> 个节点${rv.last?` · 最近 ${fmt(rv.last)}${rv.lastNode?"（"+esc(rv.lastNode)+"）":""}`:" · 暂无记录"}</div>
   </div>`;}).join("");
 
- if(!CI_LV||!LEVELS.some(L=>L.k===CI_LV))CI_LV=(LEVELS[0]||{}).k;
- const LV=LEVELS.find(x=>x.k===CI_LV)||{k:CI_LV,n:"",period:"",desc:"",goal:0};
- const nodes=levelNodes(CI_LV);
+ if(CI_LV!=="all"&&(!CI_LV||!LEVELS.some(L=>L.k===CI_LV)))CI_LV="all";
+ /* 当前应完成的档位：第一个还没做完的档位（都做完就看最后一档） */
+ const activeLv=LEVELS.find(L=>lvPace(mine?WHO:(ids[0]||WHO),L).remain>0)||LEVELS[LEVELS.length-1]||{};
+ const LV=CI_LV==="all"?activeLv:(LEVELS.find(x=>x.k===CI_LV)||activeLv||{k:CI_LV,n:"",period:"",desc:"",goal:0});
+ const nodes=CI_LV==="all"?NODES:levelNodes(CI_LV);
  const lp=mine?lvPace(WHO,LV):null;
  const paceLine=mine
   ?`<div style="margin-top:8px;font-size:12.2px;background:${lp.over?"var(--red-l)":lp.risk?"var(--amber-l)":"var(--blue-l)"};border:1px solid ${lp.over?"#F3C9C1":lp.risk?"#EFD9AE":"#CFE0EF"};border-radius:9px;padding:7px 10px;color:${lp.over?"var(--red-d)":lp.risk?"var(--amber-d)":"var(--blue-d)"}">
-     本档目标截止 <b>${fmtDay(lp.due)}</b> · ${lp.over?`<b>已超期 ${-lp.left} 天，不能再往后拖</b>`:`还剩 ${lp.left} 天`} · 还差 <b>${lp.remain}</b> 个节点${lp.remain?`（需日均 ${lp.need} 个）`:""} · 可提前完成，不能晚于目标时间</div>`
+     当前档位（${esc(LV.n||"")}）截止 <b>${fmtDay(lp.due)}</b> · ${lp.over?`<b>已超期 ${-lp.left} 天，不能再往后拖</b>`:`还剩 ${lp.left} 天`} · 还差 <b>${lp.remain}</b> 个节点${lp.remain?`（需日均 ${lp.need} 个）`:""} · 三档全部开放，可提前做后面档位</div>`
   :`<div style="margin-top:8px;font-size:12.1px;background:var(--blue-l);border:1px solid #CFE0EF;border-radius:9px;padding:7px 10px;color:var(--blue-d)">
      本档目标截止 <b>${fmtDay(lvDueDate(LV))}</b> · ${NEWCOMERS.map(id=>{const p=lvPace(id,LV);
        return `${WHO_NAME[id]}：${p.over?`<b style="color:var(--red-d)">超期 ${-p.left} 天</b>`:p.remain?`剩 ${p.left} 天 / 差 ${p.remain} 个`:"已完成 ✅"}`;}).join("　·　")}</div>`;
- let html=`<div class="chips" style="margin-top:2px">${LEVELS.map(lv=>{
+ /* 单个节点的卡片：mine=本人（带小测/打卡状态），否则=导师视角（显示谁完成了） */
+ const chipOf=nd=>{
+  if(mine){
+    const p=lvPace(WHO,LEVELS.find(x=>x.k===nd.level)||LV);
+    const r=ciRec(WHO,nd.id),f=qzFirstDone(WHO,nd.id),op=qzOpenAttempt(WHO,nd.id),done=st.done.has(nd.id);
+    const tries=f?qzAttempts(WHO,nd.id).filter(x=>x.status==="done").length:0;
+    let ns;
+    if(done)ns="✔ 已完成 · "+fmt(r.createdAt)+(tries>1?" · 重做 "+tries+" 次":"");
+    else if(op)ns=`小测进行中 ${(op.answers||[]).filter(a=>a>=0).length}/${nd.qz.length} · 已实时记录`;
+    else if(f)ns=`小测已完成 ${f.correct||0}/${f.total||0} · 待写学/用笔记打卡`;
+    else ns=p.over?`<span style="color:var(--red-d)">已超期 ${-p.left} 天 · 待补</span>`:"待学习 · "+nd.qz.length+" 题小测";
+    return `<button class="nodechip ${done?"ok":f?"part":""}" data-cinode="${nd.id}">
+      <span class="nt">${esc(nd.t)}</span><span class="ns">${ns}</span></button>`;
+  }
+  const by=ids.filter(id=>ciDone(id).has(nd.id)).map(id=>WHO_NAME[id].slice(0,1)).join(" ");
+  return `<button class="nodechip ${by?"ok":""}" data-cinode="${nd.id}">
+    <span class="nt">${esc(nd.t)}</span><span class="ns">${by?"已完成："+by:`${ids.length} 人均未完成`}</span></button>`;
+ };
+ let html=`<div class="chips" style="margin-top:2px">
+  <button class="chip ${CI_LV==="all"?"on":"b"}" data-cilv="all">全部 · ${mine?`${st.done.size}/${TOTAL_NODES}`:`${ids.reduce((a,id)=>a+ciStats(id).done.size,0)}/${ids.length*TOTAL_NODES}`}</button>
+  ${LEVELS.map(lv=>{
    const n=mine?(ciStats(WHO).lv[lv.k]||0):ids.reduce((a,id)=>a+((ciStats(id).lv[lv.k])||0),0);
    return `<button class="chip ${CI_LV===lv.k?"on":"b"}" data-cilv="${lv.k}">${lv.n} · ${lv.period} · ${n}/${lv.goal}</button>`;}).join("")}</div>
   ${paceLine}
-  <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：先看引导去 IMA 学原文 → 做 5 题小测（自动判卷）→ 写笔记打卡</b>":"　<b>点节点可查看引导与小测、以及两人的完成情况</b>"}</div>
-  <div class="nodegrid">${nodes.map(nd=>{
-   if(mine){
-     const r=ciRec(WHO,nd.id),f=qzFirstDone(WHO,nd.id),op=qzOpenAttempt(WHO,nd.id),done=st.done.has(nd.id);
-     const tries=f?qzAttempts(WHO,nd.id).filter(x=>x.status==="done").length:0;
-     let ns;
-     if(done)ns="✔ 已完成 · "+fmt(r.createdAt)+(tries>1?" · 重做 "+tries+" 次":"");
-     else if(op)ns=`小测进行中 ${(op.answers||[]).filter(a=>a>=0).length}/${nd.qz.length} · 已实时记录`;
-     else if(f)ns=`小测已完成 ${f.correct||0}/${f.total||0} · 待写学/用笔记打卡`;
-     else ns=lp.over?`<span style="color:var(--red-d)">已超期 ${-lp.left} 天 · 待补</span>`:"待学习 · "+nd.qz.length+" 题小测";
-     return `<button class="nodechip ${done?"ok":f?"part":""}" data-cinode="${nd.id}">
-       <span class="nt">${esc(nd.t)}</span>
-       <span class="ns">${ns}</span></button>`;}
-   const by=ids.filter(id=>ciDone(id).has(nd.id)).map(id=>WHO_NAME[id].slice(0,1)).join(" ");
-   return `<button class="nodechip ${by?"ok":""}" data-cinode="${nd.id}">
-     <span class="nt">${esc(nd.t)}</span>
-     <span class="ns">${by?"已完成："+by:"两人均未完成"}</span></button>`;}).join("")}
-  </div>`;
+  <div class="muted" style="margin-top:9px">${esc(LV.desc||"")}${mine?"　<b>点节点：先看引导去 IMA 学原文 → 做 5 题小测（自动判卷）→ 写笔记打卡；已完成和未完成的节点都在这里，跨月可回看</b>":"　<b>点节点可查看引导与小测、以及两人的完成情况</b>"}</div>
+  ${CI_LV==="all"?LEVELS.map(L=>{
+    const p=mine?lvPace(WHO,L):null;
+    const doneN=mine?(st.lv[L.k]||0):ids.reduce((a,id)=>a+((ciStats(id).lv[L.k])||0),0);
+    const goalN=mine?L.goal:ids.length*L.goal;
+    const remainN=mine?p.remain:Math.max(0,goalN-doneN);
+    const isCur=mine&&activeLv.k===L.k;
+    return `<div class="lvBlock ${isCur?"cur":""}">
+      <div class="lvHead"><b>${L.n}</b><span class="muted">${L.period}</span>
+        <span class="tag ${remainN?(p&&p.over?"no":"wt"):"ok"}">${remainN?`还差 ${remainN} 个`:"已完成"}</span>
+        ${isCur?'<span class="tag pri">当前</span>':""}
+        <span class="sp"></span><span class="muted" style="font-size:11.6px">截止 ${fmtDay(mine?p.due:lvDueDate(L))}${p&&p.over&&p.remain?` · 已超 ${-p.left} 天`:""}</span></div>
+      <div class="nodegrid">${levelNodes(L.k).map(chipOf).join("")}</div>
+    </div>`;
+  }).join(""):`<div class="nodegrid">${nodes.map(chipOf).join("")}</div>`}`;
 
  if(isStaff()){
   const wc={};
@@ -3253,6 +3305,7 @@ function renderCheckins(ids){
  rtCard();
  document.querySelectorAll("[data-cilv]").forEach(b=>b.onclick=()=>{CI_LV=b.dataset.cilv;renderCheckins(ids);});
  document.querySelectorAll("[data-cinode]").forEach(b=>b.onclick=()=>openCiNode(b.dataset.cinode));
+ document.querySelectorAll("[data-cimap]").forEach(b=>b.onclick=()=>{const el=document.getElementById("ciForm");if(el)el.scrollIntoView({behavior:"smooth",block:"start"});});
 }
 
 function qzPad(arr,n){
